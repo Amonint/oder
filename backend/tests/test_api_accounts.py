@@ -10,9 +10,9 @@ from oderbiz_analytics.domain.models import AdAccount
 
 
 @pytest.fixture
-def client(monkeypatch):
-    monkeypatch.setenv("GCP_PROJECT_ID", "p")
+def client(monkeypatch, tmp_path):
     monkeypatch.setenv("META_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "test.duckdb"))
 
     async def fake_list_ad_accounts(self, **kwargs):
         return [AdAccount(id="act_1", name="Test Account", account_id="1", currency="USD")]

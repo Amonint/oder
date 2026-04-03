@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 
-from oderbiz_analytics.adapters.bq.client import insert_raw_insights_row
+from oderbiz_analytics.adapters.duckdb.client import init_db, insert_raw_insights_row
 from oderbiz_analytics.adapters.meta.client import MetaGraphClient
 from oderbiz_analytics.adapters.meta.insights import fetch_account_insights
 from oderbiz_analytics.config import get_settings
@@ -16,6 +16,7 @@ DATE_PRESET = "last_30d"
 
 async def run_daily_ingest() -> None:
     s = get_settings()
+    init_db(s.duckdb_path)
     base = f"https://graph.facebook.com/{s.meta_graph_version}"
     meta = MetaGraphClient(base_url=base, access_token=s.meta_access_token)
     try:
@@ -29,8 +30,7 @@ async def run_daily_ingest() -> None:
                 fields=FIELDS,
             )
             insert_raw_insights_row(
-                project_id=s.gcp_project_id,
-                dataset=s.bq_dataset,
+                db_path=s.duckdb_path,
                 ad_account_id=acct.id,
                 object_id=acct.id,
                 level="account",

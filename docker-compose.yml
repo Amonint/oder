@@ -1,0 +1,45 @@
+# docker-compose.yml
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: oderbiz-analytics:dev
+    ports:
+      - "8000:8000"
+    volumes:
+      - analytics_data:/data
+    environment:
+      - META_ACCESS_TOKEN=${META_ACCESS_TOKEN}
+      - DUCKDB_PATH=/data/analytics.duckdb
+      - META_GRAPH_VERSION=${META_GRAPH_VERSION:-v25.0}
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  ingest:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: oderbiz-analytics:dev
+    volumes:
+      - analytics_data:/data
+    environment:
+      - META_ACCESS_TOKEN=${META_ACCESS_TOKEN}
+      - DUCKDB_PATH=/data/analytics.duckdb
+      - META_GRAPH_VERSION=${META_GRAPH_VERSION:-v25.0}
+    command: oderbiz-ingest-daily
+    profiles:
+      - ingest
+    depends_on:
+      - api
+
+volumes:
+  analytics_data:
+    driver: local

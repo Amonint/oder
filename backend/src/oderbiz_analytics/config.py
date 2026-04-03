@@ -5,8 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    gcp_project_id: str
-    bq_dataset: str = "meta_ads_analytics"
+    duckdb_path: str = "/data/analytics.duckdb"
     meta_graph_version: str = "v25.0"
     meta_access_token: str
     api_host: str = "0.0.0.0"
