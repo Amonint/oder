@@ -19,6 +19,9 @@ dev = [
   "ruff>=0.8.0",
 ]
 
+[project.scripts]
+oderbiz-ingest-daily = "oderbiz_analytics.jobs.ingest_daily:main"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
