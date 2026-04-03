@@ -2,14 +2,18 @@
 from fastapi import APIRouter, Depends
 
 from oderbiz_analytics.adapters.meta.client import MetaGraphClient
+from oderbiz_analytics.api.deps import get_meta_access_token
 from oderbiz_analytics.config import Settings, get_settings
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
 
-def meta_client(settings: Settings = Depends(get_settings)) -> MetaGraphClient:
+def meta_client(
+    settings: Settings = Depends(get_settings),
+    access_token: str = Depends(get_meta_access_token),
+) -> MetaGraphClient:
     base = f"https://graph.facebook.com/{settings.meta_graph_version}"
-    return MetaGraphClient(base_url=base, access_token=settings.meta_access_token)
+    return MetaGraphClient(base_url=base, access_token=access_token)
 
 
 @router.get("")
