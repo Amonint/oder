@@ -37,7 +37,19 @@ python3.12 -m pytest
 backend/
 ├── src/oderbiz_analytics/     # Código principal de la aplicación
 ├── tests/                      # Tests unitarios e integración
+├── sql/                        # SQL DDL para BigQuery
 ├── pyproject.toml             # Configuración del proyecto
 ├── README.md                  # Este archivo
 └── .env.example               # Ejemplo de variables de entorno
 ```
+
+## BigQuery — Aplicar DDL
+
+Sustituye `${BQ_DATASET}` por el nombre real de tu dataset y ejecuta:
+
+```bash
+sed 's/${BQ_DATASET}/meta_ads_analytics/g' backend/sql/001_create_tables.sql \
+  | bq query --use_legacy_sql=false
+```
+
+O aplica directamente desde la consola de BigQuery pegando el contenido con el dataset correcto.
