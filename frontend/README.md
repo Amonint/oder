@@ -1,3 +1,15 @@
+# Oderbiz — Meta Ads (frontend)
+
+## Flujo
+
+1. **`/`** — Pegar token de Marketing API y pulsar **Conectar**. El token se guarda solo en `sessionStorage` (`meta_access_token`) y se envía al backend como `Authorization: Bearer …`.
+2. **`/accounts`** — Lista de cuentas desde `GET /api/v1/accounts`. Clic en una fila abre el dashboard de esa cuenta.
+3. **`/accounts/:accountId/dashboard`** — Métricas agregadas vía `GET /api/v1/accounts/{id}/dashboard?date_preset=…`.
+
+Variable opcional: `VITE_API_BASE_URL` (por defecto `http://127.0.0.1:8000`).
+
+---
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

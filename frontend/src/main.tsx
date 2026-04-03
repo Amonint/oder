@@ -1,15 +1,28 @@
-// frontend/src/main.tsx
+import "./index.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import App from "./App";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import AccountsPage from "./routes/AccountsPage";
+import DashboardPage from "./routes/DashboardPage";
+import TokenPage from "./routes/TokenPage";
 
 const queryClient = new QueryClient();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <App />
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<TokenPage />} />
+          <Route path="/accounts" element={<AccountsPage />} />
+          <Route
+            path="/accounts/:accountId/dashboard"
+            element={<DashboardPage />}
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>
 );
