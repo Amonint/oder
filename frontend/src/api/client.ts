@@ -63,6 +63,23 @@ async function readErrorMessage(r: Response): Promise<string> {
   return r.statusText || "Error al llamar a la API";
 }
 
+export interface AdsPerformanceResponse {
+  data: Record<string, unknown>[];
+  date_preset: string | null;
+  time_range: { since: string; until: string } | null;
+}
+
+export interface GeoInsightsResponse {
+  data: Record<string, unknown>[];
+  scope: "account" | "ad";
+  date_preset: string | null;
+  time_range: { since: string; until: string } | null;
+}
+
+export interface TargetingResponse {
+  targeting: Record<string, unknown>;
+}
+
 export async function fetchAdAccounts(): Promise<{ data: AdAccount[] }> {
   const r = await apiFetch("/api/v1/accounts");
   if (!r.ok) throw new Error(await readErrorMessage(r));
@@ -75,6 +92,55 @@ export async function fetchAccountDashboard(
 ): Promise<DashboardResponse> {
   const q = new URLSearchParams({ date_preset: datePreset });
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/dashboard?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export async function fetchAdsPerformance(
+  adAccountId: string,
+  opts: {
+    datePreset?: string;
+    dateStart?: string;
+    dateStop?: string;
+  }
+): Promise<AdsPerformanceResponse> {
+  const q = new URLSearchParams();
+  if (opts.datePreset) q.set("date_preset", opts.datePreset);
+  if (opts.dateStart) q.set("date_start", opts.dateStart);
+  if (opts.dateStop) q.set("date_stop", opts.dateStop);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/ads/performance?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export async function fetchGeoInsights(
+  adAccountId: string,
+  opts: {
+    scope: "account" | "ad";
+    adId?: string;
+    datePreset?: string;
+    dateStart?: string;
+    dateStop?: string;
+  }
+): Promise<GeoInsightsResponse> {
+  const q = new URLSearchParams({ scope: opts.scope });
+  if (opts.adId) q.set("ad_id", opts.adId);
+  if (opts.datePreset) q.set("date_preset", opts.datePreset);
+  if (opts.dateStart) q.set("date_start", opts.dateStart);
+  if (opts.dateStop) q.set("date_stop", opts.dateStop);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/geo?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export async function fetchAdTargeting(
+  adAccountId: string,
+  adId: string
+): Promise<TargetingResponse> {
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/ads/${encodeURIComponent(adId)}/targeting`;
   const r = await apiFetch(path);
   if (!r.ok) throw new Error(await readErrorMessage(r));
   return r.json();

@@ -83,3 +83,28 @@ export default defineConfig([
   },
 ])
 ```
+
+## Charts y componentes UI
+
+Los gráficos estadísticos del panel de agencia usan el bloque **Chart** oficial de shadcn/ui
+(`frontend/src/components/ui/chart.tsx`) basado en Recharts.
+
+### Regla: consultar MCP `user-shadcn` antes de modificar charts
+
+Antes de crear o modificar cualquier gráfico estadístico (barras, líneas, áreas, radial):
+
+1. `get_project_registries` — confirmar registries disponibles en `components.json`
+2. `search_items_in_registries` — buscar `chart`, `card`, `tabs`, etc. según necesidad
+3. `get_item_examples_from_registries` — obtener el demo (ej: `chart-bar`, `chart-bar-horizontal`)
+4. `get_add_command_for_items` — instalar primitivos faltantes con `npx shadcn@latest add ...`
+
+No editar `chart.tsx` a mano sin haber consultado primero los ejemplos del registry.
+
+### Vistas del panel (DashboardPage)
+
+| Tab        | Fuente de datos                          | Chart                      |
+|------------|------------------------------------------|----------------------------|
+| Resumen    | `/accounts/{id}/dashboard`               | BarChart vertical (actions)|
+| Ranking    | `/accounts/{id}/ads/performance`         | BarChart vertical top-N    |
+| Geografía  | `/accounts/{id}/insights/geo`            | BarChart horizontal region |
+| Targeting  | `/accounts/{id}/ads/{ad_id}/targeting`   | Sin chart (JSON + Card)    |

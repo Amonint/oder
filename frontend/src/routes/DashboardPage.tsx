@@ -2,7 +2,13 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { fetchAccountDashboard, getMetaAccessToken } from "@/api/client";
+import {
+  fetchAccountDashboard,
+  fetchAdsPerformance,
+  fetchGeoInsights,
+  fetchAdTargeting,
+  getMetaAccessToken,
+} from "@/api/client";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +32,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -43,6 +50,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const DATE_PRESETS = [
   { value: "last_7d", label: "Últimos 7 días" },
@@ -62,6 +70,13 @@ const KPI_LABELS: Record<string, string> = {
   ctr: "CTR",
 };
 
+const METRIC_LABELS: Record<string, string> = {
+  impressions: "Impresiones",
+  clicks: "Clics",
+  spend: "Gasto",
+  ctr: "CTR",
+};
+
 function formatNum(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(2)}k`;
@@ -71,6 +86,9 @@ function formatNum(n: number): string {
 export default function DashboardPage() {
   const { accountId } = useParams<{ accountId: string }>();
   const [datePreset, setDatePreset] = useState<string>("last_30d");
+  const [rankingMetric, setRankingMetric] = useState<"impressions" | "clicks" | "spend" | "ctr">("impressions");
+  const [selectedAdId, setSelectedAdId] = useState<string | null>(null);
+  const [geoScope, setGeoScope] = useState<"account" | "ad">("account");
   const hasToken = Boolean(getMetaAccessToken());
   const id = accountId ? decodeURIComponent(accountId) : "";
 
@@ -78,6 +96,28 @@ export default function DashboardPage() {
     queryKey: ["dashboard", id, datePreset],
     queryFn: () => fetchAccountDashboard(id, datePreset),
     enabled: hasToken && Boolean(id),
+  });
+
+  const rankingQuery = useQuery({
+    queryKey: ["ads-performance", id, datePreset],
+    queryFn: () => fetchAdsPerformance(id, { datePreset }),
+    enabled: hasToken && Boolean(id),
+  });
+
+  const geoQuery = useQuery({
+    queryKey: ["geo-insights", id, geoScope, selectedAdId, datePreset],
+    queryFn: () => fetchGeoInsights(id, {
+      scope: geoScope,
+      adId: geoScope === "ad" ? (selectedAdId ?? undefined) : undefined,
+      datePreset,
+    }),
+    enabled: hasToken && Boolean(id) && (geoScope === "account" || Boolean(selectedAdId)),
+  });
+
+  const targetingQuery = useQuery({
+    queryKey: ["targeting", id, selectedAdId],
+    queryFn: () => fetchAdTargeting(id, selectedAdId!),
+    enabled: hasToken && Boolean(id) && Boolean(selectedAdId),
   });
 
   const chartData = useMemo(() => {
@@ -96,6 +136,35 @@ export default function DashboardPage() {
     value: {
       label: "Valor",
       color: "var(--chart-1)",
+    },
+  } satisfies ChartConfig;
+
+  const rankingChartData = useMemo(() => {
+    return (rankingQuery.data?.data ?? [])
+      .map((row) => ({
+        label: String(row.ad_name ?? row.ad_id ?? "").slice(0, 20),
+        value: Number(row[rankingMetric as keyof typeof row] ?? 0),
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10);
+  }, [rankingQuery.data, rankingMetric]);
+
+  const rankingChartConfig = {
+    value: {
+      label: METRIC_LABELS[rankingMetric] ?? rankingMetric,
+      color: "var(--chart-1)",
+    },
+  } satisfies ChartConfig;
+
+  const geoChartData = (geoQuery.data?.data ?? []).map((row) => ({
+    region: String(row.region ?? row.country ?? "Desconocido").slice(0, 20),
+    impressions: Number(row.impressions ?? 0),
+  }));
+
+  const geoChartConfig = {
+    impressions: {
+      label: "Impresiones",
+      color: "var(--chart-2)",
     },
   } satisfies ChartConfig;
 
@@ -174,168 +243,499 @@ export default function DashboardPage() {
         </Alert>
       ) : null}
 
-      {isLoading ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton key={i} className="h-28 rounded-xl" />
-          ))}
-        </div>
-      ) : null}
+      <Tabs defaultValue="resumen">
+        <TabsList>
+          <TabsTrigger value="resumen">Resumen</TabsTrigger>
+          <TabsTrigger value="ranking">Ranking</TabsTrigger>
+          <TabsTrigger value="geografia">Geografía</TabsTrigger>
+          <TabsTrigger value="targeting">Targeting</TabsTrigger>
+        </TabsList>
 
-      {isError ? (
-        <Alert variant="destructive">
-          <AlertTitle>Error al cargar el dashboard</AlertTitle>
-          <AlertDescription>
-            {error instanceof Error ? error.message : "Error desconocido"}
-          </AlertDescription>
-        </Alert>
-      ) : null}
+        {/* ── Tab: Resumen ── */}
+        <TabsContent value="resumen" className="space-y-6 pt-4">
+          {isLoading ? (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <Skeleton key={i} className="h-28 rounded-xl" />
+              ))}
+            </div>
+          ) : null}
 
-      {data && !isLoading ? (
-        <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {Object.entries(data.summary).map(([key, val]) => (
-              <Card key={key}>
-                <CardHeader className="pb-2">
+          {isError ? (
+            <Alert variant="destructive">
+              <AlertTitle>Error al cargar el dashboard</AlertTitle>
+              <AlertDescription>
+                {error instanceof Error ? error.message : "Error desconocido"}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {data && !isLoading ? (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {Object.entries(data.summary).map(([key, val]) => (
+                  <Card key={key}>
+                    <CardHeader className="pb-2">
+                      <CardDescription>
+                        {KPI_LABELS[key] ?? key}
+                      </CardDescription>
+                      <CardTitle className="text-2xl tabular-nums">
+                        {formatNum(val)}
+                      </CardTitle>
+                    </CardHeader>
+                  </Card>
+                ))}
+              </div>
+
+              <Separator />
+
+              <div className="grid gap-8 lg:grid-cols-2">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Acciones (action_type)</CardTitle>
+                    <CardDescription>
+                      Desglose agregado del periodo (no es serie diaria).
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Tipo</TableHead>
+                            <TableHead className="text-right">Valor</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {data.actions.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={2} className="text-center">
+                                Sin acciones
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            data.actions.map((row, idx) => (
+                              <TableRow key={`${String(row.action_type)}-${idx}`}>
+                                <TableCell className="max-w-[240px] font-mono text-xs">
+                                  {String(row.action_type)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatNum(row.value)}
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Costo por tipo de acción</CardTitle>
+                    <CardDescription>
+                      Campo <code className="text-xs">cost_per_action_type</code> de
+                      Meta.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Tipo</TableHead>
+                            <TableHead className="text-right">Costo</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {data.cost_per_action_type.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={2} className="text-center">
+                                Sin datos
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            data.cost_per_action_type.map((row, idx) => (
+                              <TableRow key={`${String(row.action_type)}-${idx}`}>
+                                <TableCell className="max-w-[240px] font-mono text-xs">
+                                  {String(row.action_type)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatNum(row.value)}
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Gráfico por tipo de acción</CardTitle>
                   <CardDescription>
-                    {KPI_LABELS[key] ?? key}
+                    Barras según los tipos con mayor volumen en el periodo
+                    agregado.
                   </CardDescription>
-                  <CardTitle className="text-2xl tabular-nums">
-                    {formatNum(val)}
-                  </CardTitle>
                 </CardHeader>
+                <CardContent className="pl-0">
+                  {chartData.length === 0 ? (
+                    <p className="text-muted-foreground px-6 text-sm">
+                      No hay datos para graficar.
+                    </p>
+                  ) : (
+                    <ChartContainer config={chartConfig} className="min-h-[280px] w-full">
+                      <BarChart
+                        accessibilityLayer
+                        data={chartData}
+                        margin={{ left: 8, right: 8, top: 8, bottom: 48 }}
+                      >
+                        <CartesianGrid vertical={false} />
+                        <XAxis
+                          dataKey="label"
+                          tickLine={false}
+                          tickMargin={8}
+                          angle={-35}
+                          textAnchor="end"
+                          height={64}
+                          interval={0}
+                          fontSize={10}
+                        />
+                        <YAxis tickLine={false} axisLine={false} width={48} />
+                        <ChartTooltip content={<ChartTooltipContent />} />
+                        <Bar dataKey="value" fill="var(--color-value)" radius={4} />
+                      </BarChart>
+                    </ChartContainer>
+                  )}
+                </CardContent>
               </Card>
-            ))}
+            </>
+          ) : null}
+        </TabsContent>
+
+        {/* ── Tab: Ranking ── */}
+        <TabsContent value="ranking" className="space-y-6 pt-4">
+          <div className="flex items-center gap-3">
+            <span className="text-muted-foreground text-sm">Métrica:</span>
+            <Select value={rankingMetric} onValueChange={(v) => setRankingMetric(v as typeof rankingMetric)}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Métrica" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="impressions">Impresiones</SelectItem>
+                <SelectItem value="clicks">Clics</SelectItem>
+                <SelectItem value="spend">Gasto</SelectItem>
+                <SelectItem value="ctr">CTR</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
-          <Separator />
+          {rankingQuery.isLoading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 rounded-md" />
+              ))}
+            </div>
+          ) : null}
 
-          <div className="grid gap-8 lg:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Acciones (action_type)</CardTitle>
-                <CardDescription>
-                  Desglose agregado del periodo (no es serie diaria).
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="rounded-md border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Tipo</TableHead>
-                        <TableHead className="text-right">Valor</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {data.actions.length === 0 ? (
+          {rankingQuery.isError ? (
+            <Alert variant="destructive">
+              <AlertTitle>Error al cargar el ranking</AlertTitle>
+              <AlertDescription>
+                {rankingQuery.error instanceof Error ? rankingQuery.error.message : "Error desconocido"}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {!rankingQuery.isLoading && !rankingQuery.isError ? (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Ranking de anuncios</CardTitle>
+                  <CardDescription>
+                    Top anuncios por rendimiento en el periodo seleccionado.
+                    {selectedAdId ? (
+                      <span className="text-primary ml-2 font-medium">
+                        Anuncio seleccionado: {selectedAdId}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground ml-2">
+                        Haz clic en una fila para seleccionar un anuncio.
+                      </span>
+                    )}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
                         <TableRow>
-                          <TableCell colSpan={2} className="text-center">
-                            Sin acciones
-                          </TableCell>
+                          <TableHead>Nombre</TableHead>
+                          <TableHead className="text-right">Impresiones</TableHead>
+                          <TableHead className="text-right">Clics</TableHead>
+                          <TableHead className="text-right">Gasto</TableHead>
+                          <TableHead className="text-right">CTR</TableHead>
+                          <TableHead className="text-right">CPM</TableHead>
                         </TableRow>
-                      ) : (
-                        data.actions.map((row, idx) => (
-                          <TableRow key={`${String(row.action_type)}-${idx}`}>
-                            <TableCell className="max-w-[240px] font-mono text-xs">
-                              {String(row.action_type)}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {formatNum(row.value)}
+                      </TableHeader>
+                      <TableBody>
+                        {(rankingQuery.data?.data ?? []).length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={6} className="text-center">
+                              Sin datos de anuncios para este periodo.
                             </TableCell>
                           </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardContent>
-            </Card>
+                        ) : (
+                          (rankingQuery.data?.data ?? []).map((row, idx) => (
+                            <TableRow
+                              key={String(row.ad_id ?? idx)}
+                              className={`cursor-pointer ${selectedAdId === String(row.ad_id) ? "bg-muted" : ""}`}
+                              onClick={() => {
+                                const adId = row.ad_id != null ? String(row.ad_id) : null;
+                                if (adId) setSelectedAdId(adId);
+                              }}
+                            >
+                              <TableCell className="font-medium">
+                                {String(row.ad_name ?? row.ad_id ?? "—")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {Number(row.impressions ?? 0).toLocaleString("es")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {String(row.clicks ?? "—")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                ${String(row.spend ?? "—")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {String(row.ctr ?? "—")}%
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                ${String(row.cpm ?? "—")}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Costo por tipo de acción</CardTitle>
-                <CardDescription>
-                  Campo <code className="text-xs">cost_per_action_type</code> de
-                  Meta.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="rounded-md border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Tipo</TableHead>
-                        <TableHead className="text-right">Costo</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {data.cost_per_action_type.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={2} className="text-center">
-                            Sin datos
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        data.cost_per_action_type.map((row, idx) => (
-                          <TableRow key={`${String(row.action_type)}-${idx}`}>
-                            <TableCell className="max-w-[240px] font-mono text-xs">
-                              {String(row.action_type)}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {formatNum(row.value)}
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardContent>
-            </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Distribución por anuncio</CardTitle>
+                  <CardDescription>
+                    {METRIC_LABELS[rankingMetric] ?? rankingMetric} por anuncio (top 10).
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pl-0">
+                  {rankingChartData.length === 0 ? (
+                    <p className="text-muted-foreground px-6 text-sm">
+                      No hay datos para graficar.
+                    </p>
+                  ) : (
+                    <ChartContainer config={rankingChartConfig} className="min-h-[280px] w-full">
+                      <BarChart
+                        accessibilityLayer
+                        data={rankingChartData}
+                        margin={{ left: 8, right: 8, top: 8, bottom: 48 }}
+                      >
+                        <CartesianGrid vertical={false} />
+                        <XAxis
+                          dataKey="label"
+                          tickLine={false}
+                          tickMargin={8}
+                          angle={-35}
+                          textAnchor="end"
+                          height={64}
+                          interval={0}
+                          fontSize={10}
+                        />
+                        <YAxis tickLine={false} axisLine={false} width={48} />
+                        <ChartTooltip content={<ChartTooltipContent />} />
+                        <Bar dataKey="value" fill="var(--color-value)" radius={4} />
+                      </BarChart>
+                    </ChartContainer>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          ) : null}
+        </TabsContent>
+
+        {/* ── Tab: Geografía ── */}
+        <TabsContent value="geografia" className="space-y-6 pt-4">
+          <div className="flex items-center gap-3">
+            <span className="text-muted-foreground text-sm">Scope:</span>
+            <Select value={geoScope} onValueChange={(v) => setGeoScope(v as "account" | "ad")}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="account">Cuenta completa</SelectItem>
+                <SelectItem value="ad">Anuncio seleccionado</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
+          {geoScope === "ad" && !selectedAdId ? (
+            <Alert>
+              <AlertTitle>Selecciona un anuncio</AlertTitle>
+              <AlertDescription>
+                Ve a la pestaña <strong>Ranking</strong>, haz clic en una fila para seleccionar un anuncio y luego vuelve aquí.
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {geoQuery.isLoading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 rounded-md" />
+              ))}
+            </div>
+          ) : null}
+
+          {geoQuery.isError ? (
+            <Alert variant="destructive">
+              <AlertTitle>Error al cargar datos geográficos</AlertTitle>
+              <AlertDescription>
+                {geoQuery.error instanceof Error ? geoQuery.error.message : "Error desconocido"}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {!geoQuery.isLoading && !geoQuery.isError && (geoScope === "account" || Boolean(selectedAdId)) ? (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Distribución geográfica</CardTitle>
+                  <CardDescription>
+                    Impresiones por región —{" "}
+                    {geoScope === "account" ? "cuenta completa" : `anuncio ${selectedAdId}`}.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Región</TableHead>
+                          <TableHead className="text-right">Impresiones</TableHead>
+                          <TableHead className="text-right">Clics</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(geoQuery.data?.data ?? []).length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={3} className="text-center">
+                              Sin datos geográficos para este periodo.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          (geoQuery.data?.data ?? []).map((row, idx) => (
+                            <TableRow key={String(row.region ?? row.country ?? idx)}>
+                              <TableCell className="font-medium">
+                                {String(row.region ?? row.country ?? "Desconocido")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {Number(row.impressions ?? 0).toLocaleString("es")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {String(row.clicks ?? "—")}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Impresiones por región</CardTitle>
+                  <CardDescription>Comparativa geográfica.</CardDescription>
+                </CardHeader>
+                <CardContent className="pl-0">
+                  {geoChartData.length === 0 ? (
+                    <p className="text-muted-foreground px-6 text-sm">
+                      No hay datos para graficar.
+                    </p>
+                  ) : (
+                    <ChartContainer config={geoChartConfig} className="min-h-[280px] w-full">
+                      <BarChart
+                        accessibilityLayer
+                        data={geoChartData}
+                        layout="vertical"
+                        margin={{ left: 8, right: 8 }}
+                      >
+                        <XAxis type="number" dataKey="impressions" hide />
+                        <YAxis
+                          dataKey="region"
+                          type="category"
+                          tickLine={false}
+                          tickMargin={10}
+                          axisLine={false}
+                          width={120}
+                        />
+                        <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
+                        <Bar dataKey="impressions" fill="var(--color-impressions)" radius={5} />
+                      </BarChart>
+                    </ChartContainer>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          ) : null}
+        </TabsContent>
+
+        {/* ── Tab: Targeting ── */}
+        <TabsContent value="targeting" className="pt-4">
           <Card>
             <CardHeader>
-              <CardTitle>Gráfico por tipo de acción</CardTitle>
+              <CardTitle>Targeting del anuncio seleccionado</CardTitle>
               <CardDescription>
-                Barras según los tipos con mayor volumen en el periodo
-                agregado.
+                Selecciona un anuncio en la tabla Ranking para ver su targeting.
               </CardDescription>
             </CardHeader>
-            <CardContent className="pl-0">
-              {chartData.length === 0 ? (
-                <p className="text-muted-foreground px-6 text-sm">
-                  No hay datos para graficar.
-                </p>
-              ) : (
-                <ChartContainer config={chartConfig} className="min-h-[280px] w-full">
-                  <BarChart
-                    accessibilityLayer
-                    data={chartData}
-                    margin={{ left: 8, right: 8, top: 8, bottom: 48 }}
-                  >
-                    <CartesianGrid vertical={false} />
-                    <XAxis
-                      dataKey="label"
-                      tickLine={false}
-                      tickMargin={8}
-                      angle={-35}
-                      textAnchor="end"
-                      height={64}
-                      interval={0}
-                      fontSize={10}
-                    />
-                    <YAxis tickLine={false} axisLine={false} width={48} />
-                    <ChartTooltip content={<ChartTooltipContent />} />
-                    <Bar dataKey="value" fill="var(--color-value)" radius={4} />
-                  </BarChart>
-                </ChartContainer>
-              )}
+            <CardContent>
+              {!selectedAdId ? (
+                <Alert>
+                  <AlertTitle>Sin anuncio seleccionado</AlertTitle>
+                  <AlertDescription>
+                    Ve a la pestaña <strong>Ranking</strong>, haz clic en una fila para seleccionar un anuncio y luego vuelve aquí.
+                  </AlertDescription>
+                </Alert>
+              ) : targetingQuery.isLoading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <Skeleton key={i} className="h-8 rounded-md" />
+                  ))}
+                </div>
+              ) : targetingQuery.isError ? (
+                <Alert variant="destructive">
+                  <AlertTitle>Error al cargar el targeting</AlertTitle>
+                  <AlertDescription>
+                    {targetingQuery.error instanceof Error ? targetingQuery.error.message : "Error desconocido"}
+                  </AlertDescription>
+                </Alert>
+              ) : targetingQuery.data ? (
+                <ScrollArea className="h-[300px] rounded-md border p-4">
+                  <pre className="font-mono text-xs">
+                    {JSON.stringify(targetingQuery.data.targeting, null, 2)}
+                  </pre>
+                </ScrollArea>
+              ) : null}
             </CardContent>
           </Card>
-        </>
-      ) : null}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
