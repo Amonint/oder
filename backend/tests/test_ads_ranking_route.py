@@ -25,3 +25,19 @@ def test_ads_performance_returns_200(client):
     body = r.json()
     assert "data" in body
     assert len(body["data"]) == 1
+
+
+@respx.mock
+def test_ads_performance_uses_time_range(client):
+    respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
+        return_value=httpx.Response(200, json={"data": [{"ad_id": "1", "spend": "5"}]})
+    )
+    r = client.get(
+        "/api/v1/accounts/act_123/ads/performance",
+        params={"date_start": "2025-01-01", "date_stop": "2025-01-31"},
+        headers={"Authorization": "Bearer test_tok"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["time_range"] == {"since": "2025-01-01", "until": "2025-01-31"}
+    assert body["date_preset"] is None

@@ -6,20 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from oderbiz_analytics.adapters.meta.insights import fetch_insights
 from oderbiz_analytics.api.deps import get_meta_access_token
+from oderbiz_analytics.api.utils import normalize_ad_account_id
 from oderbiz_analytics.config import Settings, get_settings
 
 router = APIRouter(prefix="/accounts", tags=["ads_ranking"])
 
 RANKING_FIELDS = "ad_id,ad_name,campaign_name,impressions,clicks,spend,reach,frequency,cpm,cpp,ctr"
-
-
-def _normalize_ad_account_id(ad_account_id: str) -> str:
-    aid = ad_account_id.strip()
-    if aid.startswith("act_"):
-        return aid
-    if aid.isdigit():
-        return f"act_{aid}"
-    return aid
 
 
 @router.get("/{ad_account_id}/ads/performance")
@@ -37,7 +29,13 @@ async def get_ads_performance(
     - If both `date_start` and `date_stop` are provided, uses `time_range`.
     - Otherwise uses `date_preset` (defaults to "last_30d" if none provided).
     """
-    normalized_id = _normalize_ad_account_id(ad_account_id)
+    if bool(date_start) != bool(date_stop):
+        raise HTTPException(
+            status_code=422,
+            detail="Se requieren date_start y date_stop juntos para usar rango de fechas personalizado.",
+        )
+
+    normalized_id = normalize_ad_account_id(ad_account_id)
     base = f"https://graph.facebook.com/{settings.meta_graph_version}".rstrip("/")
 
     use_time_range: dict[str, str] | None = None

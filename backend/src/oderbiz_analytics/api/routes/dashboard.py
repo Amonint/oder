@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from oderbiz_analytics.adapters.meta.insights import fetch_account_insights
 from oderbiz_analytics.api.deps import get_meta_access_token
+from oderbiz_analytics.api.utils import normalize_ad_account_id
 from oderbiz_analytics.config import Settings, get_settings
 from oderbiz_analytics.jobs.ingest_daily import FIELDS
 
@@ -21,15 +22,6 @@ SUMMARY_KEYS = (
     "cpp",
     "ctr",
 )
-
-
-def _normalize_ad_account_id(ad_account_id: str) -> str:
-    aid = ad_account_id.strip()
-    if aid.startswith("act_"):
-        return aid
-    if aid.isdigit():
-        return f"act_{aid}"
-    return aid
 
 
 def _to_float(value: object) -> float:
@@ -76,7 +68,7 @@ async def get_account_dashboard(
     `summary` are zero, `actions` / `cost_per_action_type` are empty lists, and
     `date_start` / `date_stop` are null.
     """
-    normalized_id = _normalize_ad_account_id(ad_account_id)
+    normalized_id = normalize_ad_account_id(ad_account_id)
     base = f"https://graph.facebook.com/{settings.meta_graph_version}".rstrip("/")
 
     try:
