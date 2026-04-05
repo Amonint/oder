@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from oderbiz_analytics.adapters.meta.ads_entities import fetch_ad_json, fetch_adset_json
 from oderbiz_analytics.api.deps import get_meta_access_token
-from oderbiz_analytics.api.utils import normalize_ad_account_id
 from oderbiz_analytics.config import Settings, get_settings
 
 router = APIRouter(prefix="/accounts", tags=["targeting"])
@@ -13,6 +12,7 @@ router = APIRouter(prefix="/accounts", tags=["targeting"])
 
 @router.get("/{ad_account_id}/ads/{ad_id}/targeting")
 async def get_ad_targeting(
+    # ad_account_id: path param incluido para verificar pertenencia en futuras versiones (v1: sin comprobación)
     ad_account_id: str,
     ad_id: str,
     settings: Settings = Depends(get_settings),
