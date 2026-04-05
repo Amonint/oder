@@ -70,6 +70,13 @@ const KPI_LABELS: Record<string, string> = {
   ctr: "CTR",
 };
 
+const METRIC_LABELS: Record<string, string> = {
+  impressions: "Impresiones",
+  clicks: "Clics",
+  spend: "Gasto",
+  ctr: "CTR",
+};
+
 function formatNum(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(2)}k`;
@@ -132,20 +139,15 @@ export default function DashboardPage() {
     },
   } satisfies ChartConfig;
 
-  const METRIC_LABELS: Record<string, string> = {
-    impressions: "Impresiones",
-    clicks: "Clics",
-    spend: "Gasto",
-    ctr: "CTR",
-  };
-
-  const rankingChartData = (rankingQuery.data?.data ?? [])
-    .map((row) => ({
-      label: String(row.ad_name ?? row.ad_id ?? "").slice(0, 20),
-      value: Number(row[rankingMetric as keyof typeof row] ?? 0),
-    }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10);
+  const rankingChartData = useMemo(() => {
+    return (rankingQuery.data?.data ?? [])
+      .map((row) => ({
+        label: String(row.ad_name ?? row.ad_id ?? "").slice(0, 20),
+        value: Number(row[rankingMetric as keyof typeof row] ?? 0),
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10);
+  }, [rankingQuery.data, rankingMetric]);
 
   const rankingChartConfig = {
     value: {
@@ -490,9 +492,12 @@ export default function DashboardPage() {
                         ) : (
                           (rankingQuery.data?.data ?? []).map((row, idx) => (
                             <TableRow
-                              key={idx}
+                              key={String(row.ad_id ?? idx)}
                               className={`cursor-pointer ${selectedAdId === String(row.ad_id) ? "bg-muted" : ""}`}
-                              onClick={() => setSelectedAdId(String(row.ad_id ?? ""))}
+                              onClick={() => {
+                                const adId = row.ad_id != null ? String(row.ad_id) : null;
+                                if (adId) setSelectedAdId(adId);
+                              }}
                             >
                               <TableCell className="font-medium">
                                 {String(row.ad_name ?? row.ad_id ?? "—")}
@@ -633,7 +638,7 @@ export default function DashboardPage() {
                           </TableRow>
                         ) : (
                           (geoQuery.data?.data ?? []).map((row, idx) => (
-                            <TableRow key={idx}>
+                            <TableRow key={String(row.region ?? row.country ?? idx)}>
                               <TableCell className="font-medium">
                                 {String(row.region ?? row.country ?? "Desconocido")}
                               </TableCell>
@@ -668,7 +673,7 @@ export default function DashboardPage() {
                         accessibilityLayer
                         data={geoChartData}
                         layout="vertical"
-                        margin={{ left: -20 }}
+                        margin={{ left: 8, right: 8 }}
                       >
                         <XAxis type="number" dataKey="impressions" hide />
                         <YAxis
@@ -677,6 +682,7 @@ export default function DashboardPage() {
                           tickLine={false}
                           tickMargin={10}
                           axisLine={false}
+                          width={120}
                         />
                         <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
                         <Bar dataKey="impressions" fill="var(--color-impressions)" radius={5} />
