@@ -32,7 +32,7 @@ async def fetch_insights(
             if date_preset is not None:
                 params["date_preset"] = date_preset
         if breakdowns is not None:
-            params["breakdowns"] = json.dumps(breakdowns)
+            params["breakdowns"] = ",".join(breakdowns)
         r = await client.get(
             f"{base_url.rstrip('/')}/{ad_account_id}/insights",
             params=params,

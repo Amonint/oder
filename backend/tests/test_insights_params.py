@@ -22,4 +22,4 @@ async def test_fetch_insights_passes_level_and_breakdowns():
     assert route.called
     req = route.calls[0].request
     assert "level=ad" in str(req.url)
-    assert "breakdowns" in str(req.url)
+    assert "breakdowns=region" in str(req.url)
