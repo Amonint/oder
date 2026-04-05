@@ -94,6 +94,7 @@ function formatNum(n: number): string {
 export default function DashboardPage() {
   const { accountId } = useParams<{ accountId: string }>();
   const [datePreset, setDatePreset] = useState<string>("last_30d");
+  const [rankingMetric, setRankingMetric] = useState<"impressions" | "clicks" | "spend" | "ctr">("impressions");
   const hasToken = Boolean(getMetaAccessToken());
   const id = accountId ? decodeURIComponent(accountId) : "";
 
@@ -122,14 +123,21 @@ export default function DashboardPage() {
     },
   } satisfies ChartConfig;
 
+  const METRIC_LABELS: Record<string, string> = {
+    impressions: "Impresiones",
+    clicks: "Clics",
+    spend: "Gasto",
+    ctr: "CTR",
+  };
+
   const rankingChartData = MOCK_RANKING.map((row) => ({
     label: row.ad_name.slice(0, 20),
-    value: Number(row.impressions),
+    value: Number(row[rankingMetric as keyof typeof row] ?? 0),
   }));
 
   const rankingChartConfig = {
     value: {
-      label: "Impresiones",
+      label: METRIC_LABELS[rankingMetric] ?? rankingMetric,
       color: "var(--chart-1)",
     },
   } satisfies ChartConfig;
@@ -399,7 +407,7 @@ export default function DashboardPage() {
         <TabsContent value="ranking" className="space-y-6 pt-4">
           <div className="flex items-center gap-3">
             <span className="text-muted-foreground text-sm">Métrica:</span>
-            <Select defaultValue="impressions">
+            <Select value={rankingMetric} onValueChange={(v) => setRankingMetric(v as typeof rankingMetric)}>
               <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="Métrica" />
               </SelectTrigger>
@@ -472,6 +480,7 @@ export default function DashboardPage() {
                     interval={0}
                     fontSize={10}
                   />
+                  <YAxis tickLine={false} axisLine={false} width={48} />
                   <ChartTooltip content={<ChartTooltipContent />} />
                   <Bar dataKey="value" fill="var(--color-value)" radius={4} />
                 </BarChart>
