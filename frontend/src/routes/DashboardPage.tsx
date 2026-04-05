@@ -26,6 +26,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -43,6 +44,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const DATE_PRESETS = [
   { value: "last_7d", label: "Últimos 7 días" },
@@ -60,6 +62,27 @@ const KPI_LABELS: Record<string, string> = {
   cpm: "CPM",
   cpp: "CPP",
   ctr: "CTR",
+};
+
+const MOCK_RANKING = [
+  { ad_name: "Ad Verano 2025", impressions: "12000", clicks: "300", spend: "250.50", ctr: "2.5", cpm: "20.88" },
+  { ad_name: "Ad Promo Flash", impressions: "8500", clicks: "210", spend: "175.00", ctr: "2.47", cpm: "20.59" },
+  { ad_name: "Ad Retargeting A", impressions: "5000", clicks: "180", spend: "120.00", ctr: "3.6", cpm: "24.00" },
+];
+
+const MOCK_GEO = [
+  { region: "California", impressions: "5000", clicks: "120" },
+  { region: "Texas", impressions: "3200", clicks: "85" },
+  { region: "Florida", impressions: "2100", clicks: "60" },
+  { region: "New York", impressions: "1800", clicks: "45" },
+];
+
+const MOCK_TARGETING = {
+  age_min: 18,
+  age_max: 65,
+  genders: [1, 2],
+  geo_locations: { countries: ["US", "MX"] },
+  interests: [{ id: "6003139266461", name: "Technology" }],
 };
 
 function formatNum(n: number): string {
@@ -96,6 +119,30 @@ export default function DashboardPage() {
     value: {
       label: "Valor",
       color: "var(--chart-1)",
+    },
+  } satisfies ChartConfig;
+
+  const rankingChartData = MOCK_RANKING.map((row) => ({
+    label: row.ad_name.slice(0, 20),
+    value: Number(row.impressions),
+  }));
+
+  const rankingChartConfig = {
+    value: {
+      label: "Impresiones",
+      color: "var(--chart-1)",
+    },
+  } satisfies ChartConfig;
+
+  const geoChartData = MOCK_GEO.map((row) => ({
+    region: row.region,
+    impressions: Number(row.impressions),
+  }));
+
+  const geoChartConfig = {
+    impressions: {
+      label: "Impresiones",
+      color: "var(--chart-2)",
     },
   } satisfies ChartConfig;
 
@@ -174,168 +221,346 @@ export default function DashboardPage() {
         </Alert>
       ) : null}
 
-      {isLoading ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton key={i} className="h-28 rounded-xl" />
-          ))}
-        </div>
-      ) : null}
+      <Tabs defaultValue="resumen">
+        <TabsList>
+          <TabsTrigger value="resumen">Resumen</TabsTrigger>
+          <TabsTrigger value="ranking">Ranking</TabsTrigger>
+          <TabsTrigger value="geografia">Geografía</TabsTrigger>
+          <TabsTrigger value="targeting">Targeting</TabsTrigger>
+        </TabsList>
 
-      {isError ? (
-        <Alert variant="destructive">
-          <AlertTitle>Error al cargar el dashboard</AlertTitle>
-          <AlertDescription>
-            {error instanceof Error ? error.message : "Error desconocido"}
-          </AlertDescription>
-        </Alert>
-      ) : null}
+        {/* ── Tab: Resumen ── */}
+        <TabsContent value="resumen" className="space-y-6 pt-4">
+          {isLoading ? (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <Skeleton key={i} className="h-28 rounded-xl" />
+              ))}
+            </div>
+          ) : null}
 
-      {data && !isLoading ? (
-        <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {Object.entries(data.summary).map(([key, val]) => (
-              <Card key={key}>
-                <CardHeader className="pb-2">
+          {isError ? (
+            <Alert variant="destructive">
+              <AlertTitle>Error al cargar el dashboard</AlertTitle>
+              <AlertDescription>
+                {error instanceof Error ? error.message : "Error desconocido"}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {data && !isLoading ? (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {Object.entries(data.summary).map(([key, val]) => (
+                  <Card key={key}>
+                    <CardHeader className="pb-2">
+                      <CardDescription>
+                        {KPI_LABELS[key] ?? key}
+                      </CardDescription>
+                      <CardTitle className="text-2xl tabular-nums">
+                        {formatNum(val)}
+                      </CardTitle>
+                    </CardHeader>
+                  </Card>
+                ))}
+              </div>
+
+              <Separator />
+
+              <div className="grid gap-8 lg:grid-cols-2">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Acciones (action_type)</CardTitle>
+                    <CardDescription>
+                      Desglose agregado del periodo (no es serie diaria).
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Tipo</TableHead>
+                            <TableHead className="text-right">Valor</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {data.actions.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={2} className="text-center">
+                                Sin acciones
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            data.actions.map((row, idx) => (
+                              <TableRow key={`${String(row.action_type)}-${idx}`}>
+                                <TableCell className="max-w-[240px] font-mono text-xs">
+                                  {String(row.action_type)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatNum(row.value)}
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Costo por tipo de acción</CardTitle>
+                    <CardDescription>
+                      Campo <code className="text-xs">cost_per_action_type</code> de
+                      Meta.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="rounded-md border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Tipo</TableHead>
+                            <TableHead className="text-right">Costo</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {data.cost_per_action_type.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={2} className="text-center">
+                                Sin datos
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            data.cost_per_action_type.map((row, idx) => (
+                              <TableRow key={`${String(row.action_type)}-${idx}`}>
+                                <TableCell className="max-w-[240px] font-mono text-xs">
+                                  {String(row.action_type)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatNum(row.value)}
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Gráfico por tipo de acción</CardTitle>
                   <CardDescription>
-                    {KPI_LABELS[key] ?? key}
+                    Barras según los tipos con mayor volumen en el periodo
+                    agregado.
                   </CardDescription>
-                  <CardTitle className="text-2xl tabular-nums">
-                    {formatNum(val)}
-                  </CardTitle>
                 </CardHeader>
+                <CardContent className="pl-0">
+                  {chartData.length === 0 ? (
+                    <p className="text-muted-foreground px-6 text-sm">
+                      No hay datos para graficar.
+                    </p>
+                  ) : (
+                    <ChartContainer config={chartConfig} className="min-h-[280px] w-full">
+                      <BarChart
+                        accessibilityLayer
+                        data={chartData}
+                        margin={{ left: 8, right: 8, top: 8, bottom: 48 }}
+                      >
+                        <CartesianGrid vertical={false} />
+                        <XAxis
+                          dataKey="label"
+                          tickLine={false}
+                          tickMargin={8}
+                          angle={-35}
+                          textAnchor="end"
+                          height={64}
+                          interval={0}
+                          fontSize={10}
+                        />
+                        <YAxis tickLine={false} axisLine={false} width={48} />
+                        <ChartTooltip content={<ChartTooltipContent />} />
+                        <Bar dataKey="value" fill="var(--color-value)" radius={4} />
+                      </BarChart>
+                    </ChartContainer>
+                  )}
+                </CardContent>
               </Card>
-            ))}
-          </div>
+            </>
+          ) : null}
+        </TabsContent>
 
-          <Separator />
-
-          <div className="grid gap-8 lg:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Acciones (action_type)</CardTitle>
-                <CardDescription>
-                  Desglose agregado del periodo (no es serie diaria).
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="rounded-md border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Tipo</TableHead>
-                        <TableHead className="text-right">Valor</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {data.actions.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={2} className="text-center">
-                            Sin acciones
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        data.actions.map((row, idx) => (
-                          <TableRow key={`${String(row.action_type)}-${idx}`}>
-                            <TableCell className="max-w-[240px] font-mono text-xs">
-                              {String(row.action_type)}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {formatNum(row.value)}
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Costo por tipo de acción</CardTitle>
-                <CardDescription>
-                  Campo <code className="text-xs">cost_per_action_type</code> de
-                  Meta.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="rounded-md border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Tipo</TableHead>
-                        <TableHead className="text-right">Costo</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {data.cost_per_action_type.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={2} className="text-center">
-                            Sin datos
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        data.cost_per_action_type.map((row, idx) => (
-                          <TableRow key={`${String(row.action_type)}-${idx}`}>
-                            <TableCell className="max-w-[240px] font-mono text-xs">
-                              {String(row.action_type)}
-                            </TableCell>
-                            <TableCell className="text-right tabular-nums">
-                              {formatNum(row.value)}
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardContent>
-            </Card>
+        {/* ── Tab: Ranking ── */}
+        <TabsContent value="ranking" className="space-y-6 pt-4">
+          <div className="flex items-center gap-3">
+            <span className="text-muted-foreground text-sm">Métrica:</span>
+            <Select defaultValue="impressions">
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Métrica" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="impressions">Impresiones</SelectItem>
+                <SelectItem value="clicks">Clics</SelectItem>
+                <SelectItem value="spend">Gasto</SelectItem>
+                <SelectItem value="ctr">CTR</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <Card>
             <CardHeader>
-              <CardTitle>Gráfico por tipo de acción</CardTitle>
+              <CardTitle>Ranking de anuncios</CardTitle>
               <CardDescription>
-                Barras según los tipos con mayor volumen en el periodo
-                agregado.
+                Top anuncios por rendimiento en el periodo seleccionado.
               </CardDescription>
             </CardHeader>
-            <CardContent className="pl-0">
-              {chartData.length === 0 ? (
-                <p className="text-muted-foreground px-6 text-sm">
-                  No hay datos para graficar.
-                </p>
-              ) : (
-                <ChartContainer config={chartConfig} className="min-h-[280px] w-full">
-                  <BarChart
-                    accessibilityLayer
-                    data={chartData}
-                    margin={{ left: 8, right: 8, top: 8, bottom: 48 }}
-                  >
-                    <CartesianGrid vertical={false} />
-                    <XAxis
-                      dataKey="label"
-                      tickLine={false}
-                      tickMargin={8}
-                      angle={-35}
-                      textAnchor="end"
-                      height={64}
-                      interval={0}
-                      fontSize={10}
-                    />
-                    <YAxis tickLine={false} axisLine={false} width={48} />
-                    <ChartTooltip content={<ChartTooltipContent />} />
-                    <Bar dataKey="value" fill="var(--color-value)" radius={4} />
-                  </BarChart>
-                </ChartContainer>
-              )}
+            <CardContent>
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nombre</TableHead>
+                      <TableHead className="text-right">Impresiones</TableHead>
+                      <TableHead className="text-right">Clics</TableHead>
+                      <TableHead className="text-right">Gasto</TableHead>
+                      <TableHead className="text-right">CTR</TableHead>
+                      <TableHead className="text-right">CPM</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {MOCK_RANKING.map((row, idx) => (
+                      <TableRow key={idx}>
+                        <TableCell className="font-medium">{row.ad_name}</TableCell>
+                        <TableCell className="text-right tabular-nums">{Number(row.impressions).toLocaleString("es")}</TableCell>
+                        <TableCell className="text-right tabular-nums">{row.clicks}</TableCell>
+                        <TableCell className="text-right tabular-nums">${row.spend}</TableCell>
+                        <TableCell className="text-right tabular-nums">{row.ctr}%</TableCell>
+                        <TableCell className="text-right tabular-nums">${row.cpm}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
-        </>
-      ) : null}
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Distribución por anuncio</CardTitle>
+              <CardDescription>Impresiones por anuncio (datos mock).</CardDescription>
+            </CardHeader>
+            <CardContent className="pl-0">
+              <ChartContainer config={rankingChartConfig} className="min-h-[280px] w-full">
+                <BarChart
+                  accessibilityLayer
+                  data={rankingChartData}
+                  margin={{ left: 8, right: 8, top: 8, bottom: 48 }}
+                >
+                  <CartesianGrid vertical={false} />
+                  <XAxis
+                    dataKey="label"
+                    tickLine={false}
+                    tickMargin={8}
+                    angle={-35}
+                    textAnchor="end"
+                    height={64}
+                    interval={0}
+                    fontSize={10}
+                  />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Bar dataKey="value" fill="var(--color-value)" radius={4} />
+                </BarChart>
+              </ChartContainer>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Tab: Geografía ── */}
+        <TabsContent value="geografia" className="space-y-6 pt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Distribución geográfica</CardTitle>
+              <CardDescription>
+                Impresiones y clics por región (datos mock).
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Región</TableHead>
+                      <TableHead className="text-right">Impresiones</TableHead>
+                      <TableHead className="text-right">Clics</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {MOCK_GEO.map((row, idx) => (
+                      <TableRow key={idx}>
+                        <TableCell className="font-medium">{row.region}</TableCell>
+                        <TableCell className="text-right tabular-nums">{Number(row.impressions).toLocaleString("es")}</TableCell>
+                        <TableCell className="text-right tabular-nums">{row.clicks}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Impresiones por región</CardTitle>
+              <CardDescription>Comparativa geográfica (datos mock).</CardDescription>
+            </CardHeader>
+            <CardContent className="pl-0">
+              <ChartContainer config={geoChartConfig} className="min-h-[280px] w-full">
+                <BarChart
+                  accessibilityLayer
+                  data={geoChartData}
+                  layout="vertical"
+                  margin={{ left: -20 }}
+                >
+                  <XAxis type="number" dataKey="impressions" hide />
+                  <YAxis
+                    dataKey="region"
+                    type="category"
+                    tickLine={false}
+                    tickMargin={10}
+                    axisLine={false}
+                  />
+                  <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
+                  <Bar dataKey="impressions" fill="var(--color-impressions)" radius={5} />
+                </BarChart>
+              </ChartContainer>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Tab: Targeting ── */}
+        <TabsContent value="targeting" className="pt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Targeting del anuncio seleccionado</CardTitle>
+              <CardDescription>
+                Selecciona un anuncio en la tabla Ranking para ver su targeting.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ScrollArea className="h-[300px] rounded-md border p-4">
+                <pre className="font-mono text-xs">
+                  {JSON.stringify(MOCK_TARGETING, null, 2)}
+                </pre>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
