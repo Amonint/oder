@@ -2,7 +2,13 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { fetchAccountDashboard, getMetaAccessToken } from "@/api/client";
+import {
+  fetchAccountDashboard,
+  fetchAdsPerformance,
+  fetchGeoInsights,
+  fetchAdTargeting,
+  getMetaAccessToken,
+} from "@/api/client";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -64,27 +70,6 @@ const KPI_LABELS: Record<string, string> = {
   ctr: "CTR",
 };
 
-const MOCK_RANKING = [
-  { ad_name: "Ad Verano 2025", impressions: "12000", clicks: "300", spend: "250.50", ctr: "2.5", cpm: "20.88" },
-  { ad_name: "Ad Promo Flash", impressions: "8500", clicks: "210", spend: "175.00", ctr: "2.47", cpm: "20.59" },
-  { ad_name: "Ad Retargeting A", impressions: "5000", clicks: "180", spend: "120.00", ctr: "3.6", cpm: "24.00" },
-];
-
-const MOCK_GEO = [
-  { region: "California", impressions: "5000", clicks: "120" },
-  { region: "Texas", impressions: "3200", clicks: "85" },
-  { region: "Florida", impressions: "2100", clicks: "60" },
-  { region: "New York", impressions: "1800", clicks: "45" },
-];
-
-const MOCK_TARGETING = {
-  age_min: 18,
-  age_max: 65,
-  genders: [1, 2],
-  geo_locations: { countries: ["US", "MX"] },
-  interests: [{ id: "6003139266461", name: "Technology" }],
-};
-
 function formatNum(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(2)}k`;
@@ -95,6 +80,8 @@ export default function DashboardPage() {
   const { accountId } = useParams<{ accountId: string }>();
   const [datePreset, setDatePreset] = useState<string>("last_30d");
   const [rankingMetric, setRankingMetric] = useState<"impressions" | "clicks" | "spend" | "ctr">("impressions");
+  const [selectedAdId, setSelectedAdId] = useState<string | null>(null);
+  const [geoScope, setGeoScope] = useState<"account" | "ad">("account");
   const hasToken = Boolean(getMetaAccessToken());
   const id = accountId ? decodeURIComponent(accountId) : "";
 
@@ -102,6 +89,28 @@ export default function DashboardPage() {
     queryKey: ["dashboard", id, datePreset],
     queryFn: () => fetchAccountDashboard(id, datePreset),
     enabled: hasToken && Boolean(id),
+  });
+
+  const rankingQuery = useQuery({
+    queryKey: ["ads-performance", id, datePreset],
+    queryFn: () => fetchAdsPerformance(id, { datePreset }),
+    enabled: hasToken && Boolean(id),
+  });
+
+  const geoQuery = useQuery({
+    queryKey: ["geo-insights", id, geoScope, selectedAdId, datePreset],
+    queryFn: () => fetchGeoInsights(id, {
+      scope: geoScope,
+      adId: geoScope === "ad" ? (selectedAdId ?? undefined) : undefined,
+      datePreset,
+    }),
+    enabled: hasToken && Boolean(id) && (geoScope === "account" || Boolean(selectedAdId)),
+  });
+
+  const targetingQuery = useQuery({
+    queryKey: ["targeting", id, selectedAdId],
+    queryFn: () => fetchAdTargeting(id, selectedAdId!),
+    enabled: hasToken && Boolean(id) && Boolean(selectedAdId),
   });
 
   const chartData = useMemo(() => {
@@ -130,10 +139,13 @@ export default function DashboardPage() {
     ctr: "CTR",
   };
 
-  const rankingChartData = MOCK_RANKING.map((row) => ({
-    label: row.ad_name.slice(0, 20),
-    value: Number(row[rankingMetric as keyof typeof row] ?? 0),
-  }));
+  const rankingChartData = (rankingQuery.data?.data ?? [])
+    .map((row) => ({
+      label: String(row.ad_name ?? row.ad_id ?? "").slice(0, 20),
+      value: Number(row[rankingMetric as keyof typeof row] ?? 0),
+    }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
 
   const rankingChartConfig = {
     value: {
@@ -142,9 +154,9 @@ export default function DashboardPage() {
     },
   } satisfies ChartConfig;
 
-  const geoChartData = MOCK_GEO.map((row) => ({
-    region: row.region,
-    impressions: Number(row.impressions),
+  const geoChartData = (geoQuery.data?.data ?? []).map((row) => ({
+    region: String(row.region ?? row.country ?? "Desconocido").slice(0, 20),
+    impressions: Number(row.impressions ?? 0),
   }));
 
   const geoChartConfig = {
@@ -420,135 +432,261 @@ export default function DashboardPage() {
             </Select>
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Ranking de anuncios</CardTitle>
-              <CardDescription>
-                Top anuncios por rendimiento en el periodo seleccionado.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Nombre</TableHead>
-                      <TableHead className="text-right">Impresiones</TableHead>
-                      <TableHead className="text-right">Clics</TableHead>
-                      <TableHead className="text-right">Gasto</TableHead>
-                      <TableHead className="text-right">CTR</TableHead>
-                      <TableHead className="text-right">CPM</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {MOCK_RANKING.map((row, idx) => (
-                      <TableRow key={idx}>
-                        <TableCell className="font-medium">{row.ad_name}</TableCell>
-                        <TableCell className="text-right tabular-nums">{Number(row.impressions).toLocaleString("es")}</TableCell>
-                        <TableCell className="text-right tabular-nums">{row.clicks}</TableCell>
-                        <TableCell className="text-right tabular-nums">${row.spend}</TableCell>
-                        <TableCell className="text-right tabular-nums">{row.ctr}%</TableCell>
-                        <TableCell className="text-right tabular-nums">${row.cpm}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
+          {rankingQuery.isLoading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 rounded-md" />
+              ))}
+            </div>
+          ) : null}
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Distribución por anuncio</CardTitle>
-              <CardDescription>Impresiones por anuncio (datos mock).</CardDescription>
-            </CardHeader>
-            <CardContent className="pl-0">
-              <ChartContainer config={rankingChartConfig} className="min-h-[280px] w-full">
-                <BarChart
-                  accessibilityLayer
-                  data={rankingChartData}
-                  margin={{ left: 8, right: 8, top: 8, bottom: 48 }}
-                >
-                  <CartesianGrid vertical={false} />
-                  <XAxis
-                    dataKey="label"
-                    tickLine={false}
-                    tickMargin={8}
-                    angle={-35}
-                    textAnchor="end"
-                    height={64}
-                    interval={0}
-                    fontSize={10}
-                  />
-                  <YAxis tickLine={false} axisLine={false} width={48} />
-                  <ChartTooltip content={<ChartTooltipContent />} />
-                  <Bar dataKey="value" fill="var(--color-value)" radius={4} />
-                </BarChart>
-              </ChartContainer>
-            </CardContent>
-          </Card>
+          {rankingQuery.isError ? (
+            <Alert variant="destructive">
+              <AlertTitle>Error al cargar el ranking</AlertTitle>
+              <AlertDescription>
+                {rankingQuery.error instanceof Error ? rankingQuery.error.message : "Error desconocido"}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {!rankingQuery.isLoading && !rankingQuery.isError ? (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Ranking de anuncios</CardTitle>
+                  <CardDescription>
+                    Top anuncios por rendimiento en el periodo seleccionado.
+                    {selectedAdId ? (
+                      <span className="text-primary ml-2 font-medium">
+                        Anuncio seleccionado: {selectedAdId}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground ml-2">
+                        Haz clic en una fila para seleccionar un anuncio.
+                      </span>
+                    )}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Nombre</TableHead>
+                          <TableHead className="text-right">Impresiones</TableHead>
+                          <TableHead className="text-right">Clics</TableHead>
+                          <TableHead className="text-right">Gasto</TableHead>
+                          <TableHead className="text-right">CTR</TableHead>
+                          <TableHead className="text-right">CPM</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(rankingQuery.data?.data ?? []).length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={6} className="text-center">
+                              Sin datos de anuncios para este periodo.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          (rankingQuery.data?.data ?? []).map((row, idx) => (
+                            <TableRow
+                              key={idx}
+                              className={`cursor-pointer ${selectedAdId === String(row.ad_id) ? "bg-muted" : ""}`}
+                              onClick={() => setSelectedAdId(String(row.ad_id ?? ""))}
+                            >
+                              <TableCell className="font-medium">
+                                {String(row.ad_name ?? row.ad_id ?? "—")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {Number(row.impressions ?? 0).toLocaleString("es")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {String(row.clicks ?? "—")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                ${String(row.spend ?? "—")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {String(row.ctr ?? "—")}%
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                ${String(row.cpm ?? "—")}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Distribución por anuncio</CardTitle>
+                  <CardDescription>
+                    {METRIC_LABELS[rankingMetric] ?? rankingMetric} por anuncio (top 10).
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pl-0">
+                  {rankingChartData.length === 0 ? (
+                    <p className="text-muted-foreground px-6 text-sm">
+                      No hay datos para graficar.
+                    </p>
+                  ) : (
+                    <ChartContainer config={rankingChartConfig} className="min-h-[280px] w-full">
+                      <BarChart
+                        accessibilityLayer
+                        data={rankingChartData}
+                        margin={{ left: 8, right: 8, top: 8, bottom: 48 }}
+                      >
+                        <CartesianGrid vertical={false} />
+                        <XAxis
+                          dataKey="label"
+                          tickLine={false}
+                          tickMargin={8}
+                          angle={-35}
+                          textAnchor="end"
+                          height={64}
+                          interval={0}
+                          fontSize={10}
+                        />
+                        <YAxis tickLine={false} axisLine={false} width={48} />
+                        <ChartTooltip content={<ChartTooltipContent />} />
+                        <Bar dataKey="value" fill="var(--color-value)" radius={4} />
+                      </BarChart>
+                    </ChartContainer>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          ) : null}
         </TabsContent>
 
         {/* ── Tab: Geografía ── */}
         <TabsContent value="geografia" className="space-y-6 pt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Distribución geográfica</CardTitle>
-              <CardDescription>
-                Impresiones y clics por región (datos mock).
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="rounded-md border">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Región</TableHead>
-                      <TableHead className="text-right">Impresiones</TableHead>
-                      <TableHead className="text-right">Clics</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {MOCK_GEO.map((row, idx) => (
-                      <TableRow key={idx}>
-                        <TableCell className="font-medium">{row.region}</TableCell>
-                        <TableCell className="text-right tabular-nums">{Number(row.impressions).toLocaleString("es")}</TableCell>
-                        <TableCell className="text-right tabular-nums">{row.clicks}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="flex items-center gap-3">
+            <span className="text-muted-foreground text-sm">Scope:</span>
+            <Select value={geoScope} onValueChange={(v) => setGeoScope(v as "account" | "ad")}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="account">Cuenta completa</SelectItem>
+                <SelectItem value="ad">Anuncio seleccionado</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Impresiones por región</CardTitle>
-              <CardDescription>Comparativa geográfica (datos mock).</CardDescription>
-            </CardHeader>
-            <CardContent className="pl-0">
-              <ChartContainer config={geoChartConfig} className="min-h-[280px] w-full">
-                <BarChart
-                  accessibilityLayer
-                  data={geoChartData}
-                  layout="vertical"
-                  margin={{ left: -20 }}
-                >
-                  <XAxis type="number" dataKey="impressions" hide />
-                  <YAxis
-                    dataKey="region"
-                    type="category"
-                    tickLine={false}
-                    tickMargin={10}
-                    axisLine={false}
-                  />
-                  <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
-                  <Bar dataKey="impressions" fill="var(--color-impressions)" radius={5} />
-                </BarChart>
-              </ChartContainer>
-            </CardContent>
-          </Card>
+          {geoScope === "ad" && !selectedAdId ? (
+            <Alert>
+              <AlertTitle>Selecciona un anuncio</AlertTitle>
+              <AlertDescription>
+                Ve a la pestaña <strong>Ranking</strong>, haz clic en una fila para seleccionar un anuncio y luego vuelve aquí.
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {geoQuery.isLoading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 rounded-md" />
+              ))}
+            </div>
+          ) : null}
+
+          {geoQuery.isError ? (
+            <Alert variant="destructive">
+              <AlertTitle>Error al cargar datos geográficos</AlertTitle>
+              <AlertDescription>
+                {geoQuery.error instanceof Error ? geoQuery.error.message : "Error desconocido"}
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {!geoQuery.isLoading && !geoQuery.isError && (geoScope === "account" || Boolean(selectedAdId)) ? (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Distribución geográfica</CardTitle>
+                  <CardDescription>
+                    Impresiones por región —{" "}
+                    {geoScope === "account" ? "cuenta completa" : `anuncio ${selectedAdId}`}.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Región</TableHead>
+                          <TableHead className="text-right">Impresiones</TableHead>
+                          <TableHead className="text-right">Clics</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(geoQuery.data?.data ?? []).length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={3} className="text-center">
+                              Sin datos geográficos para este periodo.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          (geoQuery.data?.data ?? []).map((row, idx) => (
+                            <TableRow key={idx}>
+                              <TableCell className="font-medium">
+                                {String(row.region ?? row.country ?? "Desconocido")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {Number(row.impressions ?? 0).toLocaleString("es")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {String(row.clicks ?? "—")}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Impresiones por región</CardTitle>
+                  <CardDescription>Comparativa geográfica.</CardDescription>
+                </CardHeader>
+                <CardContent className="pl-0">
+                  {geoChartData.length === 0 ? (
+                    <p className="text-muted-foreground px-6 text-sm">
+                      No hay datos para graficar.
+                    </p>
+                  ) : (
+                    <ChartContainer config={geoChartConfig} className="min-h-[280px] w-full">
+                      <BarChart
+                        accessibilityLayer
+                        data={geoChartData}
+                        layout="vertical"
+                        margin={{ left: -20 }}
+                      >
+                        <XAxis type="number" dataKey="impressions" hide />
+                        <YAxis
+                          dataKey="region"
+                          type="category"
+                          tickLine={false}
+                          tickMargin={10}
+                          axisLine={false}
+                        />
+                        <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
+                        <Bar dataKey="impressions" fill="var(--color-impressions)" radius={5} />
+                      </BarChart>
+                    </ChartContainer>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          ) : null}
         </TabsContent>
 
         {/* ── Tab: Targeting ── */}
@@ -561,11 +699,33 @@ export default function DashboardPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <ScrollArea className="h-[300px] rounded-md border p-4">
-                <pre className="font-mono text-xs">
-                  {JSON.stringify(MOCK_TARGETING, null, 2)}
-                </pre>
-              </ScrollArea>
+              {!selectedAdId ? (
+                <Alert>
+                  <AlertTitle>Sin anuncio seleccionado</AlertTitle>
+                  <AlertDescription>
+                    Ve a la pestaña <strong>Ranking</strong>, haz clic en una fila para seleccionar un anuncio y luego vuelve aquí.
+                  </AlertDescription>
+                </Alert>
+              ) : targetingQuery.isLoading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <Skeleton key={i} className="h-8 rounded-md" />
+                  ))}
+                </div>
+              ) : targetingQuery.isError ? (
+                <Alert variant="destructive">
+                  <AlertTitle>Error al cargar el targeting</AlertTitle>
+                  <AlertDescription>
+                    {targetingQuery.error instanceof Error ? targetingQuery.error.message : "Error desconocido"}
+                  </AlertDescription>
+                </Alert>
+              ) : targetingQuery.data ? (
+                <ScrollArea className="h-[300px] rounded-md border p-4">
+                  <pre className="font-mono text-xs">
+                    {JSON.stringify(targetingQuery.data.targeting, null, 2)}
+                  </pre>
+                </ScrollArea>
+              ) : null}
             </CardContent>
           </Card>
         </TabsContent>
