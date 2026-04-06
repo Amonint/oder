@@ -116,21 +116,78 @@ async function readErrorMessage(r: Response): Promise<string> {
   return r.statusText || "Error al llamar a la API";
 }
 
+export interface AdPerformanceRow {
+  ad_id: string;
+  ad_name: string;
+  ad_label: string;
+  campaign_name: string;
+  impressions: number;
+  clicks: number;
+  spend: string;
+  reach: number;
+  frequency: number;
+  cpm: string;
+  cpp: string;
+  ctr: string;
+}
+
 export interface AdsPerformanceResponse {
-  data: Record<string, unknown>[];
+  data: AdPerformanceRow[];
   date_preset: string | null;
   time_range: { since: string; until: string } | null;
+}
+
+export interface GeoMetadata {
+  scope: "account" | "ad";
+  ad_id: string | null;
+  total_rows: number;
+  complete_coverage: boolean;
+  note: string;
+}
+
+export interface GeoInsightRow {
+  region: string;
+  region_name: string;
+  impressions: number;
+  clicks: number;
+  spend: string;
+  reach: number;
 }
 
 export interface GeoInsightsResponse {
-  data: Record<string, unknown>[];
+  data: GeoInsightRow[];
+  metadata: GeoMetadata;
   scope: "account" | "ad";
-  date_preset: string | null;
-  time_range: { since: string; until: string } | null;
+  date_preset?: string;
+  time_range?: { since: string; until: string };
+}
+
+export interface LocationSpec {
+  code?: string;
+  name?: string;
+  radius_km?: number;
+  countries?: string[];
+}
+
+export interface AudienceItem {
+  id: string;
+  name: string;
+}
+
+export interface FormattedTargeting {
+  age_range: string;
+  genders: string[];
+  locations: {
+    countries?: string[];
+    regions?: Array<{ code: string; name: string; radius_km?: number }>;
+    cities?: LocationSpec[];
+  };
+  audiences: Record<string, AudienceItem[]>;
+  raw_json: Record<string, any>;
 }
 
 export interface TargetingResponse {
-  targeting: Record<string, unknown>;
+  targeting: FormattedTargeting;
 }
 
 export async function fetchAdAccounts(): Promise<{ data: AdAccount[] }> {
