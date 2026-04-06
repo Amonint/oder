@@ -1,5 +1,27 @@
-const base =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000";
+/**
+ * Base para `fetch`: cadena vacía = mismo origen (solo en dev con proxy en `vite.config`).
+ * Si defines `VITE_API_BASE_URL`, debe ser el origen del API sin `/api/v1` (se normaliza si lo incluyes).
+ */
+function resolveApiBase(): string {
+  const raw = import.meta.env.VITE_API_BASE_URL as string | undefined;
+  const trimmed = raw === undefined || raw === null ? "" : String(raw).trim();
+
+  // Dev sin variable: /api/* lo reenvía Vite a :8000 (evita 404 por URL mal puesta).
+  if (import.meta.env.DEV && trimmed === "") {
+    return "";
+  }
+
+  const fallback = "http://127.0.0.1:8000";
+  if (trimmed === "") return fallback;
+
+  let origin = trimmed.replace(/\/+$/, "");
+  if (origin.endsWith("/api/v1")) origin = origin.slice(0, -"/api/v1".length);
+  else if (origin.endsWith("/api")) origin = origin.slice(0, -"/api".length);
+  origin = origin.replace(/\/+$/, "");
+  return origin || fallback;
+}
+
+const base = resolveApiBase();
 
 export const META_TOKEN_STORAGE_KEY = "meta_access_token";
 
@@ -51,7 +73,16 @@ async function readErrorMessage(r: Response): Promise<string> {
   const text = await r.text();
   try {
     const j = JSON.parse(text) as { detail?: unknown };
-    if (typeof j.detail === "string") return j.detail;
+    if (typeof j.detail === "string") {
+      if (r.status === 404 && j.detail === "Not Found") {
+        return (
+          "Ruta no encontrada (404). En local: deja sin definir VITE_API_BASE_URL y usa el proxy " +
+          "de Vite, o pon solo el origen (p. ej. http://127.0.0.1:8000) sin /api/v1. " +
+          "Comprueba que el backend esté en marcha."
+        );
+      }
+      return j.detail;
+    }
     if (Array.isArray(j.detail)) {
       const first = j.detail[0] as { msg?: string } | undefined;
       if (first?.msg) return first.msg;

@@ -1,88 +1,40 @@
-# Oderbiz — Meta Ads (frontend)
+# Frontend — Oderbiz Meta Ads
 
-## Flujo
-
-1. **`/`** — Pegar token de Marketing API y pulsar **Conectar**. El token se guarda solo en `sessionStorage` (`meta_access_token`) y se envía al backend como `Authorization: Bearer …`.
-2. **`/accounts`** — Lista de cuentas desde `GET /api/v1/accounts`. Clic en una fila abre el dashboard de esa cuenta.
-3. **`/accounts/:accountId/dashboard`** — Métricas agregadas vía `GET /api/v1/accounts/{id}/dashboard?date_preset=…`.
-
-Variable opcional: `VITE_API_BASE_URL` (por defecto `http://127.0.0.1:8000`).
+Este documento complementa el **[README principal del repositorio](../README.md)** (visión, alcance, público y estado al 5 de abril de 2026). Aquí: flujo de pantallas y desarrollo local.
 
 ---
 
-# React + TypeScript + Vite
+## Flujo de la aplicación
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+1. **`/`** — Pegar token de Marketing API y pulsar **Conectar**. El token se guarda en `sessionStorage` (`meta_access_token`) y se envía al backend como `Authorization: Bearer …`.
+2. **`/accounts`** — Lista de cuentas desde `GET /api/v1/accounts`. Clic en una fila abre el dashboard de esa cuenta.
+3. **`/accounts/:accountId/dashboard`** — Métricas agregadas vía `GET /api/v1/accounts/{id}/dashboard?date_preset=…`.
 
-Currently, two official plugins are available:
+**Próximamente (plan aprobado):** mismas rutas base, con pestañas adicionales en el dashboard (ranking de anuncios, geografía agregada, targeting), gráficos con patrones **shadcn/ui** y consulta previa al **MCP `user-shadcn`** para componentes de chart. Ver `docs/superpowers/plans/2026-04-05-agency-panel-tabs-ranking-geo-targeting.md`.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## Desarrollo
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+En **desarrollo**, las rutas `/api/...` se reenvían al backend en el puerto **8000** (`vite.config.ts`). No hace falta `VITE_API_BASE_URL` salvo otro origen; plantilla en `.env.example`.
 
-## Expanding the ESLint configuration
+**Todo en uno:** desde la raíz del repo, `./scripts/dev-local.sh` — uvicorn `:8000` y `npm run dev` `:5173`.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+`VITE_API_BASE_URL` — solo el **origen** (p. ej. `http://127.0.0.1:8000`), **sin** `/api/v1`.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+---
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## Stack
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+React, TypeScript, Vite, React Router, TanStack Query, Tailwind, componentes estilo shadcn (`src/components/ui`), Recharts vía `chart.tsx`.
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+---
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## React + Vite (plantilla)
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+El proyecto partió de la plantilla Vite + React. Para ampliar ESLint o React Compiler, ver la [documentación oficial de Vite](https://vite.dev) y [React](https://react.dev).
+
+---
 
 ## Charts y componentes UI
 
