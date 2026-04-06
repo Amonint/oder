@@ -46,11 +46,15 @@ def enrich_geo_row(row: dict[str, Any]) -> dict[str, Any]:
     enriched = dict(row)
     region_code = enriched.get("region", "")
 
+    # Manejar None explícitamente: convertir a string vacío para consistencia
+    if region_code is None:
+        region_code = ""
+
     # Agregar nombre legible si existe en mapeo
     if region_code in GEO_REGION_NAMES:
         enriched["region_name"] = GEO_REGION_NAMES[region_code]
     else:
-        # Fallback: usar el código mismo
+        # Fallback: usar el código mismo (o vacío si era None)
         enriched["region_name"] = region_code
 
     return enriched
@@ -75,13 +79,18 @@ def get_geo_metadata(
     Implementa R-3.2: Cobertura completa de filas.
     Implementa R-3.4: Claridad de alcance.
     """
+    # Construir nota de forma segura, manejando ad_id=None
+    if scope == "ad" and ad_id:
+        note = f"Datos agregados a nivel ad. Para anuncio específico: {ad_id}"
+    elif scope == "ad":
+        note = "Datos agregados a nivel ad. (Sin ad_id específico)"
+    else:
+        note = "Datos agregados a nivel account. Para toda la cuenta."
+
     return {
         "scope": scope,
         "ad_id": ad_id if scope == "ad" else None,
         "total_rows": total_rows,
         "complete_coverage": True,  # Indica que Meta devolvió todos los datos disponibles
-        "note": (
-            f"Datos agregados a nivel {scope}. "
-            f"{'Para anuncio específico: ' + ad_id if scope == 'ad' else 'Para toda la cuenta.'}"
-        ),
+        "note": note,
     }

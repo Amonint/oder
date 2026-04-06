@@ -41,3 +41,44 @@ def test_get_geo_metadata_ad_scope():
     assert metadata["scope"] == "ad"
     assert metadata["ad_id"] == "ad_123"
     assert metadata["total_rows"] == total_rows
+
+
+def test_enrich_geo_row_with_none_region():
+    """Cuando region es None, region_name debería ser fallback a string vacío."""
+    row = {"region": None, "impressions": 100, "spend": "10.00"}
+    enriched = enrich_geo_row(row)
+    assert enriched["region"] is None
+    # region_name debería ser fallback de None a "", consistencia
+    assert enriched["region_name"] == ""
+
+
+def test_enrich_geo_row_with_empty_region():
+    """Cuando region es string vacío, region_name debería ser fallback."""
+    row = {"region": "", "impressions": 100, "spend": "10.00"}
+    enriched = enrich_geo_row(row)
+    assert enriched["region"] == ""
+    # Vacío no está en GEO_REGION_NAMES, así que debería ser fallback
+    assert enriched["region_name"] == ""
+
+
+def test_enrich_geo_row_missing_region_key():
+    """Cuando falta 'region' completamente, region_name debería ser fallback."""
+    row = {"impressions": 100, "spend": "10.00"}  # sin region
+    enriched = enrich_geo_row(row)
+    assert "region_name" in enriched
+    # get("region", "") devuelve "", que no está en mapeo
+    assert enriched["region_name"] == ""
+
+
+def test_get_geo_metadata_with_ad_id_none_and_ad_scope():
+    """Cuando scope='ad' pero ad_id=None, la metadata debería indicarlo."""
+    metadata = get_geo_metadata(scope="ad", ad_id=None, total_rows=5)
+    assert metadata["scope"] == "ad"
+    assert metadata["ad_id"] is None  # Documenta el comportamiento
+
+
+def test_get_geo_metadata_with_negative_total_rows():
+    """Cuando total_rows es negativo, debería aceptarlo (o validarse en ruta)."""
+    metadata = get_geo_metadata(scope="account", ad_id=None, total_rows=-1)
+    assert metadata["total_rows"] == -1
+    # Nota: validación podría hacerse en ruta con Pydantic, no aquí
