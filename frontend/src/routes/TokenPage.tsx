@@ -38,7 +38,7 @@ export default function TokenPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-lg flex-col gap-6 p-6">
+    <div className="flex w-full flex-col gap-6 py-6">
       <Card>
         <CardHeader>
           <CardTitle>Meta Ads — Conectar</CardTitle>
@@ -74,7 +74,14 @@ export default function TokenPage() {
           </CardFooter>
         </form>
       </Card>
-      <p className="text-muted-foreground text-center text-xs">
+      <p className="text-muted-foreground text-pretty text-xs">
+        Usá siempre la misma URL del navegador para esta app (solo{" "}
+        <code className="text-xs">localhost</code> o solo{" "}
+        <code className="text-xs">127.0.0.1</code>): si mezclás, el token en{" "}
+        <code className="text-xs">sessionStorage</code> no se comparte entre
+        orígenes.
+      </p>
+      <p className="text-muted-foreground text-pretty text-xs">
         Si compartiste este token, revócalo en Meta for Developers y genera uno
         nuevo.
       </p>

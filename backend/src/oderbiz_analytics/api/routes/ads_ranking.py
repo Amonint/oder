@@ -8,6 +8,7 @@ from oderbiz_analytics.adapters.meta.insights import fetch_insights
 from oderbiz_analytics.api.deps import get_meta_access_token
 from oderbiz_analytics.api.utils import normalize_ad_account_id
 from oderbiz_analytics.config import Settings, get_settings
+from oderbiz_analytics.services.ad_label import get_ad_label
 
 router = APIRouter(prefix="/accounts", tags=["ads_ranking"])
 
@@ -28,6 +29,8 @@ async def get_ads_performance(
 
     - If both `date_start` and `date_stop` are provided, uses `time_range`.
     - Otherwise uses `date_preset` (defaults to "last_30d" if none provided).
+
+    Implements R-2.1, R-2.2: Adds ad_label field with fallback when ad_name is empty/missing.
     """
     if bool(date_start) != bool(date_stop):
         raise HTTPException(
@@ -67,8 +70,14 @@ async def get_ads_performance(
             detail="No se pudo contactar a la API de Meta.",
         ) from None
 
+    # Enriquecer cada row con ad_label
+    enriched_rows = []
+    for row in rows:
+        enriched = {**row, "ad_label": get_ad_label(row)}
+        enriched_rows.append(enriched)
+
     return {
-        "data": rows,
+        "data": enriched_rows,
         "date_preset": effective_preset,
         "time_range": use_time_range,
     }

@@ -41,3 +41,91 @@ def test_ads_performance_uses_time_range(client):
     body = r.json()
     assert body["time_range"] == {"since": "2025-01-01", "until": "2025-01-31"}
     assert body["date_preset"] is None
+
+
+@respx.mock
+def test_ads_performance_enriches_ad_label_with_valid_name(client):
+    """Cuando ad_name existe, debe aparecer en respuesta enriquecida."""
+    respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "ad_id": "ad_100",
+                        "ad_name": "Anuncio Summer Sale",
+                        "spend": "100.00",
+                        "impressions": "5000",
+                    }
+                ]
+            },
+        )
+    )
+    r = client.get(
+        "/api/v1/accounts/act_123/ads/performance",
+        params={"date_preset": "last_7d"},
+        headers={"Authorization": "Bearer test_tok"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["data"]) == 1
+    assert body["data"][0]["ad_label"] == "Anuncio Summer Sale"
+
+
+@respx.mock
+def test_ads_performance_enriches_ad_label_with_empty_name(client):
+    """Cuando ad_name está vacío, ad_label debe tener fallback claro."""
+    respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "ad_id": "ad_200",
+                        "ad_name": "",
+                        "spend": "50.00",
+                        "impressions": "2000",
+                    }
+                ]
+            },
+        )
+    )
+    r = client.get(
+        "/api/v1/accounts/act_123/ads/performance",
+        params={"date_preset": "last_7d"},
+        headers={"Authorization": "Bearer test_tok"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["data"]) == 1
+    assert "Anuncio sin nombre" in body["data"][0]["ad_label"]
+    assert "ad_200" in body["data"][0]["ad_label"]
+
+
+@respx.mock
+def test_ads_performance_enriches_ad_label_with_missing_name(client):
+    """Cuando falta ad_name completamente, ad_label debe tener fallback."""
+    respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "ad_id": "ad_300",
+                        # sin ad_name
+                        "spend": "25.00",
+                        "impressions": "1000",
+                    }
+                ]
+            },
+        )
+    )
+    r = client.get(
+        "/api/v1/accounts/act_123/ads/performance",
+        params={"date_preset": "last_7d"},
+        headers={"Authorization": "Bearer test_tok"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["data"]) == 1
+    assert "Anuncio sin nombre" in body["data"][0]["ad_label"]

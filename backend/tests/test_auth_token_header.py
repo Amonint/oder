@@ -13,6 +13,19 @@ def client(monkeypatch, tmp_path):
     return TestClient(app)
 
 
+@pytest.fixture
+def client_no_meta_env(monkeypatch, tmp_path):
+    monkeypatch.delenv("META_ACCESS_TOKEN", raising=False)
+    monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "t.duckdb"))
+    return TestClient(app)
+
+
+def test_accounts_401_without_bearer_and_without_env_token(client_no_meta_env):
+    r = client_no_meta_env.get("/api/v1/accounts")
+    assert r.status_code == 401
+    assert "Falta el token" in r.json().get("detail", "")
+
+
 def test_accounts_prefers_bearer_token_over_env(client, monkeypatch):
     received_tokens = []
 

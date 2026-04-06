@@ -7,7 +7,9 @@ class Settings(BaseSettings):
 
     duckdb_path: str = "/data/analytics.duckdb"
     meta_graph_version: str = "v25.0"
-    meta_access_token: str
+    # Vacío por defecto: la API puede arrancar sin .env si el cliente envía Bearer.
+    # Jobs (p. ej. ingest diario) y Docker suelen definir META_ACCESS_TOKEN en entorno.
+    meta_access_token: str = ""
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 

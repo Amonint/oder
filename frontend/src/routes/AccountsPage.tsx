@@ -15,6 +15,7 @@ import {
 import {
   clearMetaAccessToken,
   fetchAdAccounts,
+  fetchGraphMe,
   getMetaAccessToken,
   type AdAccount,
 } from "@/api/client";
@@ -29,12 +30,22 @@ export default function AccountsPage() {
     enabled: hasToken,
   });
 
+  const emptyAccounts =
+    Boolean(data) && !isLoading && !isError && data!.data.length === 0;
+
+  const { data: graphMe, isError: meError } = useQuery({
+    queryKey: ["graph-me"],
+    queryFn: fetchGraphMe,
+    enabled: hasToken && emptyAccounts,
+    retry: false,
+  });
+
   if (!hasToken) {
     return <Navigate to="/" replace />;
   }
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="w-full space-y-6 py-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-foreground text-2xl font-semibold tracking-tight">
@@ -73,7 +84,60 @@ export default function AccountsPage() {
         </Alert>
       ) : null}
 
-      {data && !isLoading ? (
+      {emptyAccounts ? (
+        <Alert>
+          <AlertTitle>Meta devolvió 0 cuentas publicitarias</AlertTitle>
+          <AlertDescription className="space-y-3 text-sm">
+            <p>
+              La API respondió bien, pero <strong>/me/adaccounts</strong> no tiene
+              filas para este token. Suele pasar si:
+            </p>
+            <ul className="list-inside list-disc space-y-1">
+              <li>
+                El token no incluye permisos <code className="text-xs">ads_read</code>{" "}
+                o <code className="text-xs">ads_management</code> (u otro alcance que
+                Meta exija para ver cuentas).
+              </li>
+              <li>
+                Es un token de <strong>aplicación</strong> o de <strong>página</strong>{" "}
+                en lugar de un <strong>token de usuario</strong> con acceso a cuentas de
+                anuncios.
+              </li>
+              <li>
+                El usuario de Meta no tiene ninguna cuenta publicitaria asignada (ni
+                propia ni vía Business Manager).
+              </li>
+            </ul>
+            {graphMe?.name != null || graphMe?.id != null ? (
+              <p className="border-border mt-2 border-t pt-2">
+                <strong>Token válido para Graph</strong> como:{" "}
+                <span className="font-medium">{graphMe.name ?? "(sin nombre)"}</span>
+                {graphMe.id != null ? (
+                  <>
+                    {" "}
+                    (<code className="text-xs">{String(graphMe.id)}</code>)
+                  </>
+                ) : null}
+                . El problema entonces es permiso o asignación de cuentas, no que el
+                token esté “muerto”.
+              </p>
+            ) : null}
+            {meError ? (
+              <p className="text-destructive mt-2 text-xs">
+                No se pudo leer <code>/me</code> con este token (revocá el token o
+                generá uno nuevo en Meta for Developers).
+              </p>
+            ) : null}
+            <p className="text-muted-foreground text-xs">
+              Comprobación manual: en Graph API Explorer probá{" "}
+              <code className="text-xs">GET /me/adaccounts?fields=id,name</code> con el
+              mismo token.
+            </p>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {data && !isLoading && data.data.length > 0 ? (
         <div className="rounded-md border">
           <Table>
             <TableHeader>

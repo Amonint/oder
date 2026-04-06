@@ -51,6 +51,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  DASHBOARD_KPI_LABELS,
+  RANKING_METRIC_LABELS,
+  labelForMetaActionType,
+  shortActionTypeLabel,
+} from "@/lib/metaInsightsLabels";
 
 const DATE_PRESETS = [
   { value: "last_7d", label: "Últimos 7 días" },
@@ -58,24 +64,6 @@ const DATE_PRESETS = [
   { value: "last_90d", label: "Últimos 90 días" },
   { value: "maximum", label: "Máximo disponible" },
 ] as const;
-
-const KPI_LABELS: Record<string, string> = {
-  impressions: "Impresiones",
-  clicks: "Clics",
-  spend: "Gasto",
-  reach: "Alcance",
-  frequency: "Frecuencia",
-  cpm: "CPM",
-  cpp: "CPP",
-  ctr: "CTR",
-};
-
-const METRIC_LABELS: Record<string, string> = {
-  impressions: "Impresiones",
-  clicks: "Clics",
-  spend: "Gasto",
-  ctr: "CTR",
-};
 
 function formatNum(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
@@ -127,14 +115,14 @@ export default function DashboardPage() {
       .sort((a, b) => b.value - a.value)
       .slice(0, 14)
       .map((a) => ({
-        label: String(a.action_type).slice(0, 28),
+        label: shortActionTypeLabel(String(a.action_type)),
         value: a.value,
       }));
   }, [data]);
 
   const chartConfig = {
     value: {
-      label: "Valor",
+      label: "Cantidad",
       color: "var(--chart-1)",
     },
   } satisfies ChartConfig;
@@ -151,7 +139,7 @@ export default function DashboardPage() {
 
   const rankingChartConfig = {
     value: {
-      label: METRIC_LABELS[rankingMetric] ?? rankingMetric,
+      label: RANKING_METRIC_LABELS[rankingMetric] ?? rankingMetric,
       color: "var(--chart-1)",
     },
   } satisfies ChartConfig;
@@ -177,7 +165,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="w-full space-y-6 py-6">
       <Breadcrumb>
         <BreadcrumbList>
           <BreadcrumbItem>
@@ -277,7 +265,7 @@ export default function DashboardPage() {
                   <Card key={key}>
                     <CardHeader className="pb-2">
                       <CardDescription>
-                        {KPI_LABELS[key] ?? key}
+                        {DASHBOARD_KPI_LABELS[key] ?? key}
                       </CardDescription>
                       <CardTitle className="text-2xl tabular-nums">
                         {formatNum(val)}
@@ -292,9 +280,9 @@ export default function DashboardPage() {
               <div className="grid gap-8 lg:grid-cols-2">
                 <Card>
                   <CardHeader>
-                    <CardTitle>Acciones (action_type)</CardTitle>
+                    <CardTitle>Acciones por tipo</CardTitle>
                     <CardDescription>
-                      Desglose agregado del periodo (no es serie diaria).
+                      Recuentos del periodo seleccionado (totales, no día a día).
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
@@ -302,8 +290,8 @@ export default function DashboardPage() {
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Tipo</TableHead>
-                            <TableHead className="text-right">Valor</TableHead>
+                            <TableHead>Acción</TableHead>
+                            <TableHead className="text-right">Cantidad</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -316,8 +304,8 @@ export default function DashboardPage() {
                           ) : (
                             data.actions.map((row, idx) => (
                               <TableRow key={`${String(row.action_type)}-${idx}`}>
-                                <TableCell className="max-w-[240px] font-mono text-xs">
-                                  {String(row.action_type)}
+                                <TableCell className="max-w-[280px] text-sm leading-snug">
+                                  {labelForMetaActionType(String(row.action_type))}
                                 </TableCell>
                                 <TableCell className="text-right tabular-nums">
                                   {formatNum(row.value)}
@@ -333,10 +321,10 @@ export default function DashboardPage() {
 
                 <Card>
                   <CardHeader>
-                    <CardTitle>Costo por tipo de acción</CardTitle>
+                    <CardTitle>Coste medio por tipo de acción</CardTitle>
                     <CardDescription>
-                      Campo <code className="text-xs">cost_per_action_type</code> de
-                      Meta.
+                      Lo que cuesta de media cada tipo de acción en el periodo (moneda
+                      de la cuenta).
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
@@ -344,8 +332,8 @@ export default function DashboardPage() {
                       <Table>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Tipo</TableHead>
-                            <TableHead className="text-right">Costo</TableHead>
+                            <TableHead>Acción</TableHead>
+                            <TableHead className="text-right">Coste medio</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -358,8 +346,8 @@ export default function DashboardPage() {
                           ) : (
                             data.cost_per_action_type.map((row, idx) => (
                               <TableRow key={`${String(row.action_type)}-${idx}`}>
-                                <TableCell className="max-w-[240px] font-mono text-xs">
-                                  {String(row.action_type)}
+                                <TableCell className="max-w-[280px] text-sm leading-snug">
+                                  {labelForMetaActionType(String(row.action_type))}
                                 </TableCell>
                                 <TableCell className="text-right tabular-nums">
                                   {formatNum(row.value)}
@@ -376,10 +364,9 @@ export default function DashboardPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Gráfico por tipo de acción</CardTitle>
+                  <CardTitle>Acciones con más volumen</CardTitle>
                   <CardDescription>
-                    Barras según los tipos con mayor volumen en el periodo
-                    agregado.
+                    Las acciones más frecuentes en el periodo (las 14 primeras).
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="pl-0">
@@ -429,7 +416,7 @@ export default function DashboardPage() {
                 <SelectItem value="impressions">Impresiones</SelectItem>
                 <SelectItem value="clicks">Clics</SelectItem>
                 <SelectItem value="spend">Gasto</SelectItem>
-                <SelectItem value="ctr">CTR</SelectItem>
+                <SelectItem value="ctr">Tasa de clics (CTR)</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -478,8 +465,10 @@ export default function DashboardPage() {
                           <TableHead className="text-right">Impresiones</TableHead>
                           <TableHead className="text-right">Clics</TableHead>
                           <TableHead className="text-right">Gasto</TableHead>
-                          <TableHead className="text-right">CTR</TableHead>
-                          <TableHead className="text-right">CPM</TableHead>
+                          <TableHead className="text-right">CTR (%)</TableHead>
+                          <TableHead className="text-right" title="Coste por mil impresiones">
+                            CPM
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -530,7 +519,8 @@ export default function DashboardPage() {
                 <CardHeader>
                   <CardTitle>Distribución por anuncio</CardTitle>
                   <CardDescription>
-                    {METRIC_LABELS[rankingMetric] ?? rankingMetric} por anuncio (top 10).
+                    {RANKING_METRIC_LABELS[rankingMetric] ?? rankingMetric} por anuncio
+                    (top 10).
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="pl-0">
@@ -571,7 +561,7 @@ export default function DashboardPage() {
         {/* ── Tab: Geografía ── */}
         <TabsContent value="geografia" className="space-y-6 pt-4">
           <div className="flex items-center gap-3">
-            <span className="text-muted-foreground text-sm">Scope:</span>
+            <span className="text-muted-foreground text-sm">Ámbito:</span>
             <Select value={geoScope} onValueChange={(v) => setGeoScope(v as "account" | "ad")}>
               <SelectTrigger className="w-[200px]">
                 <SelectValue />

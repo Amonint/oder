@@ -23,6 +23,15 @@ function resolveApiBase(): string {
 
 const base = resolveApiBase();
 
+if (import.meta.env.DEV) {
+  console.info(
+    "[oderbiz api]",
+    base === ""
+      ? "Mismo origen + proxy Vite → http://127.0.0.1:8000 (reiniciá Vite si cambiaste .env)"
+      : `Origen directo: ${base} (sin proxy; revisá VITE_API_BASE_URL)`,
+  );
+}
+
 export const META_TOKEN_STORAGE_KEY = "meta_access_token";
 
 export interface AdAccount {
@@ -66,7 +75,20 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   }
   const headers = new Headers(init?.headers);
   headers.set("Authorization", `Bearer ${token}`);
-  return fetch(`${base}${path}`, { ...init, headers });
+  const url = `${base}${path}`;
+  try {
+    return await fetch(url, { ...init, headers });
+  } catch (e) {
+    // Red/proxy/backend caído: el navegador lanza TypeError, no hay Response.
+    if (e instanceof TypeError) {
+      throw new Error(
+        "No se pudo conectar con la API. En local: deja el backend en " +
+          "http://127.0.0.1:8000 (uvicorn), el frontend en Vite (:5173) y sin " +
+          "VITE_API_BASE_URL para usar el proxy /api → :8000."
+      );
+    }
+    throw e;
+  }
 }
 
 async function readErrorMessage(r: Response): Promise<string> {
@@ -113,6 +135,13 @@ export interface TargetingResponse {
 
 export async function fetchAdAccounts(): Promise<{ data: AdAccount[] }> {
   const r = await apiFetch("/api/v1/accounts");
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+/** Usuario de Graph asociado al token (`/me`). Sirve para diagnosticar listas vacías de cuentas. */
+export async function fetchGraphMe(): Promise<{ id?: string; name?: string }> {
+  const r = await apiFetch("/api/v1/me");
   if (!r.ok) throw new Error(await readErrorMessage(r));
   return r.json();
 }
