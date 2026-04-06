@@ -11,6 +11,8 @@ import {
 } from "@/api/client";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import GeoMap from "@/components/GeoMap";
+import TargetingPanel from "@/components/TargetingPanel";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -489,7 +491,7 @@ export default function DashboardPage() {
                               }}
                             >
                               <TableCell className="font-medium">
-                                {String(row.ad_name ?? row.ad_id ?? "—")}
+                                {row.ad_label}
                               </TableCell>
                               <TableCell className="text-right tabular-nums">
                                 {Number(row.impressions ?? 0).toLocaleString("es")}
@@ -649,36 +651,23 @@ export default function DashboardPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Impresiones por región</CardTitle>
-                  <CardDescription>Comparativa geográfica.</CardDescription>
+                  <CardTitle>Mapa geográfico</CardTitle>
+                  <CardDescription>Distribución geográfica interactiva.</CardDescription>
                 </CardHeader>
-                <CardContent className="pl-0">
-                  {geoChartData.length === 0 ? (
-                    <p className="text-muted-foreground px-6 text-sm">
-                      No hay datos para graficar.
-                    </p>
-                  ) : (
-                    <ChartContainer config={geoChartConfig} className="min-h-[280px] w-full">
-                      <BarChart
-                        accessibilityLayer
-                        data={geoChartData}
-                        layout="vertical"
-                        margin={{ left: 8, right: 8 }}
-                      >
-                        <XAxis type="number" dataKey="impressions" hide />
-                        <YAxis
-                          dataKey="region"
-                          type="category"
-                          tickLine={false}
-                          tickMargin={10}
-                          axisLine={false}
-                          width={120}
-                        />
-                        <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
-                        <Bar dataKey="impressions" fill="var(--color-impressions)" radius={5} />
-                      </BarChart>
-                    </ChartContainer>
-                  )}
+                <CardContent>
+                  {geoQuery.isLoading ? (
+                    <Skeleton className="w-full h-96" />
+                  ) : geoQuery.isError ? (
+                    <Alert variant="destructive">
+                      <AlertDescription>Error al obtener datos geográficos.</AlertDescription>
+                    </Alert>
+                  ) : geoQuery.data ? (
+                    <GeoMap
+                      data={geoQuery.data.data}
+                      metadata={geoQuery.data.metadata}
+                      metric="impressions"
+                    />
+                  ) : null}
                 </CardContent>
               </Card>
             </>
@@ -715,12 +704,8 @@ export default function DashboardPage() {
                     {targetingQuery.error instanceof Error ? targetingQuery.error.message : "Error desconocido"}
                   </AlertDescription>
                 </Alert>
-              ) : targetingQuery.data ? (
-                <ScrollArea className="h-[300px] rounded-md border p-4">
-                  <pre className="font-mono text-xs">
-                    {JSON.stringify(targetingQuery.data.targeting, null, 2)}
-                  </pre>
-                </ScrollArea>
+              ) : targetingQuery.data?.targeting ? (
+                <TargetingPanel targeting={targetingQuery.data.targeting} />
               ) : null}
             </CardContent>
           </Card>
