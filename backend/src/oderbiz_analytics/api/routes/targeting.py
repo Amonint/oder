@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from oderbiz_analytics.adapters.meta.ads_entities import fetch_ad_json, fetch_adset_json
 from oderbiz_analytics.api.deps import get_meta_access_token
 from oderbiz_analytics.config import Settings, get_settings
+from oderbiz_analytics.services.targeting_formatter import format_targeting
 
 router = APIRouter(prefix="/accounts", tags=["targeting"])
 
@@ -22,6 +23,8 @@ async def get_ad_targeting(
     Returns the targeting configuration for the given ad.
 
     Resolves ad → adset → targeting via two Meta Graph API calls.
+    Returns structured targeting format with age, gender, locations, and audiences (R-4.1, R-4.4).
+    The response includes both formatted fields (age_range, genders, locations, audiences) and raw_json for raw data access.
     """
     base = f"https://graph.facebook.com/{settings.meta_graph_version}".rstrip("/")
 
@@ -68,4 +71,7 @@ async def get_ad_targeting(
             detail="No se pudo contactar a la API de Meta.",
         ) from None
 
-    return {"targeting": adset_data.get("targeting", {})}
+    raw_targeting = adset_data.get("targeting", {})
+    formatted_targeting = format_targeting(raw_targeting)
+
+    return {"targeting": formatted_targeting}

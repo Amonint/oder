@@ -71,3 +71,19 @@ def test_format_targeting_with_missing_fields():
     assert "age_range" in formatted
     assert "genders" in formatted
     assert formatted["genders"] == []
+
+
+def test_format_geo_locations_with_radius_km():
+    """Formatear ubicaciones con regiones y radio de cobertura."""
+    geo_locs = {
+        "regions": [
+            {
+                "key": "ES-MD",
+                "radius": 50,
+            }
+        ],
+    }
+    formatted = format_geo_locations(geo_locs)
+    assert len(formatted["regions"]) > 0
+    assert formatted["regions"][0]["region_name"] == "Madrid"
+    assert formatted["regions"][0]["radius_km"] == 50
