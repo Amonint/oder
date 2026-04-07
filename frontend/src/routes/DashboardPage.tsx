@@ -1,6 +1,6 @@
 import { useParams, Navigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import { FilterProvider, useFilter } from "@/context/FilterContext";
 import {
@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import KpiGrid from "@/components/KpiGrid";
 import PlacementChart from "@/components/PlacementChart";
 import ActionsChart from "@/components/ActionsChart";
@@ -88,15 +89,15 @@ function DashboardContent({
   const geoRows: GeoInsightRow[] = (geoQuery.data?.data ?? []).map((row) => ({
     region: row.region ?? "",
     region_name: row.region ?? "",
-    impressions: parseInt(row.impressions ?? "0"),
+    impressions: parseInt(row.impressions ?? "0", 10),
     clicks: 0,
     spend: row.spend ?? "0",
-    reach: parseInt(row.reach ?? "0"),
+    reach: parseInt(row.reach ?? "0", 10),
   }));
 
   const geoMetadata: GeoMetadata = {
-    scope: "account",
-    ad_id: null,
+    scope: filterOpts.adId ? "ad" : filterOpts.adsetId ? "adset" : filterOpts.campaignId ? "campaign" : "account",
+    ad_id: filterOpts.adId ?? null,
     total_rows: geoRows.length,
     complete_coverage: false,
     note: "",
@@ -206,18 +207,43 @@ function DashboardContent({
         data={kpiQuery.data?.data}
         isLoading={kpiQuery.isLoading}
       />
+      {kpiQuery.isError && (
+        <Alert variant="destructive" className="mt-2">
+          <AlertDescription>
+            Error al cargar KPIs: {(kpiQuery.error as Error).message}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* PlacementChart + GeoMap — two columns on md+ */}
       <div className="grid gap-6 md:grid-cols-2">
-        <PlacementChart
-          data={placementsQuery.data?.data}
-          isLoading={placementsQuery.isLoading}
-        />
-        {geoQuery.isLoading ? (
-          <div className="h-64 rounded-xl bg-muted animate-pulse" />
-        ) : (
-          <GeoMap data={geoRows} metadata={geoMetadata} metric="impressions" />
-        )}
+        <div>
+          <PlacementChart
+            data={placementsQuery.data?.data}
+            isLoading={placementsQuery.isLoading}
+          />
+          {placementsQuery.isError && (
+            <Alert variant="destructive" className="mt-2">
+              <AlertDescription>
+                Error al cargar placements: {(placementsQuery.error as Error).message}
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
+        <div>
+          {geoQuery.isLoading ? (
+            <div className="h-64 rounded-xl bg-muted animate-pulse" />
+          ) : (
+            <GeoMap data={geoRows} metadata={geoMetadata} metric="impressions" />
+          )}
+          {geoQuery.isError && (
+            <Alert variant="destructive" className="mt-2">
+              <AlertDescription>
+                Error al cargar geografía: {(geoQuery.error as Error).message}
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
       </div>
 
       {/* ActionsChart — full width */}
@@ -225,12 +251,26 @@ function DashboardContent({
         data={actionsQuery.data?.data}
         isLoading={actionsQuery.isLoading}
       />
+      {actionsQuery.isError && (
+        <Alert variant="destructive" className="mt-2">
+          <AlertDescription>
+            Error al cargar acciones: {(actionsQuery.error as Error).message}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* TimeseriesChart — full width */}
       <TimeseriesChart
         data={timeseriesQuery.data?.data}
         isLoading={timeseriesQuery.isLoading}
       />
+      {timeseriesQuery.isError && (
+        <Alert variant="destructive" className="mt-2">
+          <AlertDescription>
+            Error al cargar serie temporal: {(timeseriesQuery.error as Error).message}
+          </AlertDescription>
+        </Alert>
+      )}
     </div>
   );
 }
