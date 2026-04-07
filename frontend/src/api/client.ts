@@ -262,3 +262,183 @@ export async function fetchAdTargeting(
   if (!r.ok) throw new Error(await readErrorMessage(r));
   return r.json();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dashboard "Página Primero" — tipos y funciones API
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PageRow {
+  page_id: string;
+  name: string;
+  category: string;
+  spend: number;
+  impressions: number;
+  date_preset: string;
+}
+
+export interface PagesListResponse {
+  data: PageRow[];
+  date_preset: string;
+}
+
+export interface PageKpiRow {
+  spend?: string;
+  impressions?: string;
+  reach?: string;
+  frequency?: string;
+  cpm?: string;
+  ctr?: string;
+}
+
+export interface PageInsightsResponse {
+  data: PageKpiRow[];
+  page_id: string;
+  date_preset: string;
+  campaign_id: string | null;
+  adset_id: string | null;
+  ad_id: string | null;
+}
+
+export interface PagePlacementRow {
+  spend?: string;
+  impressions?: string;
+  reach?: string;
+  publisher_platform?: string;
+  platform_position?: string;
+}
+
+export interface PagePlacementsResponse {
+  data: PagePlacementRow[];
+  page_id: string;
+  date_preset: string;
+  breakdowns: string[];
+}
+
+export interface PageGeoRow {
+  spend?: string;
+  impressions?: string;
+  reach?: string;
+  region?: string;
+}
+
+export interface PageGeoResponse {
+  data: PageGeoRow[];
+  page_id: string;
+  date_preset: string;
+  breakdowns: string[];
+}
+
+export interface PageActionRow {
+  category: string;
+  value: number;
+}
+
+export interface PageActionsResponse {
+  data: PageActionRow[];
+  spend: string;
+  page_id: string;
+  date_preset: string;
+}
+
+export interface PageTimeseriesRow {
+  spend?: string;
+  impressions?: string;
+  reach?: string;
+  date_start?: string;
+  date_stop?: string;
+}
+
+export interface PageTimeseriesResponse {
+  data: PageTimeseriesRow[];
+  page_id: string;
+  date_preset: string;
+  time_increment: number;
+}
+
+type PageFilterOpts = {
+  datePreset?: string;
+  campaignId?: string | null;
+  adsetId?: string | null;
+  adId?: string | null;
+};
+
+function buildPageQuery(opts: PageFilterOpts): URLSearchParams {
+  const q = new URLSearchParams();
+  if (opts.datePreset) q.set("date_preset", opts.datePreset);
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.adsetId) q.set("adset_id", opts.adsetId);
+  if (opts.adId) q.set("ad_id", opts.adId);
+  return q;
+}
+
+export async function fetchPages(
+  adAccountId: string,
+  opts: { datePreset?: string } = {}
+): Promise<PagesListResponse> {
+  const q = new URLSearchParams();
+  if (opts.datePreset) q.set("date_preset", opts.datePreset);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export async function fetchPageInsights(
+  adAccountId: string,
+  pageId: string,
+  opts: PageFilterOpts = {}
+): Promise<PageInsightsResponse> {
+  const q = buildPageQuery(opts);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages/${encodeURIComponent(pageId)}/insights?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export async function fetchPagePlacements(
+  adAccountId: string,
+  pageId: string,
+  opts: PageFilterOpts = {}
+): Promise<PagePlacementsResponse> {
+  const q = buildPageQuery(opts);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages/${encodeURIComponent(pageId)}/placements?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export async function fetchPageGeo(
+  adAccountId: string,
+  pageId: string,
+  opts: PageFilterOpts = {}
+): Promise<PageGeoResponse> {
+  const q = buildPageQuery(opts);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages/${encodeURIComponent(pageId)}/geo?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export async function fetchPageActions(
+  adAccountId: string,
+  pageId: string,
+  opts: PageFilterOpts = {}
+): Promise<PageActionsResponse> {
+  const q = buildPageQuery(opts);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages/${encodeURIComponent(pageId)}/actions?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export async function fetchPageTimeseries(
+  adAccountId: string,
+  pageId: string,
+  opts: PageFilterOpts = {}
+): Promise<PageTimeseriesResponse> {
+  const q = buildPageQuery(opts);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages/${encodeURIComponent(pageId)}/timeseries?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
