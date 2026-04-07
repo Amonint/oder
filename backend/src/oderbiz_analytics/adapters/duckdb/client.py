@@ -33,6 +33,12 @@ CREATE TABLE IF NOT EXISTS fact_ads_insights_daily (
     cost_per_action_json VARCHAR,
     extracted_at  TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS api_cache (
+    cache_key    VARCHAR PRIMARY KEY,
+    payload_json VARCHAR NOT NULL,
+    cached_at    TIMESTAMPTZ NOT NULL
+);
 """
 
 
@@ -98,3 +104,31 @@ def query_latest_raw(db_path: str, ad_account_id: str) -> str | None:
     finally:
         con.close()
     return result[0] if result else None
+
+
+def get_cache(db_path: str, cache_key: str) -> dict | None:
+    """Retorna el payload cacheado o None si no existe la clave."""
+    con = duckdb.connect(db_path)
+    try:
+        row = con.execute(
+            "SELECT payload_json FROM api_cache WHERE cache_key = ?",
+            [cache_key],
+        ).fetchone()
+    finally:
+        con.close()
+    if row is None:
+        return None
+    return json.loads(row[0])
+
+
+def set_cache(db_path: str, cache_key: str, payload: dict) -> None:
+    """Guarda (o sobreescribe) un payload en caché. Sin TTL — permanente."""
+    con = duckdb.connect(db_path)
+    try:
+        con.execute("DELETE FROM api_cache WHERE cache_key = ?", [cache_key])
+        con.execute(
+            "INSERT INTO api_cache (cache_key, payload_json, cached_at) VALUES (?, ?, ?)",
+            [cache_key, json.dumps(payload), datetime.now(UTC)],
+        )
+    finally:
+        con.close()
