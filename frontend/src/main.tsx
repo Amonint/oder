@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import AccountsPage from "./routes/AccountsPage";
 import DashboardPage from "./routes/DashboardPage";
+import PagesPage from "./routes/PagesPage";
 import TokenPage from "./routes/TokenPage";
 
 const queryClient = new QueryClient();
@@ -17,7 +18,11 @@ createRoot(document.getElementById("root")!).render(
           <Route path="/" element={<TokenPage />} />
           <Route path="/accounts" element={<AccountsPage />} />
           <Route
-            path="/accounts/:accountId/dashboard"
+            path="/accounts/:accountId/pages"
+            element={<PagesPage />}
+          />
+          <Route
+            path="/accounts/:accountId/pages/:pageId/dashboard"
             element={<DashboardPage />}
           />
           <Route path="*" element={<Navigate to="/" replace />} />

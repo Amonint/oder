@@ -153,7 +153,7 @@ export default function AccountsPage() {
                   key={a.id}
                   className="cursor-pointer hover:bg-muted/50"
                   onClick={() =>
-                    navigate(`/accounts/${encodeURIComponent(a.id)}/dashboard`)
+                    navigate(`/accounts/${encodeURIComponent(a.id)}/pages`)
                   }
                 >
                   <TableCell className="font-medium">{a.name}</TableCell>
