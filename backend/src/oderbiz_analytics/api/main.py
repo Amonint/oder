@@ -11,6 +11,7 @@ from oderbiz_analytics.api.routes.dashboard import router as dashboard_router
 from oderbiz_analytics.api.routes.geo_insights import router as geo_insights_router
 from oderbiz_analytics.api.routes.graph_user import router as graph_user_router
 from oderbiz_analytics.api.routes.summary import router as summary_router
+from oderbiz_analytics.api.routes.pages import router as pages_router
 from oderbiz_analytics.api.routes.targeting import router as targeting_router
 from oderbiz_analytics.config import get_settings
 
@@ -40,6 +41,7 @@ app.include_router(dashboard_router, prefix="/api/v1")
 app.include_router(geo_insights_router, prefix="/api/v1")
 app.include_router(summary_router, prefix="/api/v1")
 app.include_router(targeting_router, prefix="/api/v1")
+app.include_router(pages_router, prefix="/api/v1")
 
 
 @app.get("/health")

@@ -15,6 +15,7 @@ async def fetch_insights(
     time_range: dict[str, str] | None = None,
     level: str = "account",
     breakdowns: list[str] | None = None,
+    filtering: list[dict] | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> list[dict]:
     own = client is None
@@ -33,6 +34,8 @@ async def fetch_insights(
                 params["date_preset"] = date_preset
         if breakdowns is not None:
             params["breakdowns"] = ",".join(breakdowns)
+        if filtering is not None:
+            params["filtering"] = json.dumps(filtering)
         r = await client.get(
             f"{base_url.rstrip('/')}/{ad_account_id}/insights",
             params=params,
