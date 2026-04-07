@@ -39,8 +39,6 @@ async def fetch_graph_edge_all_pages(
             results.extend(body.get("data", []))
             # Follow cursor-based pagination
             paging = body.get("paging", {})
-            cursors = paging.get("cursors", {})
-            after = cursors.get("after")
             next_url = paging.get("next")
             if next_url:
                 # Use the next URL directly (it already includes all params)

@@ -139,3 +139,15 @@ class TestGetPagesList:
         assert r.status_code == 200
         assert len(r.json()["data"]) == 1
         assert r.json()["data"][0]["page_id"] == "page_789"
+
+    @respx.mock
+    def test_pages_list_handles_meta_error(self, client):
+        """Retorna 502 cuando Meta falla al obtener adsets."""
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(
+            return_value=httpx.Response(400, json={"error": {"message": "Invalid token"}})
+        )
+        r = client.get(
+            "/api/v1/accounts/act_123/pages",
+            headers={"Authorization": "Bearer test_tok"},
+        )
+        assert r.status_code == 502

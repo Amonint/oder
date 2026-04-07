@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 
 import httpx
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from oderbiz_analytics.adapters.duckdb.client import get_cache, set_cache
 from oderbiz_analytics.adapters.meta.graph_edges import fetch_graph_edge_all_pages
@@ -65,12 +65,17 @@ async def get_pages_list(
         return cached
 
     # 1. Fetch all adsets with promoted_object field
-    adsets = await fetch_graph_edge_all_pages(
-        base_url=base,
-        access_token=access_token,
-        path=f"{normalized_id}/adsets",
-        fields="promoted_object",
-    )
+    try:
+        adsets = await fetch_graph_edge_all_pages(
+            base_url=base,
+            access_token=access_token,
+            path=f"{normalized_id}/adsets",
+            fields="promoted_object",
+        )
+    except httpx.HTTPStatusError:
+        raise HTTPException(status_code=502, detail="La API de Meta devolvió un error al obtener adsets.") from None
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="No se pudo contactar a la API de Meta.") from None
 
     # 2. Extract unique page_ids (skip adsets without page_id)
     page_ids: list[str] = []
@@ -88,37 +93,36 @@ async def get_pages_list(
         return result
 
     # 3. Fetch page info + insights for each page in parallel
-    async def _fetch_page_data(page_id: str) -> dict:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                info_r = await client.get(
-                    f"{base}/{page_id}",
-                    params={"fields": "name,category", "access_token": access_token},
-                )
-                page_info = info_r.json() if info_r.is_success else {}
-            except httpx.RequestError:
-                page_info = {}
+    async def _fetch_page_data(page_id: str, client: httpx.AsyncClient) -> dict:
+        try:
+            info_r = await client.get(
+                f"{base}/{page_id}",
+                params={"fields": "name,category", "access_token": access_token},
+            )
+            page_info = info_r.json() if info_r.is_success else {}
+        except httpx.RequestError:
+            page_info = {}
 
-            try:
-                rows = await fetch_insights(
-                    base_url=base,
-                    access_token=access_token,
-                    ad_account_id=normalized_id,
-                    fields="spend,impressions",
-                    date_preset=effective_preset,
-                    level="account",
-                    filtering=[
-                        {
-                            "field": "adset.promoted_object_page_id",
-                            "operator": "EQUAL",
-                            "value": page_id,
-                        }
-                    ],
-                    client=client,
-                )
-                row = rows[0] if rows else {}
-            except (httpx.HTTPStatusError, httpx.RequestError):
-                row = {}
+        try:
+            rows = await fetch_insights(
+                base_url=base,
+                access_token=access_token,
+                ad_account_id=normalized_id,
+                fields="spend,impressions",
+                date_preset=effective_preset,
+                level="account",
+                filtering=[
+                    {
+                        "field": "adset.promoted_object_page_id",
+                        "operator": "EQUAL",
+                        "value": page_id,
+                    }
+                ],
+                client=client,
+            )
+            row = rows[0] if rows else {}
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            row = {}
 
         return {
             "page_id": page_id,
@@ -129,7 +133,8 @@ async def get_pages_list(
             "date_preset": effective_preset,
         }
 
-    pages_data = await asyncio.gather(*[_fetch_page_data(pid) for pid in page_ids])
+    async with httpx.AsyncClient(timeout=30.0) as shared_client:
+        pages_data = list(await asyncio.gather(*[_fetch_page_data(pid, shared_client) for pid in page_ids]))
 
     # 4. Sort by spend DESC
     sorted_pages = sorted(pages_data, key=lambda p: p["spend"], reverse=True)
