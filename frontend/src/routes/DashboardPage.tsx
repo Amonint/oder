@@ -1,40 +1,18 @@
+import { useParams, Navigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { useRef, useState } from "react";
+
+import { FilterProvider, useFilter } from "@/context/FilterContext";
 import {
-  fetchAccountDashboard,
-  fetchAdsPerformance,
-  fetchGeoInsights,
-  fetchAdTargeting,
-  getMetaAccessToken,
+  fetchPageInsights,
+  fetchPagePlacements,
+  fetchPageGeo,
+  fetchPageActions,
+  fetchPageTimeseries,
+  type GeoInsightRow,
+  type GeoMetadata,
 } from "@/api/client";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import GeoMap from "@/components/GeoMap";
-import TargetingPanel from "@/components/TargetingPanel";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@/components/ui/chart";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import {
   Select,
   SelectContent,
@@ -42,171 +20,142 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  DASHBOARD_KPI_LABELS,
-  RANKING_METRIC_LABELS,
-  labelForMetaActionType,
-  shortActionTypeLabel,
-} from "@/lib/metaInsightsLabels";
+
+import KpiGrid from "@/components/KpiGrid";
+import PlacementChart from "@/components/PlacementChart";
+import ActionsChart from "@/components/ActionsChart";
+import TimeseriesChart from "@/components/TimeseriesChart";
+import GeoMap from "@/components/GeoMap";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
 
 const DATE_PRESETS = [
   { value: "last_7d", label: "Últimos 7 días" },
+  { value: "last_14d", label: "Últimos 14 días" },
   { value: "last_30d", label: "Últimos 30 días" },
   { value: "last_90d", label: "Últimos 90 días" },
-  { value: "maximum", label: "Máximo disponible" },
 ] as const;
 
-function formatNum(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(2)}k`;
-  return n.toLocaleString("es", { maximumFractionDigits: 2 });
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Inner component — has access to FilterContext
+// ─────────────────────────────────────────────────────────────────────────────
 
-export default function DashboardPage() {
-  const { accountId } = useParams<{ accountId: string }>();
-  const [datePreset, setDatePreset] = useState<string>("last_30d");
-  const [rankingMetric, setRankingMetric] = useState<"impressions" | "clicks" | "spend" | "ctr">("impressions");
-  const [selectedAdId, setSelectedAdId] = useState<string | null>(null);
-  const [geoScope, setGeoScope] = useState<"account" | "ad">("account");
-  const hasToken = Boolean(getMetaAccessToken());
-  const id = accountId ? decodeURIComponent(accountId) : "";
+function DashboardContent({
+  accountId,
+  pageId,
+}: {
+  accountId: string;
+  pageId: string;
+}) {
+  const { datePreset, campaignId, adsetId, adId, setFilter } = useFilter();
 
-  const { data, isLoading, isError, error } = useQuery({
-    queryKey: ["dashboard", id, datePreset],
-    queryFn: () => fetchAccountDashboard(id, datePreset),
-    enabled: hasToken && Boolean(id),
+  // Local state for text inputs (updated on blur / Enter)
+  const [campaignInput, setCampaignInput] = useState(campaignId ?? "");
+  const [adsetInput, setAdsetInput] = useState(adsetId ?? "");
+  const [adInput, setAdInput] = useState(adId ?? "");
+
+  const filterOpts = { datePreset, campaignId, adsetId, adId };
+
+  // Data queries
+  const kpiQuery = useQuery({
+    queryKey: ["page-insights", accountId, pageId, filterOpts],
+    queryFn: () => fetchPageInsights(accountId, pageId, filterOpts),
   });
 
-  const rankingQuery = useQuery({
-    queryKey: ["ads-performance", id, datePreset],
-    queryFn: () => fetchAdsPerformance(id, { datePreset }),
-    enabled: hasToken && Boolean(id),
+  const placementsQuery = useQuery({
+    queryKey: ["page-placements", accountId, pageId, filterOpts],
+    queryFn: () => fetchPagePlacements(accountId, pageId, filterOpts),
   });
 
   const geoQuery = useQuery({
-    queryKey: ["geo-insights", id, geoScope, selectedAdId, datePreset],
-    queryFn: () => fetchGeoInsights(id, {
-      scope: geoScope,
-      adId: geoScope === "ad" ? (selectedAdId ?? undefined) : undefined,
-      datePreset,
-    }),
-    enabled: hasToken && Boolean(id) && (geoScope === "account" || Boolean(selectedAdId)),
+    queryKey: ["page-geo", accountId, pageId, filterOpts],
+    queryFn: () => fetchPageGeo(accountId, pageId, filterOpts),
   });
 
-  const targetingQuery = useQuery({
-    queryKey: ["targeting", id, selectedAdId],
-    queryFn: () => fetchAdTargeting(id, selectedAdId!),
-    enabled: hasToken && Boolean(id) && Boolean(selectedAdId),
+  const actionsQuery = useQuery({
+    queryKey: ["page-actions", accountId, pageId, filterOpts],
+    queryFn: () => fetchPageActions(accountId, pageId, filterOpts),
   });
 
-  const chartData = useMemo(() => {
-    const actions = data?.actions;
-    if (!actions?.length) return [];
-    return [...actions]
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 14)
-      .map((a) => ({
-        label: shortActionTypeLabel(String(a.action_type)),
-        value: a.value,
-      }));
-  }, [data]);
+  const timeseriesQuery = useQuery({
+    queryKey: ["page-timeseries", accountId, pageId, filterOpts],
+    queryFn: () => fetchPageTimeseries(accountId, pageId, filterOpts),
+  });
 
-  const chartConfig = {
-    value: {
-      label: "Cantidad",
-      color: "var(--chart-1)",
-    },
-  } satisfies ChartConfig;
-
-  const rankingChartData = useMemo(() => {
-    return (rankingQuery.data?.data ?? [])
-      .map((row) => ({
-        label: String(row.ad_name ?? row.ad_id ?? "").slice(0, 20),
-        value: Number(row[rankingMetric as keyof typeof row] ?? 0),
-      }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10);
-  }, [rankingQuery.data, rankingMetric]);
-
-  const rankingChartConfig = {
-    value: {
-      label: RANKING_METRIC_LABELS[rankingMetric] ?? rankingMetric,
-      color: "var(--chart-1)",
-    },
-  } satisfies ChartConfig;
-
-  const geoChartData = (geoQuery.data?.data ?? []).map((row) => ({
-    region: String(row.region ?? row.country ?? "Desconocido").slice(0, 20),
-    impressions: Number(row.impressions ?? 0),
+  // Adapt PageGeoRow[] → GeoInsightRow[] + GeoMetadata for GeoMap
+  const geoRows: GeoInsightRow[] = (geoQuery.data?.data ?? []).map((row) => ({
+    region: row.region ?? "",
+    region_name: row.region ?? "",
+    impressions: parseInt(row.impressions ?? "0"),
+    clicks: 0,
+    spend: row.spend ?? "0",
+    reach: parseInt(row.reach ?? "0"),
   }));
 
-  const geoChartConfig = {
-    impressions: {
-      label: "Impresiones",
-      color: "var(--chart-2)",
-    },
-  } satisfies ChartConfig;
+  const geoMetadata: GeoMetadata = {
+    scope: "account",
+    ad_id: null,
+    total_rows: geoRows.length,
+    complete_coverage: false,
+    note: "",
+  };
 
-  if (!hasToken) {
-    return <Navigate to="/" replace />;
+  // Text input helpers
+  function commitCampaign() {
+    const val = campaignInput.trim() || null;
+    setFilter({ campaignId: val });
   }
 
-  if (!id) {
-    return <Navigate to="/accounts" replace />;
+  function commitAdset() {
+    const val = adsetInput.trim() || null;
+    setFilter({ adsetId: val });
+  }
+
+  function commitAd() {
+    const val = adInput.trim() || null;
+    setFilter({ adId: val });
+  }
+
+  function handleKeyDown(
+    e: React.KeyboardEvent<HTMLInputElement>,
+    commit: () => void
+  ) {
+    if (e.key === "Enter") commit();
   }
 
   return (
-    <div className="w-full space-y-6 py-6">
-      <Breadcrumb>
-        <BreadcrumbList>
-          <BreadcrumbItem>
-            <BreadcrumbLink asChild>
-              <Link to="/">Inicio</Link>
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbLink asChild>
-              <Link to="/accounts">Cuentas</Link>
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-          <BreadcrumbSeparator />
-          <BreadcrumbItem>
-            <BreadcrumbPage className="max-w-[200px] truncate font-mono text-xs">
-              {id}
-            </BreadcrumbPage>
-          </BreadcrumbItem>
-        </BreadcrumbList>
-      </Breadcrumb>
+    <div className="w-full space-y-6 py-6 px-4 max-w-screen-xl mx-auto">
+      {/* Breadcrumb */}
+      <nav className="flex items-center gap-1 text-sm text-muted-foreground">
+        <Link to="/accounts" className="hover:underline text-foreground">
+          Cuentas
+        </Link>
+        <span className="mx-1">›</span>
+        <Link
+          to={`/accounts/${encodeURIComponent(accountId)}/pages`}
+          className="hover:underline text-foreground"
+        >
+          Páginas
+        </Link>
+        <span className="mx-1">›</span>
+        <span className="text-foreground font-medium">{pageId}</span>
+      </nav>
 
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-foreground text-2xl font-semibold tracking-tight">
-            Dashboard
-          </h1>
-          <p className="text-muted-foreground font-mono text-sm">{id}</p>
-          {data?.date_start && data?.date_stop ? (
-            <p className="text-muted-foreground mt-1 text-xs">
-              Periodo reportado: {data.date_start} → {data.date_stop}
-            </p>
-          ) : null}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-muted-foreground text-sm">Periodo</span>
-          <Select value={datePreset} onValueChange={setDatePreset}>
-            <SelectTrigger className="w-[220px]">
-              <SelectValue placeholder="Preset" />
+      {/* FilterBar */}
+      <div className="flex flex-wrap items-center gap-3">
+        {/* Periodo */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground whitespace-nowrap">
+            Periodo
+          </span>
+          <Select
+            value={datePreset}
+            onValueChange={(v) => setFilter({ datePreset: v })}
+          >
+            <SelectTrigger className="w-[200px]">
+              <SelectValue placeholder="Periodo" />
             </SelectTrigger>
             <SelectContent>
               {DATE_PRESETS.map((p) => (
@@ -216,501 +165,93 @@ export default function DashboardPage() {
               ))}
             </SelectContent>
           </Select>
-          <Button variant="outline" asChild>
-            <Link to="/accounts">Volver a cuentas</Link>
-          </Button>
         </div>
+
+        {/* Campaña */}
+        <input
+          type="text"
+          value={campaignInput}
+          placeholder="ID de campaña (opcional)"
+          className="h-9 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 w-[220px]"
+          onChange={(e) => setCampaignInput(e.target.value)}
+          onBlur={commitCampaign}
+          onKeyDown={(e) => handleKeyDown(e, commitCampaign)}
+        />
+
+        {/* Conjunto */}
+        <input
+          type="text"
+          value={adsetInput}
+          placeholder="ID de conjunto (opcional)"
+          className="h-9 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 w-[220px]"
+          onChange={(e) => setAdsetInput(e.target.value)}
+          onBlur={commitAdset}
+          onKeyDown={(e) => handleKeyDown(e, commitAdset)}
+        />
+
+        {/* Anuncio */}
+        <input
+          type="text"
+          value={adInput}
+          placeholder="ID de anuncio (opcional)"
+          className="h-9 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 w-[220px]"
+          onChange={(e) => setAdInput(e.target.value)}
+          onBlur={commitAd}
+          onKeyDown={(e) => handleKeyDown(e, commitAd)}
+        />
       </div>
 
-      {data?.insights_empty ? (
-        <Alert>
-          <AlertTitle>Sin datos en este periodo</AlertTitle>
-          <AlertDescription>
-            Meta no devolvió filas de insights para este rango. Prueba otro preset
-            (p. ej. <strong>maximum</strong>) o revisa que la cuenta tenga
-            actividad.
-          </AlertDescription>
-        </Alert>
-      ) : null}
+      {/* KpiGrid — full width */}
+      <KpiGrid
+        data={kpiQuery.data?.data}
+        isLoading={kpiQuery.isLoading}
+      />
 
-      <Tabs defaultValue="resumen">
-        <TabsList>
-          <TabsTrigger value="resumen">Resumen</TabsTrigger>
-          <TabsTrigger value="ranking">Ranking</TabsTrigger>
-          <TabsTrigger value="geografia">Geografía</TabsTrigger>
-          <TabsTrigger value="targeting">Targeting</TabsTrigger>
-        </TabsList>
+      {/* PlacementChart + GeoMap — two columns on md+ */}
+      <div className="grid gap-6 md:grid-cols-2">
+        <PlacementChart
+          data={placementsQuery.data?.data}
+          isLoading={placementsQuery.isLoading}
+        />
+        {geoQuery.isLoading ? (
+          <div className="h-64 rounded-xl bg-muted animate-pulse" />
+        ) : (
+          <GeoMap data={geoRows} metadata={geoMetadata} metric="impressions" />
+        )}
+      </div>
 
-        {/* ── Tab: Resumen ── */}
-        <TabsContent value="resumen" className="space-y-6 pt-4">
-          {isLoading ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <Skeleton key={i} className="h-28 rounded-xl" />
-              ))}
-            </div>
-          ) : null}
+      {/* ActionsChart — full width */}
+      <ActionsChart
+        data={actionsQuery.data?.data}
+        isLoading={actionsQuery.isLoading}
+      />
 
-          {isError ? (
-            <Alert variant="destructive">
-              <AlertTitle>Error al cargar el dashboard</AlertTitle>
-              <AlertDescription>
-                {error instanceof Error ? error.message : "Error desconocido"}
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
-          {data && !isLoading ? (
-            <>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {Object.entries(data.summary).map(([key, val]) => (
-                  <Card key={key}>
-                    <CardHeader className="pb-2">
-                      <CardDescription>
-                        {DASHBOARD_KPI_LABELS[key] ?? key}
-                      </CardDescription>
-                      <CardTitle className="text-2xl tabular-nums">
-                        {formatNum(val)}
-                      </CardTitle>
-                    </CardHeader>
-                  </Card>
-                ))}
-              </div>
-
-              <Separator />
-
-              <div className="grid gap-8 lg:grid-cols-2">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Acciones por tipo</CardTitle>
-                    <CardDescription>
-                      Recuentos del periodo seleccionado (totales, no día a día).
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="rounded-md border">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Acción</TableHead>
-                            <TableHead className="text-right">Cantidad</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {data.actions.length === 0 ? (
-                            <TableRow>
-                              <TableCell colSpan={2} className="text-center">
-                                Sin acciones
-                              </TableCell>
-                            </TableRow>
-                          ) : (
-                            data.actions.map((row, idx) => (
-                              <TableRow key={`${String(row.action_type)}-${idx}`}>
-                                <TableCell className="max-w-[280px] text-sm leading-snug">
-                                  {labelForMetaActionType(String(row.action_type))}
-                                </TableCell>
-                                <TableCell className="text-right tabular-nums">
-                                  {formatNum(row.value)}
-                                </TableCell>
-                              </TableRow>
-                            ))
-                          )}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Coste medio por tipo de acción</CardTitle>
-                    <CardDescription>
-                      Lo que cuesta de media cada tipo de acción en el periodo (moneda
-                      de la cuenta).
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="rounded-md border">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Acción</TableHead>
-                            <TableHead className="text-right">Coste medio</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {data.cost_per_action_type.length === 0 ? (
-                            <TableRow>
-                              <TableCell colSpan={2} className="text-center">
-                                Sin datos
-                              </TableCell>
-                            </TableRow>
-                          ) : (
-                            data.cost_per_action_type.map((row, idx) => (
-                              <TableRow key={`${String(row.action_type)}-${idx}`}>
-                                <TableCell className="max-w-[280px] text-sm leading-snug">
-                                  {labelForMetaActionType(String(row.action_type))}
-                                </TableCell>
-                                <TableCell className="text-right tabular-nums">
-                                  {formatNum(row.value)}
-                                </TableCell>
-                              </TableRow>
-                            ))
-                          )}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Acciones con más volumen</CardTitle>
-                  <CardDescription>
-                    Las acciones más frecuentes en el periodo (las 14 primeras).
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="pl-0">
-                  {chartData.length === 0 ? (
-                    <p className="text-muted-foreground px-6 text-sm">
-                      No hay datos para graficar.
-                    </p>
-                  ) : (
-                    <ChartContainer config={chartConfig} className="min-h-[280px] w-full">
-                      <BarChart
-                        accessibilityLayer
-                        data={chartData}
-                        margin={{ left: 8, right: 8, top: 8, bottom: 48 }}
-                      >
-                        <CartesianGrid vertical={false} />
-                        <XAxis
-                          dataKey="label"
-                          tickLine={false}
-                          tickMargin={8}
-                          angle={-35}
-                          textAnchor="end"
-                          height={64}
-                          interval={0}
-                          fontSize={10}
-                        />
-                        <YAxis tickLine={false} axisLine={false} width={48} />
-                        <ChartTooltip content={<ChartTooltipContent />} />
-                        <Bar dataKey="value" fill="var(--color-value)" radius={4} />
-                      </BarChart>
-                    </ChartContainer>
-                  )}
-                </CardContent>
-              </Card>
-            </>
-          ) : null}
-        </TabsContent>
-
-        {/* ── Tab: Ranking ── */}
-        <TabsContent value="ranking" className="space-y-6 pt-4">
-          <div className="flex items-center gap-3">
-            <span className="text-muted-foreground text-sm">Métrica:</span>
-            <Select value={rankingMetric} onValueChange={(v) => setRankingMetric(v as typeof rankingMetric)}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Métrica" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="impressions">Impresiones</SelectItem>
-                <SelectItem value="clicks">Clics</SelectItem>
-                <SelectItem value="spend">Gasto</SelectItem>
-                <SelectItem value="ctr">Tasa de clics (CTR)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {rankingQuery.isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Skeleton key={i} className="h-12 rounded-md" />
-              ))}
-            </div>
-          ) : null}
-
-          {rankingQuery.isError ? (
-            <Alert variant="destructive">
-              <AlertTitle>Error al cargar el ranking</AlertTitle>
-              <AlertDescription>
-                {rankingQuery.error instanceof Error ? rankingQuery.error.message : "Error desconocido"}
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
-          {!rankingQuery.isLoading && !rankingQuery.isError ? (
-            <>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Ranking de anuncios</CardTitle>
-                  <CardDescription>
-                    Top anuncios por rendimiento en el periodo seleccionado.
-                    {selectedAdId ? (
-                      <span className="text-primary ml-2 font-medium">
-                        Anuncio seleccionado: {selectedAdId}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground ml-2">
-                        Haz clic en una fila para seleccionar un anuncio.
-                      </span>
-                    )}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="rounded-md border">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Nombre</TableHead>
-                          <TableHead className="text-right">Impresiones</TableHead>
-                          <TableHead className="text-right">Clics</TableHead>
-                          <TableHead className="text-right">Gasto</TableHead>
-                          <TableHead className="text-right">CTR (%)</TableHead>
-                          <TableHead className="text-right" title="Coste por mil impresiones">
-                            CPM
-                          </TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {(rankingQuery.data?.data ?? []).length === 0 ? (
-                          <TableRow>
-                            <TableCell colSpan={6} className="text-center">
-                              Sin datos de anuncios para este periodo.
-                            </TableCell>
-                          </TableRow>
-                        ) : (
-                          (rankingQuery.data?.data ?? []).map((row, idx) => (
-                            <TableRow
-                              key={String(row.ad_id ?? idx)}
-                              className={`cursor-pointer ${selectedAdId === String(row.ad_id) ? "bg-muted" : ""}`}
-                              onClick={() => {
-                                const adId = row.ad_id != null ? String(row.ad_id) : null;
-                                if (adId) setSelectedAdId(adId);
-                              }}
-                            >
-                              <TableCell className="font-medium">
-                                {row.ad_label}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                {Number(row.impressions ?? 0).toLocaleString("es")}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                {String(row.clicks ?? "—")}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                ${String(row.spend ?? "—")}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                {String(row.ctr ?? "—")}%
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                ${String(row.cpm ?? "—")}
-                              </TableCell>
-                            </TableRow>
-                          ))
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Distribución por anuncio</CardTitle>
-                  <CardDescription>
-                    {RANKING_METRIC_LABELS[rankingMetric] ?? rankingMetric} por anuncio
-                    (top 10).
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="pl-0">
-                  {rankingChartData.length === 0 ? (
-                    <p className="text-muted-foreground px-6 text-sm">
-                      No hay datos para graficar.
-                    </p>
-                  ) : (
-                    <ChartContainer config={rankingChartConfig} className="min-h-[280px] w-full">
-                      <BarChart
-                        accessibilityLayer
-                        data={rankingChartData}
-                        margin={{ left: 8, right: 8, top: 8, bottom: 48 }}
-                      >
-                        <CartesianGrid vertical={false} />
-                        <XAxis
-                          dataKey="label"
-                          tickLine={false}
-                          tickMargin={8}
-                          angle={-35}
-                          textAnchor="end"
-                          height={64}
-                          interval={0}
-                          fontSize={10}
-                        />
-                        <YAxis tickLine={false} axisLine={false} width={48} />
-                        <ChartTooltip content={<ChartTooltipContent />} />
-                        <Bar dataKey="value" fill="var(--color-value)" radius={4} />
-                      </BarChart>
-                    </ChartContainer>
-                  )}
-                </CardContent>
-              </Card>
-            </>
-          ) : null}
-        </TabsContent>
-
-        {/* ── Tab: Geografía ── */}
-        <TabsContent value="geografia" className="space-y-6 pt-4">
-          <div className="flex items-center gap-3">
-            <span className="text-muted-foreground text-sm">Ámbito:</span>
-            <Select value={geoScope} onValueChange={(v) => setGeoScope(v as "account" | "ad")}>
-              <SelectTrigger className="w-[200px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="account">Cuenta completa</SelectItem>
-                <SelectItem value="ad">Anuncio seleccionado</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {geoScope === "ad" && !selectedAdId ? (
-            <Alert>
-              <AlertTitle>Selecciona un anuncio</AlertTitle>
-              <AlertDescription>
-                Ve a la pestaña <strong>Ranking</strong>, haz clic en una fila para seleccionar un anuncio y luego vuelve aquí.
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
-          {geoQuery.isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Skeleton key={i} className="h-12 rounded-md" />
-              ))}
-            </div>
-          ) : null}
-
-          {geoQuery.isError ? (
-            <Alert variant="destructive">
-              <AlertTitle>Error al cargar datos geográficos</AlertTitle>
-              <AlertDescription>
-                {geoQuery.error instanceof Error ? geoQuery.error.message : "Error desconocido"}
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
-          {!geoQuery.isLoading && !geoQuery.isError && (geoScope === "account" || Boolean(selectedAdId)) ? (
-            <>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Distribución geográfica</CardTitle>
-                  <CardDescription>
-                    Impresiones por región —{" "}
-                    {geoScope === "account" ? "cuenta completa" : `anuncio ${selectedAdId}`}.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="rounded-md border">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Región</TableHead>
-                          <TableHead className="text-right">Impresiones</TableHead>
-                          <TableHead className="text-right">Clics</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {(geoQuery.data?.data ?? []).length === 0 ? (
-                          <TableRow>
-                            <TableCell colSpan={3} className="text-center">
-                              Sin datos geográficos para este periodo.
-                            </TableCell>
-                          </TableRow>
-                        ) : (
-                          (geoQuery.data?.data ?? []).map((row, idx) => (
-                            <TableRow key={String(row.region ?? row.country ?? idx)}>
-                              <TableCell className="font-medium">
-                                {String(row.region ?? row.country ?? "Desconocido")}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                {Number(row.impressions ?? 0).toLocaleString("es")}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                {String(row.clicks ?? "—")}
-                              </TableCell>
-                            </TableRow>
-                          ))
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Mapa geográfico</CardTitle>
-                  <CardDescription>Distribución geográfica interactiva.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {geoQuery.isLoading ? (
-                    <Skeleton className="w-full h-96" />
-                  ) : geoQuery.isError ? (
-                    <Alert variant="destructive">
-                      <AlertDescription>Error al obtener datos geográficos.</AlertDescription>
-                    </Alert>
-                  ) : geoQuery.data ? (
-                    <GeoMap
-                      data={geoQuery.data.data}
-                      metadata={geoQuery.data.metadata}
-                      metric="impressions"
-                    />
-                  ) : null}
-                </CardContent>
-              </Card>
-            </>
-          ) : null}
-        </TabsContent>
-
-        {/* ── Tab: Targeting ── */}
-        <TabsContent value="targeting" className="pt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Targeting del anuncio seleccionado</CardTitle>
-              <CardDescription>
-                Selecciona un anuncio en la tabla Ranking para ver su targeting.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {!selectedAdId ? (
-                <Alert>
-                  <AlertTitle>Sin anuncio seleccionado</AlertTitle>
-                  <AlertDescription>
-                    Ve a la pestaña <strong>Ranking</strong>, haz clic en una fila para seleccionar un anuncio y luego vuelve aquí.
-                  </AlertDescription>
-                </Alert>
-              ) : targetingQuery.isLoading ? (
-                <div className="space-y-3">
-                  {Array.from({ length: 4 }).map((_, i) => (
-                    <Skeleton key={i} className="h-8 rounded-md" />
-                  ))}
-                </div>
-              ) : targetingQuery.isError ? (
-                <Alert variant="destructive">
-                  <AlertTitle>Error al cargar el targeting</AlertTitle>
-                  <AlertDescription>
-                    {targetingQuery.error instanceof Error ? targetingQuery.error.message : "Error desconocido"}
-                  </AlertDescription>
-                </Alert>
-              ) : targetingQuery.data?.targeting ? (
-                <TargetingPanel targeting={targetingQuery.data.targeting} />
-              ) : null}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+      {/* TimeseriesChart — full width */}
+      <TimeseriesChart
+        data={timeseriesQuery.data?.data}
+        isLoading={timeseriesQuery.isLoading}
+      />
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shell — reads route params and wraps with FilterProvider
+// ─────────────────────────────────────────────────────────────────────────────
+
+export default function DashboardPage() {
+  const { accountId, pageId } = useParams<{
+    accountId: string;
+    pageId: string;
+  }>();
+
+  if (!accountId || !pageId) {
+    return <Navigate to="/" replace />;
+  }
+
+  return (
+    <FilterProvider>
+      <DashboardContent accountId={accountId} pageId={pageId} />
+    </FilterProvider>
   );
 }
