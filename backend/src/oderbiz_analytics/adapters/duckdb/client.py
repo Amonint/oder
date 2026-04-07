@@ -108,7 +108,7 @@ def query_latest_raw(db_path: str, ad_account_id: str) -> str | None:
 
 def get_cache(db_path: str, cache_key: str) -> dict | None:
     """Retorna el payload cacheado o None si no existe la clave."""
-    con = duckdb.connect(db_path)
+    con = duckdb.connect(db_path, read_only=True)
     try:
         row = con.execute(
             "SELECT payload_json FROM api_cache WHERE cache_key = ?",
@@ -125,9 +125,9 @@ def set_cache(db_path: str, cache_key: str, payload: dict) -> None:
     """Guarda (o sobreescribe) un payload en caché. Sin TTL — permanente."""
     con = duckdb.connect(db_path)
     try:
-        con.execute("DELETE FROM api_cache WHERE cache_key = ?", [cache_key])
         con.execute(
-            "INSERT INTO api_cache (cache_key, payload_json, cached_at) VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO api_cache (cache_key, payload_json, cached_at)"
+            " VALUES (?, ?, ?)",
             [cache_key, json.dumps(payload), datetime.now(UTC)],
         )
     finally:

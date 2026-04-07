@@ -1,5 +1,4 @@
 """Tests para helpers de caché en DuckDB."""
-import pytest
 from oderbiz_analytics.adapters.duckdb.client import get_cache, init_db, set_cache
 
 
