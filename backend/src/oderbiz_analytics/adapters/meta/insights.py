@@ -83,7 +83,9 @@ async def fetch_insights_all_pages(
     results: list[dict] = []
 
     async with httpx.AsyncClient(timeout=120.0) as client:
-        while url:
+        page_count = 0
+        MAX_PAGES = 200
+        while url and page_count < MAX_PAGES:
             r = await client.get(url, params=params)
             r.raise_for_status()
             body = r.json()
@@ -95,6 +97,7 @@ async def fetch_insights_all_pages(
                 params = {}
             else:
                 break
+            page_count += 1
 
     return results
 

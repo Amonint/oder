@@ -228,7 +228,7 @@ async def get_page_insights(
 
     filtering = _page_filtering(page_id, campaign_id=cid, adset_id=sid, ad_id=aid)
     try:
-        rows = await fetch_insights(
+        rows = await fetch_insights_all_pages(
             base_url=base, access_token=access_token, ad_account_id=normalized_id,
             fields="spend,impressions,reach,frequency,cpm,ctr",
             date_preset=effective_preset, level="account", filtering=filtering,
@@ -363,7 +363,8 @@ async def get_page_actions(
         rows = await fetch_insights_all_pages(
             base_url=base, access_token=access_token, ad_account_id=normalized_id,
             fields="spend,actions", date_preset=effective_preset,
-            level="ad", filtering=filtering,
+            level="ad",  # ad-level to get per-ad actions; adset filter applied via filtering param
+            filtering=filtering,
         )
     except httpx.HTTPStatusError:
         raise HTTPException(status_code=502, detail="Error al obtener acciones de Meta.") from None

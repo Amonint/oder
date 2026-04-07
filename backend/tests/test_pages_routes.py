@@ -260,6 +260,19 @@ class TestGetPageGeo:
                    params={"date_preset": "last_30d"}, headers={"Authorization": "Bearer test_tok"})
         assert respx.calls.call_count == 1
 
+    @respx.mock
+    def test_page_geo_handles_meta_error(self, client):
+        """Retorna 502 cuando Meta falla."""
+        respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
+            return_value=httpx.Response(400, json={"error": {"message": "Error"}})
+        )
+        r = client.get(
+            "/api/v1/accounts/act_123/pages/page_456/geo",
+            params={"date_preset": "last_30d"},
+            headers={"Authorization": "Bearer test_tok"},
+        )
+        assert r.status_code == 502
+
 
 class TestGetPageActions:
     @respx.mock
