@@ -47,6 +47,58 @@ async def fetch_insights(
             await client.aclose()
 
 
+async def fetch_insights_all_pages(
+    *,
+    base_url: str,
+    access_token: str,
+    ad_account_id: str,
+    fields: str,
+    date_preset: str | None = None,
+    time_range: dict[str, str] | None = None,
+    level: str = "account",
+    breakdowns: list[str] | None = None,
+    filtering: list[dict] | None = None,
+    time_increment: int | None = None,
+) -> list[dict]:
+    """Fetches all pages of an insights response, following pagination cursors."""
+    params: dict = {
+        "fields": fields,
+        "access_token": access_token,
+        "level": level,
+        "limit": "500",
+    }
+    if time_range is not None:
+        params["time_range"] = json.dumps(time_range)
+    else:
+        if date_preset is not None:
+            params["date_preset"] = date_preset
+    if breakdowns is not None:
+        params["breakdowns"] = ",".join(breakdowns)
+    if filtering is not None:
+        params["filtering"] = json.dumps(filtering)
+    if time_increment is not None:
+        params["time_increment"] = str(time_increment)
+
+    url = f"{base_url.rstrip('/')}/{ad_account_id}/insights"
+    results: list[dict] = []
+
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        while url:
+            r = await client.get(url, params=params)
+            r.raise_for_status()
+            body = r.json()
+            results.extend(body.get("data", []))
+            paging = body.get("paging", {})
+            next_url = paging.get("next")
+            if next_url:
+                url = next_url
+                params = {}
+            else:
+                break
+
+    return results
+
+
 async def fetch_account_insights(
     *,
     base_url: str,
