@@ -35,6 +35,8 @@ def _make_cache_key(
 async def get_pages_list(
     account_id: str,
     date_preset: str = Query("last_30d"),
+    date_start: str | None = Query(None),
+    date_stop: str | None = Query(None),
     settings: Settings = Depends(get_settings),
     access_token: str = Depends(get_meta_access_token),
 ):
@@ -51,6 +53,12 @@ async def get_pages_list(
     normalized_id = normalize_ad_account_id(account_id)
     effective_preset = date_preset if date_preset else "last_30d"
     base = f"https://graph.facebook.com/{settings.meta_graph_version}".rstrip("/")
+
+    ds = (date_start or "").strip()
+    de = (date_stop or "").strip()
+    effective_time_range: dict[str, str] | None = None
+    if ds and de:
+        effective_time_range = {"since": ds, "until": de}
 
     # Build cache key
     cache_key = _make_cache_key(
@@ -77,15 +85,20 @@ async def get_pages_list(
     except httpx.RequestError:
         raise HTTPException(status_code=502, detail="No se pudo contactar a la API de Meta.") from None
 
-    # 2. Extract unique page_ids (skip adsets without page_id)
+    # 2. Extract unique page_ids and build page→adset_ids mapping
     page_ids: list[str] = []
     seen: set[str] = set()
+    page_adset_map: dict[str, list[str]] = {}
     for adset in adsets:
         promoted = adset.get("promoted_object", {})
         pid = promoted.get("page_id") if promoted else None
-        if pid and pid not in seen:
-            seen.add(pid)
-            page_ids.append(pid)
+        aid = adset.get("id")
+        if pid and aid:
+            if pid not in seen:
+                seen.add(pid)
+                page_ids.append(pid)
+                page_adset_map[pid] = []
+            page_adset_map[pid].append(aid)
 
     if not page_ids:
         result = {"data": [], "date_preset": effective_preset}
@@ -103,21 +116,17 @@ async def get_pages_list(
         except httpx.RequestError:
             page_info = {}
 
+        adset_ids = page_adset_map.get(page_id, [])
         try:
             rows = await fetch_insights(
                 base_url=base,
                 access_token=access_token,
                 ad_account_id=normalized_id,
                 fields="spend,impressions",
-                date_preset=effective_preset,
+                date_preset=effective_preset if not effective_time_range else None,
+                time_range=effective_time_range,
                 level="account",
-                filtering=[
-                    {
-                        "field": "adset.promoted_object_page_id",
-                        "operator": "EQUAL",
-                        "value": page_id,
-                    }
-                ],
+                filtering=[{"field": "adset.id", "operator": "IN", "value": adset_ids}] if adset_ids else None,
                 client=client,
             )
             row = rows[0] if rows else {}
@@ -151,23 +160,49 @@ async def get_pages_list(
 # Helpers for sub-endpoints
 # ---------------------------------------------------------------------------
 
-def _page_filtering(
+async def _get_adset_ids_for_page(
+    base: str,
+    access_token: str,
+    account_id: str,
     page_id: str,
+    settings: Settings,
+) -> list[str]:
+    """Fetch (and cache) the adset IDs that promote a given page_id."""
+    cache_key = _make_cache_key(account_id, "adset_ids_for_page", page_id=page_id)
+    cached = get_cache(settings.duckdb_path, cache_key)
+    if cached is not None:
+        return cached.get("ids", [])
+    adsets = await fetch_graph_edge_all_pages(
+        base_url=base,
+        access_token=access_token,
+        path=f"{account_id}/adsets",
+        fields="id,promoted_object",
+    )
+    ids = [
+        a["id"]
+        for a in adsets
+        if a.get("id") and (a.get("promoted_object") or {}).get("page_id") == page_id
+    ]
+    set_cache(settings.duckdb_path, cache_key, {"ids": ids})
+    return ids
+
+
+def _page_filtering(
+    adset_ids: list[str],
     campaign_id: str = "",
     adset_id: str = "",
     ad_id: str = "",
 ) -> list[dict]:
-    """Filtering list: always by page_id + optional cascade filter."""
-    filters: list[dict] = [
-        {"field": "adset.promoted_object_page_id", "operator": "EQUAL", "value": page_id}
-    ]
+    """Build insights filtering from resolved adset IDs + optional cascade filter."""
     if ad_id.strip():
-        filters.append({"field": "ad.id", "operator": "IN", "value": [ad_id.strip()]})
-    elif adset_id.strip():
-        filters.append({"field": "adset.id", "operator": "IN", "value": [adset_id.strip()]})
-    elif campaign_id.strip():
-        filters.append({"field": "campaign.id", "operator": "IN", "value": [campaign_id.strip()]})
-    return filters
+        return [{"field": "ad.id", "operator": "IN", "value": [ad_id.strip()]}]
+    if adset_id.strip():
+        return [{"field": "adset.id", "operator": "IN", "value": [adset_id.strip()]}]
+    if campaign_id.strip():
+        return [{"field": "campaign.id", "operator": "IN", "value": [campaign_id.strip()]}]
+    if not adset_ids:
+        return []
+    return [{"field": "adset.id", "operator": "IN", "value": adset_ids}]
 
 
 ACTION_GROUPS: dict[str, set[str]] = {
@@ -209,6 +244,8 @@ async def get_page_insights(
     ad_account_id: str,
     page_id: str,
     date_preset: str | None = Query(None),
+    date_start: str | None = Query(None),
+    date_stop: str | None = Query(None),
     campaign_id: str | None = Query(None),
     adset_id: str | None = Query(None),
     ad_id: str | None = Query(None),
@@ -220,18 +257,33 @@ async def get_page_insights(
     base = f"https://graph.facebook.com/{settings.meta_graph_version}"
     cid, sid, aid = (campaign_id or "").strip(), (adset_id or "").strip(), (ad_id or "").strip()
 
+    ds = (date_start or "").strip()
+    de = (date_stop or "").strip()
+    effective_time_range: dict[str, str] | None = None
+    if ds and de:
+        effective_time_range = {"since": ds, "until": de}
+
     cache_key = _make_cache_key(normalized_id, "page_insights", page_id=page_id,
         date_preset=effective_preset, campaign_id=cid, adset_id=sid, ad_id=aid)
     cached = get_cache(settings.duckdb_path, cache_key)
     if cached is not None:
         return cached
 
-    filtering = _page_filtering(page_id, campaign_id=cid, adset_id=sid, ad_id=aid)
+    adset_ids = await _get_adset_ids_for_page(base, access_token, normalized_id, page_id, settings)
+    filtering = _page_filtering(adset_ids, campaign_id=cid, adset_id=sid, ad_id=aid)
+    if not filtering:
+        result = {"data": [], "page_id": page_id, "date_preset": effective_preset,
+                  "campaign_id": cid or None, "adset_id": sid or None, "ad_id": aid or None}
+        set_cache(settings.duckdb_path, cache_key, result)
+        return result
+
     try:
         rows = await fetch_insights_all_pages(
             base_url=base, access_token=access_token, ad_account_id=normalized_id,
             fields="spend,impressions,reach,frequency,cpm,ctr",
-            date_preset=effective_preset, level="account", filtering=filtering,
+            date_preset=effective_preset if not effective_time_range else None,
+            time_range=effective_time_range,
+            level="account", filtering=filtering,
         )
     except httpx.HTTPStatusError:
         raise HTTPException(status_code=502, detail="Error al obtener KPIs de Meta.") from None
@@ -253,6 +305,8 @@ async def get_page_placements(
     ad_account_id: str,
     page_id: str,
     date_preset: str | None = Query(None),
+    date_start: str | None = Query(None),
+    date_stop: str | None = Query(None),
     campaign_id: str | None = Query(None),
     adset_id: str | None = Query(None),
     ad_id: str | None = Query(None),
@@ -264,17 +318,32 @@ async def get_page_placements(
     base = f"https://graph.facebook.com/{settings.meta_graph_version}"
     cid, sid, aid = (campaign_id or "").strip(), (adset_id or "").strip(), (ad_id or "").strip()
 
+    ds = (date_start or "").strip()
+    de = (date_stop or "").strip()
+    effective_time_range: dict[str, str] | None = None
+    if ds and de:
+        effective_time_range = {"since": ds, "until": de}
+
     cache_key = _make_cache_key(normalized_id, "page_placements", page_id=page_id,
         date_preset=effective_preset, campaign_id=cid, adset_id=sid, ad_id=aid)
     cached = get_cache(settings.duckdb_path, cache_key)
     if cached is not None:
         return cached
 
-    filtering = _page_filtering(page_id, campaign_id=cid, adset_id=sid, ad_id=aid)
+    adset_ids = await _get_adset_ids_for_page(base, access_token, normalized_id, page_id, settings)
+    filtering = _page_filtering(adset_ids, campaign_id=cid, adset_id=sid, ad_id=aid)
+    if not filtering:
+        result = {"data": [], "page_id": page_id, "date_preset": effective_preset,
+                  "breakdowns": ["publisher_platform", "platform_position"]}
+        set_cache(settings.duckdb_path, cache_key, result)
+        return result
+
     try:
         rows = await fetch_insights_all_pages(
             base_url=base, access_token=access_token, ad_account_id=normalized_id,
-            fields="spend,impressions,reach", date_preset=effective_preset,
+            fields="spend,impressions,reach",
+            date_preset=effective_preset if not effective_time_range else None,
+            time_range=effective_time_range,
             level="account", filtering=filtering,
             breakdowns=["publisher_platform", "platform_position"],
         )
@@ -298,6 +367,8 @@ async def get_page_geo(
     ad_account_id: str,
     page_id: str,
     date_preset: str | None = Query(None),
+    date_start: str | None = Query(None),
+    date_stop: str | None = Query(None),
     campaign_id: str | None = Query(None),
     adset_id: str | None = Query(None),
     ad_id: str | None = Query(None),
@@ -309,17 +380,31 @@ async def get_page_geo(
     base = f"https://graph.facebook.com/{settings.meta_graph_version}"
     cid, sid, aid = (campaign_id or "").strip(), (adset_id or "").strip(), (ad_id or "").strip()
 
+    ds = (date_start or "").strip()
+    de = (date_stop or "").strip()
+    effective_time_range: dict[str, str] | None = None
+    if ds and de:
+        effective_time_range = {"since": ds, "until": de}
+
     cache_key = _make_cache_key(normalized_id, "page_geo", page_id=page_id,
         date_preset=effective_preset, campaign_id=cid, adset_id=sid, ad_id=aid)
     cached = get_cache(settings.duckdb_path, cache_key)
     if cached is not None:
         return cached
 
-    filtering = _page_filtering(page_id, campaign_id=cid, adset_id=sid, ad_id=aid)
+    adset_ids = await _get_adset_ids_for_page(base, access_token, normalized_id, page_id, settings)
+    filtering = _page_filtering(adset_ids, campaign_id=cid, adset_id=sid, ad_id=aid)
+    if not filtering:
+        result = {"data": [], "page_id": page_id, "date_preset": effective_preset, "breakdowns": ["region"]}
+        set_cache(settings.duckdb_path, cache_key, result)
+        return result
+
     try:
         rows = await fetch_insights_all_pages(
             base_url=base, access_token=access_token, ad_account_id=normalized_id,
-            fields="spend,impressions,reach", date_preset=effective_preset,
+            fields="spend,impressions,reach",
+            date_preset=effective_preset if not effective_time_range else None,
+            time_range=effective_time_range,
             level="account", filtering=filtering, breakdowns=["region"],
         )
     except httpx.HTTPStatusError:
@@ -341,6 +426,8 @@ async def get_page_actions(
     ad_account_id: str,
     page_id: str,
     date_preset: str | None = Query(None),
+    date_start: str | None = Query(None),
+    date_stop: str | None = Query(None),
     campaign_id: str | None = Query(None),
     adset_id: str | None = Query(None),
     ad_id: str | None = Query(None),
@@ -352,18 +439,32 @@ async def get_page_actions(
     base = f"https://graph.facebook.com/{settings.meta_graph_version}"
     cid, sid, aid = (campaign_id or "").strip(), (adset_id or "").strip(), (ad_id or "").strip()
 
+    ds = (date_start or "").strip()
+    de = (date_stop or "").strip()
+    effective_time_range: dict[str, str] | None = None
+    if ds and de:
+        effective_time_range = {"since": ds, "until": de}
+
     cache_key = _make_cache_key(normalized_id, "page_actions", page_id=page_id,
         date_preset=effective_preset, campaign_id=cid, adset_id=sid, ad_id=aid)
     cached = get_cache(settings.duckdb_path, cache_key)
     if cached is not None:
         return cached
 
-    filtering = _page_filtering(page_id, campaign_id=cid, adset_id=sid, ad_id=aid)
+    adset_ids = await _get_adset_ids_for_page(base, access_token, normalized_id, page_id, settings)
+    filtering = _page_filtering(adset_ids, campaign_id=cid, adset_id=sid, ad_id=aid)
+    if not filtering:
+        result = {"data": [], "spend": "0", "page_id": page_id, "date_preset": effective_preset}
+        set_cache(settings.duckdb_path, cache_key, result)
+        return result
+
     try:
         rows = await fetch_insights_all_pages(
             base_url=base, access_token=access_token, ad_account_id=normalized_id,
-            fields="spend,actions", date_preset=effective_preset,
-            level="ad",  # ad-level to get per-ad actions; adset filter applied via filtering param
+            fields="spend,actions",
+            date_preset=effective_preset if not effective_time_range else None,
+            time_range=effective_time_range,
+            level="ad",
             filtering=filtering,
         )
     except httpx.HTTPStatusError:
@@ -389,6 +490,8 @@ async def get_page_timeseries(
     ad_account_id: str,
     page_id: str,
     date_preset: str | None = Query(None),
+    date_start: str | None = Query(None),
+    date_stop: str | None = Query(None),
     campaign_id: str | None = Query(None),
     adset_id: str | None = Query(None),
     ad_id: str | None = Query(None),
@@ -400,17 +503,31 @@ async def get_page_timeseries(
     base = f"https://graph.facebook.com/{settings.meta_graph_version}"
     cid, sid, aid = (campaign_id or "").strip(), (adset_id or "").strip(), (ad_id or "").strip()
 
+    ds = (date_start or "").strip()
+    de = (date_stop or "").strip()
+    effective_time_range: dict[str, str] | None = None
+    if ds and de:
+        effective_time_range = {"since": ds, "until": de}
+
     cache_key = _make_cache_key(normalized_id, "page_timeseries", page_id=page_id,
         date_preset=effective_preset, campaign_id=cid, adset_id=sid, ad_id=aid)
     cached = get_cache(settings.duckdb_path, cache_key)
     if cached is not None:
         return cached
 
-    filtering = _page_filtering(page_id, campaign_id=cid, adset_id=sid, ad_id=aid)
+    adset_ids = await _get_adset_ids_for_page(base, access_token, normalized_id, page_id, settings)
+    filtering = _page_filtering(adset_ids, campaign_id=cid, adset_id=sid, ad_id=aid)
+    if not filtering:
+        result = {"data": [], "page_id": page_id, "date_preset": effective_preset, "time_increment": 1}
+        set_cache(settings.duckdb_path, cache_key, result)
+        return result
+
     try:
         rows = await fetch_insights_all_pages(
             base_url=base, access_token=access_token, ad_account_id=normalized_id,
-            fields="spend,impressions,reach", date_preset=effective_preset,
+            fields="spend,impressions,reach",
+            date_preset=effective_preset if not effective_time_range else None,
+            time_range=effective_time_range,
             level="account", filtering=filtering, time_increment=1,
         )
     except httpx.HTTPStatusError:

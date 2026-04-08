@@ -2,7 +2,40 @@
 from __future__ import annotations
 
 import json
+import logging
 import httpx
+
+logger = logging.getLogger(__name__)
+
+
+def _insights_params(
+    *,
+    fields: str,
+    access_token: str,
+    level: str,
+    date_preset: str | None,
+    time_range: dict[str, str] | None,
+    breakdowns: list[str] | None,
+    filtering: list[dict] | None,
+    time_increment: int | None,
+) -> dict:
+    params: dict = {
+        "fields": fields,
+        "access_token": access_token,
+        "level": level,
+    }
+    if time_range is not None:
+        params["time_range"] = json.dumps(time_range)
+    else:
+        if date_preset is not None:
+            params["date_preset"] = date_preset
+    if breakdowns is not None:
+        params["breakdowns"] = ",".join(breakdowns)
+    if filtering is not None:
+        params["filtering"] = json.dumps(filtering)
+    if time_increment is not None:
+        params["time_increment"] = str(time_increment)
+    return params
 
 
 async def fetch_insights(
@@ -16,30 +49,29 @@ async def fetch_insights(
     level: str = "account",
     breakdowns: list[str] | None = None,
     filtering: list[dict] | None = None,
+    time_increment: int | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> list[dict]:
     own = client is None
     if client is None:
         client = httpx.AsyncClient(timeout=120.0)
     try:
-        params: dict = {
-            "fields": fields,
-            "access_token": access_token,
-            "level": level,
-        }
-        if time_range is not None:
-            params["time_range"] = json.dumps(time_range)
-        else:
-            if date_preset is not None:
-                params["date_preset"] = date_preset
-        if breakdowns is not None:
-            params["breakdowns"] = ",".join(breakdowns)
-        if filtering is not None:
-            params["filtering"] = json.dumps(filtering)
+        params = _insights_params(
+            fields=fields,
+            access_token=access_token,
+            level=level,
+            date_preset=date_preset,
+            time_range=time_range,
+            breakdowns=breakdowns,
+            filtering=filtering,
+            time_increment=time_increment,
+        )
         r = await client.get(
             f"{base_url.rstrip('/')}/{ad_account_id}/insights",
             params=params,
         )
+        if not r.is_success:
+            logger.error("META API ERROR [fetch_insights] status=%s body=%s", r.status_code, r.text)
         r.raise_for_status()
         return r.json().get("data", [])
     finally:
@@ -59,47 +91,47 @@ async def fetch_insights_all_pages(
     breakdowns: list[str] | None = None,
     filtering: list[dict] | None = None,
     time_increment: int | None = None,
+    max_pages: int = 200,
 ) -> list[dict]:
-    """Fetches all pages of an insights response, following pagination cursors."""
-    params: dict = {
-        "fields": fields,
-        "access_token": access_token,
-        "level": level,
-        "limit": "500",
-    }
-    if time_range is not None:
-        params["time_range"] = json.dumps(time_range)
-    else:
-        if date_preset is not None:
-            params["date_preset"] = date_preset
-    if breakdowns is not None:
-        params["breakdowns"] = ",".join(breakdowns)
-    if filtering is not None:
-        params["filtering"] = json.dumps(filtering)
-    if time_increment is not None:
-        params["time_increment"] = str(time_increment)
-
-    url = f"{base_url.rstrip('/')}/{ad_account_id}/insights"
-    results: list[dict] = []
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        page_count = 0
-        MAX_PAGES = 200
-        while url and page_count < MAX_PAGES:
-            r = await client.get(url, params=params)
-            r.raise_for_status()
-            body = r.json()
-            results.extend(body.get("data", []))
-            paging = body.get("paging", {})
-            next_url = paging.get("next")
-            if next_url:
-                url = next_url
-                params = {}
+    """Sigue `paging.next` hasta `max_pages` (URLs `next` pueden incluir token)."""
+    out: list[dict] = []
+    url: str | None = f"{base_url.rstrip('/')}/{ad_account_id}/insights"
+    first = True
+    page = 0
+    own = True
+    client = httpx.AsyncClient(timeout=120.0)
+    try:
+        while url and page < max_pages:
+            if first:
+                params = _insights_params(
+                    fields=fields,
+                    access_token=access_token,
+                    level=level,
+                    date_preset=date_preset,
+                    time_range=time_range,
+                    breakdowns=breakdowns,
+                    filtering=filtering,
+                    time_increment=time_increment,
+                )
+                r = await client.get(url, params=params)
+                first = False
             else:
-                break
-            page_count += 1
-
-    return results
+                r = await client.get(url)
+            if not r.is_success:
+                logger.error("META API ERROR [fetch_insights_all_pages] status=%s body=%s", r.status_code, r.text)
+            r.raise_for_status()
+            payload = r.json()
+            rows = payload.get("data", [])
+            if isinstance(rows, list):
+                for x in rows:
+                    if isinstance(x, dict):
+                        out.append(x)
+            url = (payload.get("paging") or {}).get("next")
+            page += 1
+    finally:
+        if own:
+            await client.aclose()
+    return out
 
 
 async def fetch_account_insights(
@@ -107,8 +139,9 @@ async def fetch_account_insights(
     base_url: str,
     access_token: str,
     ad_account_id: str,
-    date_preset: str,
+    date_preset: str | None,
     fields: str,
+    time_range: dict[str, str] | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> list[dict]:
     return await fetch_insights(
@@ -117,6 +150,8 @@ async def fetch_account_insights(
         ad_account_id=ad_account_id,
         fields=fields,
         date_preset=date_preset,
+        time_range=time_range,
         level="account",
+        time_increment=None,
         client=client,
     )

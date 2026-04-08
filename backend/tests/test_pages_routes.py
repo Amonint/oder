@@ -153,9 +153,16 @@ class TestGetPagesList:
         assert r.status_code == 502
 
 
+_ADSETS_MOCK = httpx.Response(
+    200,
+    json={"data": [{"id": "adset_1", "promoted_object": {"page_id": "page_456"}}]},
+)
+
+
 class TestGetPageInsights:
     @respx.mock
     def test_page_insights_returns_200(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             return_value=httpx.Response(200, json={"data": [
                 {"spend": "150.00", "impressions": "12000", "reach": "8000",
@@ -171,6 +178,7 @@ class TestGetPageInsights:
 
     @respx.mock
     def test_page_insights_uses_cache(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             return_value=httpx.Response(200, json={"data": [{"spend": "50.00", "impressions": "1000",
                 "reach": "800", "frequency": "1.25", "cpm": "50.00", "ctr": "1.50"}]})
@@ -179,10 +187,12 @@ class TestGetPageInsights:
                    params={"date_preset": "last_30d"}, headers={"Authorization": "Bearer test_tok"})
         client.get("/api/v1/accounts/act_123/pages/page_456/insights",
                    params={"date_preset": "last_30d"}, headers={"Authorization": "Bearer test_tok"})
-        assert respx.calls.call_count == 1
+        # First request: 1 adsets call + 1 insights call; second request hits result cache
+        assert respx.calls.call_count == 2
 
     @respx.mock
     def test_page_insights_handles_meta_error(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             return_value=httpx.Response(400, json={"error": {"message": "Invalid token"}})
         )
@@ -194,6 +204,7 @@ class TestGetPageInsights:
 class TestGetPagePlacements:
     @respx.mock
     def test_page_placements_returns_200(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             return_value=httpx.Response(200, json={"data": [
                 {"spend": "80.00", "impressions": "4000", "reach": "3000",
@@ -213,6 +224,7 @@ class TestGetPagePlacements:
 
     @respx.mock
     def test_page_placements_uses_cache(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             return_value=httpx.Response(200, json={"data": []})
         )
@@ -220,10 +232,12 @@ class TestGetPagePlacements:
                    params={"date_preset": "last_30d"}, headers={"Authorization": "Bearer test_tok"})
         client.get("/api/v1/accounts/act_123/pages/page_456/placements",
                    params={"date_preset": "last_30d"}, headers={"Authorization": "Bearer test_tok"})
-        assert respx.calls.call_count == 1
+        # First request: 1 adsets call + 1 insights call; second request hits result cache
+        assert respx.calls.call_count == 2
 
     @respx.mock
     def test_page_placements_handles_meta_error(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             return_value=httpx.Response(400, json={"error": {"message": "Error"}})
         )
@@ -235,6 +249,7 @@ class TestGetPagePlacements:
 class TestGetPageGeo:
     @respx.mock
     def test_page_geo_returns_regions(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             return_value=httpx.Response(200, json={"data": [
                 {"spend": "60.00", "impressions": "3000", "reach": "2500", "region": "Pichincha"},
@@ -251,6 +266,7 @@ class TestGetPageGeo:
 
     @respx.mock
     def test_page_geo_uses_cache(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             return_value=httpx.Response(200, json={"data": []})
         )
@@ -258,11 +274,12 @@ class TestGetPageGeo:
                    params={"date_preset": "last_30d"}, headers={"Authorization": "Bearer test_tok"})
         client.get("/api/v1/accounts/act_123/pages/page_456/geo",
                    params={"date_preset": "last_30d"}, headers={"Authorization": "Bearer test_tok"})
-        assert respx.calls.call_count == 1
+        assert respx.calls.call_count == 2  # adsets + insights (geo uses cache on 2nd call)
 
     @respx.mock
     def test_page_geo_handles_meta_error(self, client):
         """Retorna 502 cuando Meta falla."""
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             return_value=httpx.Response(400, json={"error": {"message": "Error"}})
         )
@@ -277,6 +294,7 @@ class TestGetPageGeo:
 class TestGetPageActions:
     @respx.mock
     def test_page_actions_groups_into_5_categories(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             return_value=httpx.Response(200, json={"data": [{"spend": "100.00", "actions": [
                 {"action_type": "post_engagement", "value": "450"},
@@ -300,6 +318,7 @@ class TestGetPageActions:
 
     @respx.mock
     def test_page_actions_always_returns_5_categories(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             return_value=httpx.Response(200, json={"data": [{"spend": "10.00", "actions": []}]})
         )
@@ -310,6 +329,7 @@ class TestGetPageActions:
 
     @respx.mock
     def test_page_actions_uses_cache(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             return_value=httpx.Response(200, json={"data": []})
         )
@@ -317,12 +337,13 @@ class TestGetPageActions:
                    params={"date_preset": "last_30d"}, headers={"Authorization": "Bearer test_tok"})
         client.get("/api/v1/accounts/act_123/pages/page_456/actions",
                    params={"date_preset": "last_30d"}, headers={"Authorization": "Bearer test_tok"})
-        assert respx.calls.call_count == 1
+        assert respx.calls.call_count == 2  # adsets + insights (cache hits on 2nd call)
 
 
 class TestGetPageTimeseries:
     @respx.mock
     def test_page_timeseries_returns_daily_rows(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             return_value=httpx.Response(200, json={"data": [
                 {"spend": "10.00", "impressions": "500", "reach": "400",
@@ -341,6 +362,7 @@ class TestGetPageTimeseries:
 
     @respx.mock
     def test_page_timeseries_uses_cache(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             return_value=httpx.Response(200, json={"data": []})
         )
@@ -348,4 +370,4 @@ class TestGetPageTimeseries:
                    params={"date_preset": "last_30d"}, headers={"Authorization": "Bearer test_tok"})
         client.get("/api/v1/accounts/act_123/pages/page_456/timeseries",
                    params={"date_preset": "last_30d"}, headers={"Authorization": "Bearer test_tok"})
-        assert respx.calls.call_count == 1
+        assert respx.calls.call_count == 2  # adsets + insights (cache hits on 2nd call)
