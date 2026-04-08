@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   fetchAdLabelsPerformance,
   fetchCampaigns,
+  fetchOrganicInsights,
   fetchPageActions,
   fetchPageGeo,
   fetchPageInsights,
@@ -15,6 +16,7 @@ import {
   type GeoMetadata,
 } from "@/api/client";
 import AdLabelsSection from "@/components/AdLabelsSection";
+import OrganicKpiCard from "@/components/OrganicKpiCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -128,6 +130,12 @@ export default function PageDashboardPage() {
     queryKey: ["campaigns", id],
     queryFn: () => fetchCampaigns(id),
     staleTime: 10 * 60 * 1000,
+  });
+
+  const organicQuery = useQuery({
+    queryKey: ["organic-insights", pid, datePreset, customDateStart, customDateStop],
+    queryFn: () => fetchOrganicInsights(pid, { ...effectiveDateParams }),
+    staleTime: 5 * 60 * 1000,
   });
 
   const labelsQuery = useQuery({
@@ -328,6 +336,15 @@ export default function PageDashboardPage() {
           )}
         </div>
       ) : null}
+
+      {/* Métricas Orgánicas */}
+      <section className="space-y-2">
+        <h2 className="text-foreground text-lg font-semibold">Métricas Orgánicas</h2>
+        <OrganicKpiCard
+          metrics={organicQuery.data?.metrics}
+          isLoading={organicQuery.isLoading}
+        />
+      </section>
 
       {/* Ad Labels */}
       <section className="space-y-2">
