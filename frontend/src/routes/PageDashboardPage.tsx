@@ -36,6 +36,7 @@ import ActionsChart from "@/components/ActionsChart";
 import TimeseriesChart from "@/components/TimeseriesChart";
 import PlacementChart from "@/components/PlacementChart";
 import GeoMap from "@/components/GeoMap";
+import ChoroplethMap from "@/components/ChoroplethMap";
 
 const ALL = "__all__";
 
@@ -296,11 +297,23 @@ export default function PageDashboardPage() {
       {geoQuery.isLoading ? (
         <Skeleton className="h-64 w-full rounded-xl" />
       ) : geoRows.length > 0 ? (
-        <div>
-          <h2 className="text-foreground mb-3 text-base font-semibold">
-            Distribución geográfica
-          </h2>
-          <GeoMap data={geoRows} metadata={geoMeta} metric="impressions" />
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-foreground mb-3 text-base font-semibold">
+              Distribución geográfica
+            </h2>
+            <GeoMap data={geoRows} metadata={geoMeta} metric="impressions" />
+          </div>
+          {geoQuery.data && geoQuery.data.data.length > 0 && (
+            <ChoroplethMap
+              data={geoQuery.data.data.map((row) => ({
+                region_name: (row as { region_name?: string; region?: string }).region_name || (row as { region?: string }).region || "",
+                spend: parseFloat((row as { spend?: string }).spend ?? "0"),
+                impressions: parseInt((row as any).impressions ?? "0") || undefined,
+              }))}
+              metric="spend"
+            />
+          )}
         </div>
       ) : null}
     </div>

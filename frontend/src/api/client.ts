@@ -498,6 +498,7 @@ export interface PageGeoRow {
   impressions?: string;
   reach?: string;
   region?: string;
+  region_name?: string;
 }
 
 export interface PageGeoResponse {
