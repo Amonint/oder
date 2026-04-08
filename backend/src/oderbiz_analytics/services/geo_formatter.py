@@ -30,6 +30,36 @@ GEO_REGION_NAMES = {
     "ES-MC": "Murcia",
 }
 
+EC_REGION_NAMES: dict[str, str] = {
+    # Meta API devuelve nombres con "Province" suffix para Ecuador
+    "Pichincha Province": "Pichincha",
+    "Guayas Province": "Guayas",
+    "Azuay Province": "Azuay",
+    "Manabi Province": "Manabí",
+    "El Oro Province": "El Oro",
+    "Los Rios Province": "Los Ríos",
+    "Loja Province": "Loja",
+    "Tungurahua Province": "Tungurahua",
+    "Chimborazo Province": "Chimborazo",
+    "Imbabura Province": "Imbabura",
+    "Cotopaxi Province": "Cotopaxi",
+    "Esmeraldas Province": "Esmeraldas",
+    "Bolivar Province": "Bolívar",
+    "Canar Province": "Cañar",
+    "Carchi Province": "Carchi",
+    "Napo Province": "Napo",
+    "Pastaza Province": "Pastaza",
+    "Morona-Santiago Province": "Morona Santiago",
+    "Zamora-Chinchipe Province": "Zamora Chinchipe",
+    "Sucumbios Province": "Sucumbíos",
+    "Orellana Province": "Orellana",
+    "Santo Domingo de los Tsachilas Province": "Santo Domingo",
+    "Santa Elena Province": "Santa Elena",
+    "Galapagos Province": "Galápagos",
+}
+
+UNIFIED_REGION_NAMES = {**GEO_REGION_NAMES, **EC_REGION_NAMES}
+
 
 def enrich_geo_row(row: dict[str, Any]) -> dict[str, Any]:
     """
@@ -51,11 +81,7 @@ def enrich_geo_row(row: dict[str, Any]) -> dict[str, Any]:
         region_code = ""
 
     # Agregar nombre legible si existe en mapeo
-    if region_code in GEO_REGION_NAMES:
-        enriched["region_name"] = GEO_REGION_NAMES[region_code]
-    else:
-        # Fallback: usar el código mismo (o vacío si era None)
-        enriched["region_name"] = region_code
+    enriched["region_name"] = UNIFIED_REGION_NAMES.get(region_code, region_code)
 
     return enriched
 
