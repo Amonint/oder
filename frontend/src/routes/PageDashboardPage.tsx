@@ -3,6 +3,7 @@ import DateRangePickerModal from "@/components/DateRangePickerModal";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
+  fetchAdLabelsPerformance,
   fetchCampaigns,
   fetchPageActions,
   fetchPageGeo,
@@ -13,6 +14,7 @@ import {
   type GeoInsightRow,
   type GeoMetadata,
 } from "@/api/client";
+import AdLabelsSection from "@/components/AdLabelsSection";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -126,6 +128,16 @@ export default function PageDashboardPage() {
     queryKey: ["campaigns", id],
     queryFn: () => fetchCampaigns(id),
     staleTime: 10 * 60 * 1000,
+  });
+
+  const labelsQuery = useQuery({
+    queryKey: ["ad-labels", id, datePreset, customDateStart, customDateStop, campaignId],
+    queryFn: () =>
+      fetchAdLabelsPerformance(id, {
+        ...effectiveDateParams,
+        campaignId: campaignId || undefined,
+      }),
+    staleTime: 5 * 60 * 1000,
   });
 
   // Adaptar PageGeoRow → GeoInsightRow para GeoMap
@@ -316,6 +328,16 @@ export default function PageDashboardPage() {
           )}
         </div>
       ) : null}
+
+      {/* Ad Labels */}
+      <section className="space-y-2">
+        <h2 className="text-foreground text-lg font-semibold">Rendimiento por Etiquetas</h2>
+        <AdLabelsSection
+          data={labelsQuery.data?.data}
+          isLoading={labelsQuery.isLoading}
+          metric="cpa"
+        />
+      </section>
     </div>
   );
 }

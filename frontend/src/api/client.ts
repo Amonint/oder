@@ -637,3 +637,74 @@ export async function fetchPageTimeseries(
   if (!r.ok) throw new Error(await readErrorMessage(r));
   return r.json();
 }
+
+export interface OrganicMetric {
+  total: number;
+  daily: Array<{ date: string; value: number }>;
+}
+
+export interface OrganicInsightsResponse {
+  page_id: string;
+  date_preset: string;
+  metrics: Record<string, OrganicMetric>;
+}
+
+export async function fetchOrganicInsights(
+  pageId: string,
+  opts: { datePreset?: string; dateStart?: string; dateStop?: string } = {}
+): Promise<OrganicInsightsResponse> {
+  const q = new URLSearchParams();
+  if (opts.dateStart && opts.dateStop) {
+    q.set("date_start", opts.dateStart);
+    q.set("date_stop", opts.dateStop);
+  } else if (opts.datePreset) {
+    q.set("date_preset", opts.datePreset);
+  }
+  const path = `/api/v1/pages/${encodeURIComponent(pageId)}/organic-insights?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export interface AdLabelRow {
+  label: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  cpm: number;
+  cpc: number;
+  cpa: number | null;
+}
+
+export interface AdLabelsResponse {
+  data: AdLabelRow[];
+  date_preset: string;
+  time_range: { since: string; until: string } | null;
+  ad_account_id: string;
+}
+
+export async function fetchAdLabelsPerformance(
+  adAccountId: string,
+  opts: {
+    datePreset?: string;
+    dateStart?: string;
+    dateStop?: string;
+    campaignId?: string;
+    adsetId?: string;
+  }
+): Promise<AdLabelsResponse> {
+  const q = new URLSearchParams();
+  if (opts.dateStart && opts.dateStop) {
+    q.set("date_start", opts.dateStart);
+    q.set("date_stop", opts.dateStop);
+  } else if (opts.datePreset) {
+    q.set("date_preset", opts.datePreset);
+  }
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.adsetId) q.set("adset_id", opts.adsetId);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/ads/labels/performance?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
