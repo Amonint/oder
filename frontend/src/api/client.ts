@@ -44,6 +44,9 @@ export interface AdAccount {
 export interface DashboardResponse {
   ad_account_id: string;
   date_preset: string;
+  /** `account` = toda la cuenta; `campaign` = solo la campaña en `campaign_id`. */
+  scope?: "account" | "campaign";
+  campaign_id?: string | null;
   insights_empty: boolean;
   summary: Record<string, number>;
   actions: { action_type: unknown; value: number }[];
@@ -116,25 +119,41 @@ async function readErrorMessage(r: Response): Promise<string> {
   return r.statusText || "Error al llamar a la API";
 }
 
+export interface InsightActionItem {
+  action_type?: string;
+  value?: string | number;
+}
+
 export interface AdPerformanceRow {
   ad_id: string;
   ad_name: string;
   ad_label: string;
+  campaign_id?: string;
   campaign_name: string;
-  impressions: number;
-  clicks: number;
-  spend: string;
-  reach: number;
-  frequency: number;
-  cpm: string;
-  cpp: string;
-  ctr: string;
+  adset_id?: string;
+  adset_name?: string;
+  impressions?: number | string;
+  clicks?: number | string;
+  spend?: string;
+  reach?: number | string;
+  frequency?: number | string;
+  cpm?: string;
+  cpp?: string;
+  ctr?: string;
+  actions?: InsightActionItem[];
+  cost_per_action_type?: InsightActionItem[];
+  date_start?: string;
+  date_stop?: string;
 }
 
 export interface AdsPerformanceResponse {
   data: AdPerformanceRow[];
+  raw_rows?: AdPerformanceRow[] | null;
+  aggregated_by_ad?: AdPerformanceRow[] | null;
   date_preset: string | null;
   time_range: { since: string; until: string } | null;
+  time_increment?: number | null;
+  messaging_actions_summary?: Record<string, number>;
 }
 
 export interface GeoMetadata {
@@ -196,6 +215,91 @@ export async function fetchAdAccounts(): Promise<{ data: AdAccount[] }> {
   return r.json();
 }
 
+export interface CampaignRow {
+  id: string;
+  name: string;
+  status?: string;
+  effective_status?: string;
+  objective?: string;
+  daily_budget?: string;
+  lifetime_budget?: string;
+  start_time?: string;
+  stop_time?: string;
+  created_time?: string;
+  updated_time?: string;
+}
+
+export async function fetchCampaigns(
+  adAccountId: string
+): Promise<{ data: CampaignRow[] }> {
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/campaigns`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export interface AdsetRow {
+  id: string;
+  name: string;
+  campaign_id: string;
+  status?: string;
+  effective_status?: string;
+  optimization_goal?: string;
+  billing_event?: string;
+  bid_strategy?: string;
+  daily_budget?: string;
+  lifetime_budget?: string;
+  targeting?: Record<string, unknown>;
+  start_time?: string;
+  end_time?: string;
+  created_time?: string;
+  updated_time?: string;
+}
+
+export async function fetchAdsets(
+  adAccountId: string,
+  campaignId?: string
+): Promise<{ data: AdsetRow[] }> {
+  const q = new URLSearchParams();
+  if (campaignId) q.set("campaign_id", campaignId);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/adsets?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export interface AdRow {
+  id: string;
+  name: string;
+  adset_id: string;
+  campaign_id: string;
+  status?: string;
+  effective_status?: string;
+  creative?: {
+    id?: string;
+    name?: string;
+    title?: string;
+    body?: string;
+    call_to_action_type?: string;
+    object_story_spec?: Record<string, unknown>;
+  };
+  created_time?: string;
+  updated_time?: string;
+}
+
+export async function fetchAdsList(
+  adAccountId: string,
+  opts?: { campaignId?: string; adsetId?: string }
+): Promise<{ data: AdRow[] }> {
+  const q = new URLSearchParams();
+  if (opts?.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts?.adsetId) q.set("adset_id", opts.adsetId);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/ads?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
 /** Usuario de Graph asociado al token (`/me`). Sirve para diagnosticar listas vacías de cuentas. */
 export async function fetchGraphMe(): Promise<{ id?: string; name?: string }> {
   const r = await apiFetch("/api/v1/me");
@@ -205,11 +309,38 @@ export async function fetchGraphMe(): Promise<{ id?: string; name?: string }> {
 
 export async function fetchAccountDashboard(
   adAccountId: string,
-  datePreset: string
+  datePreset: string,
+  opts?: {
+    campaignId?: string | null;
+    dateStart?: string;
+    dateStop?: string;
+  }
 ): Promise<DashboardResponse> {
-  const q = new URLSearchParams({ date_preset: datePreset });
+  const q = new URLSearchParams();
+  if (opts?.dateStart && opts?.dateStop) {
+    q.set("date_start", opts.dateStart);
+    q.set("date_stop", opts.dateStop);
+  } else {
+    q.set("date_preset", datePreset);
+  }
+  if (opts?.campaignId) q.set("campaign_id", opts.campaignId);
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/dashboard?${q}`;
   const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export interface BusinessPortfolioRow {
+  business_id: string;
+  business_name: string;
+  ad_accounts: AdAccount[];
+}
+
+export async function fetchBusinessPortfolio(): Promise<{
+  data: BusinessPortfolioRow[];
+  warning?: string | null;
+}> {
+  const r = await apiFetch("/api/v1/businesses/portfolio");
   if (!r.ok) throw new Error(await readErrorMessage(r));
   return r.json();
 }
@@ -220,13 +351,61 @@ export async function fetchAdsPerformance(
     datePreset?: string;
     dateStart?: string;
     dateStop?: string;
+    campaignId?: string;
+    adsetId?: string;
+    adId?: string;
+    /** 1 = filas diarias por anuncio; el backend devuelve ranking agregado en `data`. */
+    timeIncrement?: number;
   }
 ): Promise<AdsPerformanceResponse> {
   const q = new URLSearchParams();
   if (opts.datePreset) q.set("date_preset", opts.datePreset);
   if (opts.dateStart) q.set("date_start", opts.dateStart);
   if (opts.dateStop) q.set("date_stop", opts.dateStop);
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.adsetId) q.set("adset_id", opts.adsetId);
+  if (opts.adId) q.set("ad_id", opts.adId);
+  if (opts.timeIncrement != null) q.set("time_increment", String(opts.timeIncrement));
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/ads/performance?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export interface PlacementInsightRow extends AdPerformanceRow {
+  publisher_platform?: string;
+  platform_position?: string;
+}
+
+export interface PlacementInsightsResponse {
+  data: PlacementInsightRow[];
+  date_preset: string | null;
+  time_range: { since: string; until: string } | null;
+  time_increment?: number | null;
+  breakdowns: string[];
+}
+
+export async function fetchPlacementInsights(
+  adAccountId: string,
+  opts: {
+    datePreset?: string;
+    dateStart?: string;
+    dateStop?: string;
+    campaignId?: string;
+    adsetId?: string;
+    adId?: string;
+    timeIncrement?: number;
+  }
+): Promise<PlacementInsightsResponse> {
+  const q = new URLSearchParams();
+  if (opts.datePreset) q.set("date_preset", opts.datePreset);
+  if (opts.dateStart) q.set("date_start", opts.dateStart);
+  if (opts.dateStop) q.set("date_stop", opts.dateStop);
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.adsetId) q.set("adset_id", opts.adsetId);
+  if (opts.adId) q.set("ad_id", opts.adId);
+  if (opts.timeIncrement != null) q.set("time_increment", String(opts.timeIncrement));
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/placements?${q}`;
   const r = await apiFetch(path);
   if (!r.ok) throw new Error(await readErrorMessage(r));
   return r.json();
@@ -357,6 +536,8 @@ export interface PageTimeseriesResponse {
 
 type PageFilterOpts = {
   datePreset?: string;
+  dateStart?: string;
+  dateStop?: string;
   campaignId?: string | null;
   adsetId?: string | null;
   adId?: string | null;
@@ -364,7 +545,12 @@ type PageFilterOpts = {
 
 function buildPageQuery(opts: PageFilterOpts): URLSearchParams {
   const q = new URLSearchParams();
-  if (opts.datePreset) q.set("date_preset", opts.datePreset);
+  if (opts.dateStart && opts.dateStop) {
+    q.set("date_start", opts.dateStart);
+    q.set("date_stop", opts.dateStop);
+  } else if (opts.datePreset) {
+    q.set("date_preset", opts.datePreset);
+  }
   if (opts.campaignId) q.set("campaign_id", opts.campaignId);
   if (opts.adsetId) q.set("adset_id", opts.adsetId);
   if (opts.adId) q.set("ad_id", opts.adId);
@@ -373,10 +559,15 @@ function buildPageQuery(opts: PageFilterOpts): URLSearchParams {
 
 export async function fetchPages(
   adAccountId: string,
-  opts: { datePreset?: string } = {}
+  opts: { datePreset?: string; dateStart?: string; dateStop?: string } = {}
 ): Promise<PagesListResponse> {
   const q = new URLSearchParams();
-  if (opts.datePreset) q.set("date_preset", opts.datePreset);
+  if (opts.dateStart && opts.dateStop) {
+    q.set("date_start", opts.dateStart);
+    q.set("date_stop", opts.dateStop);
+  } else if (opts.datePreset) {
+    q.set("date_preset", opts.datePreset);
+  }
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages?${q}`;
   const r = await apiFetch(path);
   if (!r.ok) throw new Error(await readErrorMessage(r));
