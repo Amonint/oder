@@ -22,17 +22,16 @@ import PageCard from "@/components/PageCard";
 
 const DATE_OPTIONS = [
   { value: "last_7d", label: "Últimos 7 días" },
-  { value: "last_30d", label: "Últimos 30 días" },
-  { value: "last_90d", label: "Últimos 90 días" },
-  { value: "this_month", label: "Este mes" },
-  { value: "last_month", label: "Mes pasado" },
+  { value: "last_30d", label: "30 días" },
+  { value: "last_90d", label: "90 días" },
+  { value: "maximum", label: "Máximo disponible" },
 ];
 
 export default function PagesPage() {
   const { accountId } = useParams<{ accountId: string }>();
   const navigate = useNavigate();
   const hasToken = Boolean(getMetaAccessToken());
-  const [datePreset, setDatePreset] = useState("last_30d");
+  const [datePreset, setDatePreset] = useState("last_7d");
 
   if (!hasToken) return <Navigate to="/" replace />;
   if (!accountId) return <Navigate to="/accounts" replace />;
