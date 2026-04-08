@@ -525,7 +525,7 @@ async def get_page_timeseries(
     try:
         rows = await fetch_insights_all_pages(
             base_url=base, access_token=access_token, ad_account_id=normalized_id,
-            fields="spend,impressions,reach",
+            fields="spend,impressions,reach,cpm,ctr,cpc",
             date_preset=effective_preset if not effective_time_range else None,
             time_range=effective_time_range,
             level="account", filtering=filtering, time_increment=1,

@@ -523,6 +523,9 @@ export interface PageTimeseriesRow {
   spend?: string;
   impressions?: string;
   reach?: string;
+  cpm?: string;
+  ctr?: string;
+  cpc?: string;
   date_start?: string;
   date_stop?: string;
 }
