@@ -645,3 +645,85 @@ async def get_page_conversion_timeseries(
     result = {"data": processed, "page_id": page_id, "date_preset": effective_preset}
     set_cache(settings.duckdb_path, cache_key, result)
     return result
+
+
+@router.get("/{ad_account_id}/pages/{page_id}/traffic-quality")
+async def get_page_traffic_quality(
+    ad_account_id: str,
+    page_id: str,
+    date_preset: str | None = Query(None),
+    date_start: str | None = Query(None),
+    date_stop: str | None = Query(None),
+    campaign_id: str | None = Query(None),
+    settings: Settings = Depends(get_settings),
+    access_token: str = Depends(get_meta_access_token),
+):
+    """Clics salientes, costo por clic saliente y tasa de conversión clic → landing page."""
+    normalized_id = normalize_ad_account_id(ad_account_id)
+    effective_preset = date_preset if date_preset else "last_30d"
+    base = f"https://graph.facebook.com/{settings.meta_graph_version}"
+    cid = (campaign_id or "").strip()
+
+    ds = (date_start or "").strip()
+    de = (date_stop or "").strip()
+    effective_time_range: dict[str, str] | None = None
+    if ds and de:
+        effective_time_range = {"since": ds, "until": de}
+
+    cache_key = _make_cache_key(normalized_id, "page_traffic_quality", page_id=page_id,
+        date_preset=effective_preset, campaign_id=cid)
+    cached = get_cache(settings.duckdb_path, cache_key)
+    if cached is not None:
+        return cached
+
+    adset_ids = await _get_adset_ids_for_page(base, access_token, normalized_id, page_id, settings)
+    filtering = _page_filtering(adset_ids, campaign_id=cid)
+    if not filtering:
+        result = {
+            "outbound_clicks": 0, "cost_per_outbound_click": 0.0,
+            "landing_page_views": 0, "click_to_lp_rate": 0.0,
+            "spend": 0.0, "page_id": page_id, "date_preset": effective_preset,
+        }
+        set_cache(settings.duckdb_path, cache_key, result)
+        return result
+
+    try:
+        rows = await fetch_insights_all_pages(
+            base_url=base, access_token=access_token, ad_account_id=normalized_id,
+            fields="spend,outbound_clicks,actions",
+            date_preset=effective_preset if not effective_time_range else None,
+            time_range=effective_time_range,
+            level="account", filtering=filtering,
+        )
+    except httpx.HTTPStatusError:
+        raise HTTPException(status_code=502, detail="Error al obtener calidad de tráfico.") from None
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="No se pudo contactar a Meta.") from None
+
+    total_spend = 0.0
+    total_outbound = 0
+    total_lp_views = 0
+
+    for row in rows:
+        total_spend += float(row.get("spend", 0) or 0)
+        for oc in (row.get("outbound_clicks") or []):
+            if oc.get("action_type") == "outbound_click":
+                total_outbound += int(float(oc.get("value", 0) or 0))
+        for a in (row.get("actions") or []):
+            if a.get("action_type") == "landing_page_view":
+                total_lp_views += int(float(a.get("value", 0) or 0))
+
+    cost_per_outbound = round(total_spend / total_outbound, 2) if total_outbound > 0 else 0.0
+    click_to_lp_rate = round((total_lp_views / total_outbound) * 100, 2) if total_outbound > 0 else 0.0
+
+    result = {
+        "outbound_clicks": total_outbound,
+        "cost_per_outbound_click": cost_per_outbound,
+        "landing_page_views": total_lp_views,
+        "click_to_lp_rate": click_to_lp_rate,
+        "spend": round(total_spend, 2),
+        "page_id": page_id,
+        "date_preset": effective_preset,
+    }
+    set_cache(settings.duckdb_path, cache_key, result)
+    return result
