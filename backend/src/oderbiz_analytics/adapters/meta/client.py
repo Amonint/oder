@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 from pydantic import ValidationError
 
@@ -107,3 +109,52 @@ class MetaGraphClient:
                     ) from e
             url = (payload.get("paging") or {}).get("next")
         return out
+
+    async def search_pages(self, *, query: str, fields: str = "id,name,category,fan_count") -> list[dict]:
+        """Busca páginas de Facebook por nombre usando /pages/search."""
+        r = await self._client.get(
+            f"{self._base}/pages/search",
+            params={"q": query, "fields": fields, "access_token": self._token},
+        )
+        if r.is_error:
+            raise MetaGraphApiError(
+                status_code=r.status_code,
+                message=_meta_error_message(r),
+            )
+        payload = r.json()
+        data = payload.get("data", [])
+        if not isinstance(data, list):
+            raise MetaGraphApiError(status_code=502, message="Respuesta de /pages/search sin lista `data`")
+        return data
+
+    async def get_ads_archive(
+        self,
+        *,
+        page_id: str,
+        countries: list[str],
+        fields: str,
+        ad_active_status: str = "ALL",
+        limit: int = 50,
+    ) -> list[dict]:
+        """Consulta la Meta Ad Library API (ads_archive) para una página competidora."""
+        r = await self._client.get(
+            f"{self._base}/ads_archive",
+            params={
+                "search_page_ids": page_id,
+                "ad_reached_countries": json.dumps(countries),
+                "ad_active_status": ad_active_status,
+                "fields": fields,
+                "limit": limit,
+                "access_token": self._token,
+            },
+        )
+        if r.is_error:
+            raise MetaGraphApiError(
+                status_code=r.status_code,
+                message=_meta_error_message(r),
+            )
+        payload = r.json()
+        data = payload.get("data", [])
+        if not isinstance(data, list):
+            raise MetaGraphApiError(status_code=502, message="Respuesta de /ads_archive sin lista `data`")
+        return data
