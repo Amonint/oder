@@ -236,6 +236,56 @@ def _group_actions(rows: list[dict]) -> list[dict]:
     return [{"category": cat, "value": totals[cat]} for cat in ACTION_GROUPS]
 
 
+def _extract_cpa(rows: list[dict]) -> list[dict]:
+    """
+    Para cada fila (un día), calcula:
+      - spend: float
+      - cpa: float (cost_per_action_type filtrado por lead/purchase/messaging, primer match)
+      - conversions: float (suma de actions relevantes)
+      - revenue: float (suma de action_values por purchase)
+    """
+    result = []
+    CONVERSION_TYPES = {
+        "lead", "purchase",
+        "onsite_conversion.messaging_conversation_started_7d",
+        "offsite_conversion.fb_pixel_lead",
+        "offsite_conversion.fb_pixel_purchase",
+    }
+    for row in rows:
+        spend = float(row.get("spend", 0) or 0)
+        date = row.get("date_start", "")
+
+        # conversiones
+        conversions = 0.0
+        for a in (row.get("actions") or []):
+            if a.get("action_type") in CONVERSION_TYPES:
+                conversions += float(a.get("value", 0) or 0)
+
+        # CPA
+        cpa = 0.0
+        for a in (row.get("cost_per_action_type") or []):
+            if a.get("action_type") in CONVERSION_TYPES:
+                cpa = float(a.get("value", 0) or 0)
+                break
+        if cpa == 0.0 and conversions > 0:
+            cpa = round(spend / conversions, 2)
+
+        # revenue
+        revenue = 0.0
+        for a in (row.get("action_values") or []):
+            if a.get("action_type") == "purchase":
+                revenue += float(a.get("value", 0) or 0)
+
+        result.append({
+            "date": date,
+            "spend": round(spend, 2),
+            "cpa": round(cpa, 2),
+            "conversions": round(conversions, 0),
+            "revenue": round(revenue, 2),
+        })
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Task 3: GET /accounts/{id}/pages/{page_id}/insights
 # ---------------------------------------------------------------------------
@@ -538,5 +588,60 @@ async def get_page_timeseries(
         raise HTTPException(status_code=502, detail="No se pudo contactar a Meta.") from None
 
     result = {"data": rows, "page_id": page_id, "date_preset": effective_preset, "time_increment": 1}
+    set_cache(settings.duckdb_path, cache_key, result)
+    return result
+
+
+@router.get("/{ad_account_id}/pages/{page_id}/conversion-timeseries")
+async def get_page_conversion_timeseries(
+    ad_account_id: str,
+    page_id: str,
+    date_preset: str | None = Query(None),
+    date_start: str | None = Query(None),
+    date_stop: str | None = Query(None),
+    campaign_id: str | None = Query(None),
+    settings: Settings = Depends(get_settings),
+    access_token: str = Depends(get_meta_access_token),
+):
+    """Gasto diario + CPA calculado para el gráfico de Rentabilidad."""
+    normalized_id = normalize_ad_account_id(ad_account_id)
+    effective_preset = date_preset if date_preset else "last_30d"
+    base = f"https://graph.facebook.com/{settings.meta_graph_version}"
+    cid = (campaign_id or "").strip()
+
+    ds = (date_start or "").strip()
+    de = (date_stop or "").strip()
+    effective_time_range: dict[str, str] | None = None
+    if ds and de:
+        effective_time_range = {"since": ds, "until": de}
+
+    cache_key = _make_cache_key(normalized_id, "page_conv_ts", page_id=page_id,
+        date_preset=effective_preset, campaign_id=cid)
+    cached = get_cache(settings.duckdb_path, cache_key)
+    if cached is not None:
+        return cached
+
+    adset_ids = await _get_adset_ids_for_page(base, access_token, normalized_id, page_id, settings)
+    filtering = _page_filtering(adset_ids, campaign_id=cid)
+    if not filtering:
+        result = {"data": [], "page_id": page_id, "date_preset": effective_preset}
+        set_cache(settings.duckdb_path, cache_key, result)
+        return result
+
+    try:
+        rows = await fetch_insights_all_pages(
+            base_url=base, access_token=access_token, ad_account_id=normalized_id,
+            fields="spend,actions,cost_per_action_type,action_values",
+            date_preset=effective_preset if not effective_time_range else None,
+            time_range=effective_time_range,
+            level="account", filtering=filtering, time_increment=1,
+        )
+    except httpx.HTTPStatusError:
+        raise HTTPException(status_code=502, detail="Error al obtener datos de conversión.") from None
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="No se pudo contactar a Meta.") from None
+
+    processed = _extract_cpa(rows)
+    result = {"data": processed, "page_id": page_id, "date_preset": effective_preset}
     set_cache(settings.duckdb_path, cache_key, result)
     return result
