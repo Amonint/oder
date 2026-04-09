@@ -708,3 +708,99 @@ export async function fetchAdLabelsPerformance(
   if (!r.ok) throw new Error(await readErrorMessage(r));
   return r.json();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Módulo Rentabilidad — Conversion Timeseries
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ConversionTimeseriesRow {
+  date: string;
+  spend: number;
+  cpa: number;
+  conversions: number;
+  revenue: number;
+}
+
+export interface ConversionTimeseriesResponse {
+  data: ConversionTimeseriesRow[];
+  page_id: string;
+  date_preset: string;
+}
+
+export async function fetchPageConversionTimeseries(
+  adAccountId: string,
+  pageId: string,
+  opts: PageFilterOpts = {}
+): Promise<ConversionTimeseriesResponse> {
+  const q = buildPageQuery(opts);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages/${encodeURIComponent(pageId)}/conversion-timeseries?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Módulo Calidad de Tráfico
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface TrafficQualityResponse {
+  outbound_clicks: number;
+  cost_per_outbound_click: number;
+  landing_page_views: number;
+  click_to_lp_rate: number;
+  spend: number;
+  page_id: string;
+  date_preset: string;
+}
+
+export async function fetchPageTrafficQuality(
+  adAccountId: string,
+  pageId: string,
+  opts: PageFilterOpts = {}
+): Promise<TrafficQualityResponse> {
+  const q = buildPageQuery(opts);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages/${encodeURIComponent(pageId)}/traffic-quality?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Módulo Diagnóstico de Creatividades
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type RankingValue =
+  | "ABOVE_AVERAGE"
+  | "AVERAGE"
+  | "BELOW_AVERAGE_20"
+  | "BELOW_AVERAGE_10"
+  | "BELOW_AVERAGE_5"
+  | "UNKNOWN";
+
+export interface AdDiagnosticsRow {
+  ad_id: string;
+  ad_name: string;
+  impressions: number;
+  spend: number;
+  quality_ranking: RankingValue;
+  engagement_rate_ranking: RankingValue;
+  conversion_rate_ranking: RankingValue;
+}
+
+export interface AdDiagnosticsResponse {
+  data: AdDiagnosticsRow[];
+  page_id: string;
+  date_preset: string;
+}
+
+export async function fetchPageAdDiagnostics(
+  adAccountId: string,
+  pageId: string,
+  opts: PageFilterOpts = {}
+): Promise<AdDiagnosticsResponse> {
+  const q = buildPageQuery(opts);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages/${encodeURIComponent(pageId)}/ad-diagnostics?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
