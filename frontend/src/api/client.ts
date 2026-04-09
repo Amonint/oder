@@ -719,6 +719,8 @@ export interface ConversionTimeseriesRow {
   cpa: number;
   conversions: number;
   revenue: number;
+  replied: number;
+  depth2: number;
 }
 
 export interface ConversionTimeseriesResponse {
@@ -746,8 +748,9 @@ export async function fetchPageConversionTimeseries(
 export interface TrafficQualityResponse {
   outbound_clicks: number;
   cost_per_outbound_click: number;
-  landing_page_views: number;
-  click_to_lp_rate: number;
+  unique_clicks: number;
+  unique_ctr: number;
+  cost_per_unique_click: number;
   spend: number;
   page_id: string;
   date_preset: string;
@@ -769,22 +772,14 @@ export async function fetchPageTrafficQuality(
 // Módulo Diagnóstico de Creatividades
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type RankingValue =
-  | "ABOVE_AVERAGE"
-  | "AVERAGE"
-  | "BELOW_AVERAGE_20"
-  | "BELOW_AVERAGE_10"
-  | "BELOW_AVERAGE_5"
-  | "UNKNOWN";
-
 export interface AdDiagnosticsRow {
   ad_id: string;
   ad_name: string;
   impressions: number;
   spend: number;
-  quality_ranking: RankingValue;
-  engagement_rate_ranking: RankingValue;
-  conversion_rate_ranking: RankingValue;
+  ctr: number;
+  cpm: number;
+  engagement_rate: number;
 }
 
 export interface AdDiagnosticsResponse {
@@ -801,6 +796,83 @@ export async function fetchPageAdDiagnostics(
   const q = buildPageQuery(opts);
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages/${encodeURIComponent(pageId)}/ad-diagnostics?${q}`;
   const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Embudo de Conversión
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PageFunnelResponse {
+  impressions: number;
+  reach: number;
+  unique_clicks: number;
+  outbound_clicks: number;
+  conversations_started: number;
+  first_replies: number;
+  page_id: string;
+  date_preset: string;
+}
+
+export async function fetchPageFunnel(
+  adAccountId: string,
+  pageId: string,
+  opts: PageFilterOpts = {}
+): Promise<PageFunnelResponse> {
+  const q = buildPageQuery(opts);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages/${encodeURIComponent(pageId)}/funnel?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Módulo Inteligencia Competitiva
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface CompetitorPageSuggestion {
+  id: string;
+  name: string;
+  category?: string;
+  fan_count?: number;
+}
+
+export interface CompetitorAdItem {
+  id: string;
+  ad_creation_time?: string;
+  ad_creative_bodies?: string[];
+  ad_creative_link_titles?: string[];
+  ad_creative_link_descriptions?: string[];
+  ad_creative_link_captions?: string[];
+  ad_delivery_start_time?: string;
+  ad_delivery_stop_time?: string | null;
+  ad_snapshot_url?: string;
+  publisher_platforms?: string[];
+  languages?: string[];
+  page_name?: string;
+  page_id?: string;
+}
+
+export interface CompetitorAdsResponse {
+  data: CompetitorAdItem[];
+  page_name: string;
+  page_id: string;
+}
+
+export async function searchCompetitorPages(
+  query: string
+): Promise<{ data: CompetitorPageSuggestion[] }> {
+  const q = new URLSearchParams({ q: query });
+  const r = await apiFetch(`/api/v1/competitor/search?${q}`);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export async function fetchCompetitorAds(
+  pageId: string
+): Promise<CompetitorAdsResponse> {
+  const r = await apiFetch(`/api/v1/competitor/${encodeURIComponent(pageId)}/ads`);
   if (!r.ok) throw new Error(await readErrorMessage(r));
   return r.json();
 }
