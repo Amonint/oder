@@ -28,7 +28,7 @@ export default function ChoroplethMap({ data, metric = "spend" }: ChoroplethMapP
   const mapRef = useRef<maplibregl.Map | null>(null);
   const mapReadyRef = useRef(false);
 
-  // Inicializar mapa una sola vez
+  // Efecto 1: Inicializar mapa una sola vez
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return;
 
@@ -43,7 +43,6 @@ export default function ChoroplethMap({ data, metric = "spend" }: ChoroplethMapP
 
     map.on("load", () => {
       mapReadyRef.current = true;
-      // Disparar evento custom para que el efecto de datos pueda actuar
       map.fire("data-ready" as any);
     });
 
@@ -54,14 +53,21 @@ export default function ChoroplethMap({ data, metric = "spend" }: ChoroplethMapP
     };
   }, []);
 
-  // Actualizar capas cada vez que cambian data o metric
+  // Efecto 2: Actualizar capas Y popup cuando cambian data o metric
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
+    let cancelled = false;
+
+    // Cleanup de listeners de popup previos
+    const noop = () => {};
+    let cleanupPopup = noop;
+
     function applyData() {
-      if (!map) return;
-      // Eliminar capas y source previos si existen
+      if (cancelled || !map) return;
+
+      // Limpiar capas/source previos
       if (map.getLayer("ecuador-fill")) map.removeLayer("ecuador-fill");
       if (map.getLayer("ecuador-outline")) map.removeLayer("ecuador-outline");
       if (map.getSource("ecuador")) map.removeSource("ecuador");
@@ -77,7 +83,7 @@ export default function ChoroplethMap({ data, metric = "spend" }: ChoroplethMapP
       fetch("/ecuador-provinces.geojson")
         .then((r) => r.json())
         .then((geojson) => {
-          if (!map) return;
+          if (cancelled || !map) return;
           for (const feature of geojson.features) {
             const name = feature.properties?.NAME_1 ?? "";
             feature.properties._value = lookup[name] ?? 0;
@@ -107,6 +113,40 @@ export default function ChoroplethMap({ data, metric = "spend" }: ChoroplethMapP
             source: "ecuador",
             paint: { "line-color": "#1e40af", "line-width": 0.8 },
           });
+
+          // Registrar popup DESPUÉS de que las capas existan
+          const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false });
+
+          const onMove = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+            if (!e.features?.length) return;
+            map.getCanvas().style.cursor = "pointer";
+            const props = e.features[0].properties as Record<string, unknown>;
+            const name = String(props.NAME_1 ?? "");
+            const val = Number(props._value ?? 0);
+            popup
+              .setLngLat(e.lngLat)
+              .setHTML(
+                `<strong>${name}</strong><br/>` +
+                (metric === "spend"
+                  ? `Gasto: $${val.toFixed(2)}`
+                  : `Impresiones: ${val.toLocaleString("es")}`),
+              )
+              .addTo(map);
+          };
+
+          const onLeave = () => {
+            map.getCanvas().style.cursor = "";
+            popup.remove();
+          };
+
+          map.on("mousemove", "ecuador-fill", onMove);
+          map.on("mouseleave", "ecuador-fill", onLeave);
+
+          cleanupPopup = () => {
+            map.off("mousemove", "ecuador-fill", onMove);
+            map.off("mouseleave", "ecuador-fill", onLeave);
+            popup.remove();
+          };
         })
         .catch(() => {});
     }
@@ -116,46 +156,14 @@ export default function ChoroplethMap({ data, metric = "spend" }: ChoroplethMapP
     } else {
       map.once("data-ready" as any, applyData);
     }
-  }, [data, metric]);
-
-  // Popup separado (no depende de data)
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReadyRef.current) return;
-
-    const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false });
-
-    const onMove = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
-      if (!e.features?.length) return;
-      map.getCanvas().style.cursor = "pointer";
-      const props = e.features[0].properties as Record<string, unknown>;
-      const name = String(props.NAME_1 ?? "");
-      const val = Number(props._value ?? 0);
-      popup
-        .setLngLat(e.lngLat)
-        .setHTML(
-          `<strong>${name}</strong><br/>` +
-          (metric === "spend"
-            ? `Gasto: $${val.toFixed(2)}`
-            : `Impresiones: ${val.toLocaleString("es")}`),
-        )
-        .addTo(map);
-    };
-
-    const onLeave = () => {
-      map.getCanvas().style.cursor = "";
-      popup.remove();
-    };
-
-    map.on("mousemove", "ecuador-fill", onMove);
-    map.on("mouseleave", "ecuador-fill", onLeave);
 
     return () => {
-      map.off("mousemove", "ecuador-fill", onMove);
-      map.off("mouseleave", "ecuador-fill", onLeave);
-      popup.remove();
+      cancelled = true;
+      cleanupPopup();
+      // Cancelar handler pendiente si el mapa aún no estaba listo
+      map.off("data-ready" as any, applyData);
     };
-  }, [metric]);
+  }, [data, metric]);
 
   return (
     <Card>
