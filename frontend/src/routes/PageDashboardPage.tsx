@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import DateRangePickerModal from "@/components/DateRangePickerModal";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -9,15 +9,21 @@ import {
   fetchPageConversionTimeseries,
   fetchPageTrafficQuality,
   fetchPageAdDiagnostics,
+  fetchPageFunnel,
   getMetaAccessToken,
   type GeoInsightRow,
   type GeoMetadata,
 } from "@/api/client";
+import CompetitorPanel from "@/components/CompetitorPanel";
+import { useCompetitorSearch } from "@/hooks/useCompetitorSearch";
+import type { CompetitorPageSuggestion } from "@/api/client";
 import RetentionModule from "@/components/RetentionModule";
 import TrafficQualityCard from "@/components/TrafficQualityCard";
 import AdDiagnosticsTable from "@/components/AdDiagnosticsTable";
+import ConversionFunnelCard from "@/components/ConversionFunnelCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -60,6 +66,26 @@ export default function PageDashboardPage() {
   const [showDateModal, setShowDateModal] = useState(false);
   const [customDateStart, setCustomDateStart] = useState<string | null>(null);
   const [customDateStop, setCustomDateStop] = useState<string | null>(null);
+  const [selectedCompetitor, setSelectedCompetitor] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const [showCompetitorSearch, setShowCompetitorSearch] = useState(false);
+  const [competitorQuery, setCompetitorQuery] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  const { suggestions, isLoading: searchLoading } = useCompetitorSearch(competitorQuery);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
 
   const id = accountId ? decodeURIComponent(accountId) : "";
   const pid = pageId ? decodeURIComponent(pageId) : "";
@@ -128,6 +154,12 @@ export default function PageDashboardPage() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const funnelQuery = useQuery({
+    queryKey: ["page-funnel", id, pid, datePreset, customDateStart, customDateStop, campaignId],
+    queryFn: () => fetchPageFunnel(id, pid, opts),
+    staleTime: 5 * 60 * 1000,
+  });
+
   const geoRows: GeoInsightRow[] = (geoQuery.data?.data ?? []).map((r) => ({
     region: r.region ?? "",
     region_name: r.region_name ?? r.region ?? "",
@@ -147,8 +179,86 @@ export default function PageDashboardPage() {
 
   const primaryError = insightsQuery.error ?? null;
 
+  const mainContent = (
+    <div className="w-full space-y-6">
+      {/* Error global */}
+      {primaryError ? (
+        <Alert variant="destructive">
+          <AlertTitle>Error al cargar datos</AlertTitle>
+          <AlertDescription>
+            {primaryError instanceof Error
+              ? primaryError.message
+              : "Error desconocido"}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {/* KPIs */}
+      {insightsQuery.isLoading ? (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-24 w-full rounded-xl" />
+          ))}
+        </div>
+      ) : (
+        <KpiGrid
+          data={insightsQuery.data?.data}
+          isLoading={insightsQuery.isLoading}
+        />
+      )}
+
+      {/* Módulo 1: Rentabilidad y Adquisición */}
+      <RetentionModule
+        data={conversionTsQuery.data?.data}
+        isLoading={conversionTsQuery.isLoading}
+      />
+
+      {/* Módulo 2: Embudo de Conversión */}
+      <ConversionFunnelCard
+        data={funnelQuery.data}
+        isLoading={funnelQuery.isLoading}
+      />
+
+      {/* Módulo 3: Calidad de Tráfico */}
+      <TrafficQualityCard
+        data={trafficQualityQuery.data}
+        isLoading={trafficQualityQuery.isLoading}
+      />
+
+      {/* Distribución geográfica */}
+      {geoQuery.isLoading ? (
+        <Skeleton className="h-64 w-full rounded-xl" />
+      ) : geoRows.length > 0 ? (
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-foreground mb-3 text-base font-semibold">
+              Distribución geográfica
+            </h2>
+            <GeoMap data={geoRows} metadata={geoMeta} metric="impressions" />
+          </div>
+          {geoQuery.data && geoQuery.data.data.length > 0 && (
+            <ChoroplethMap
+              data={geoQuery.data.data.map((row) => ({
+                region_name: row.region_name || row.region || "",
+                spend: parseFloat(row.spend ?? "0"),
+                impressions: parseInt(row.impressions ?? "0") || undefined,
+              }))}
+              metric="spend"
+            />
+          )}
+        </div>
+      ) : null}
+
+      {/* Módulo 3: Diagnóstico de Creatividades */}
+      <AdDiagnosticsTable
+        data={adDiagnosticsQuery.data?.data}
+        isLoading={adDiagnosticsQuery.isLoading}
+      />
+    </div>
+  );
+
   return (
-    <div className="w-full space-y-6 py-6">
+    <div className="w-full py-6">
       <DateRangePickerModal
         open={showDateModal}
         onClose={() => setShowDateModal(false)}
@@ -186,7 +296,7 @@ export default function PageDashboardPage() {
       </Breadcrumb>
 
       {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4 mt-6">
         <div>
           <h1 className="text-foreground text-2xl font-semibold tracking-tight">
             Dashboard de página
@@ -219,8 +329,8 @@ export default function PageDashboardPage() {
         </div>
       </div>
 
-      {/* Filtro de campaña */}
-      <div className="flex flex-wrap items-end gap-3">
+      {/* Filtro de campaña + Buscar competidor */}
+      <div className="flex flex-wrap items-end gap-3 mt-6">
         <div className="space-y-1.5">
           <span className="text-muted-foreground text-xs">Filtrar por campaña</span>
           <Select
@@ -241,75 +351,93 @@ export default function PageDashboardPage() {
             </SelectContent>
           </Select>
         </div>
-      </div>
 
-      {/* Error global */}
-      {primaryError ? (
-        <Alert variant="destructive">
-          <AlertTitle>Error al cargar datos</AlertTitle>
-          <AlertDescription>
-            {primaryError instanceof Error
-              ? primaryError.message
-              : "Error desconocido"}
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {/* KPIs */}
-      {insightsQuery.isLoading ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-24 w-full rounded-xl" />
-          ))}
-        </div>
-      ) : (
-        <KpiGrid
-          data={insightsQuery.data?.data}
-          isLoading={insightsQuery.isLoading}
-        />
-      )}
-
-      {/* Módulo 1: Rentabilidad y Adquisición */}
-      <RetentionModule
-        data={conversionTsQuery.data?.data}
-        isLoading={conversionTsQuery.isLoading}
-      />
-
-      {/* Módulo 2: Calidad de Tráfico */}
-      <TrafficQualityCard
-        data={trafficQualityQuery.data}
-        isLoading={trafficQualityQuery.isLoading}
-      />
-
-      {/* Distribución geográfica */}
-      {geoQuery.isLoading ? (
-        <Skeleton className="h-64 w-full rounded-xl" />
-      ) : geoRows.length > 0 ? (
-        <div className="space-y-6">
-          <div>
-            <h2 className="text-foreground mb-3 text-base font-semibold">
-              Distribución geográfica
-            </h2>
-            <GeoMap data={geoRows} metadata={geoMeta} metric="impressions" />
-          </div>
-          {geoQuery.data && geoQuery.data.data.length > 0 && (
-            <ChoroplethMap
-              data={geoQuery.data.data.map((row) => ({
-                region_name: row.region_name || row.region || "",
-                spend: parseFloat(row.spend ?? "0"),
-                impressions: parseInt(row.impressions ?? "0") || undefined,
-              }))}
-              metric="spend"
-            />
+        {/* Buscador de competidor */}
+        <div className="space-y-1.5">
+          <span className="text-muted-foreground text-xs">Inteligencia competitiva</span>
+          {selectedCompetitor ? (
+            <div className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+              <span className="font-medium truncate max-w-[200px]">{selectedCompetitor.name}</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 w-5 p-0 ml-1"
+                onClick={() => {
+                  setSelectedCompetitor(null);
+                  setShowCompetitorSearch(false);
+                  setCompetitorQuery("");
+                }}
+                aria-label="Quitar competidor"
+              >
+                ✕
+              </Button>
+            </div>
+          ) : showCompetitorSearch ? (
+            <div ref={searchRef} className="relative">
+              <Input
+                autoFocus
+                placeholder="Buscar competidor…"
+                value={competitorQuery}
+                onChange={(e) => {
+                  setCompetitorQuery(e.target.value);
+                  setShowSuggestions(true);
+                }}
+                onFocus={() => setShowSuggestions(true)}
+                className="w-[min(100vw-2rem,280px)]"
+              />
+              {showSuggestions && competitorQuery.length >= 2 && (
+                <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-md">
+                  {searchLoading && (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">Buscando…</div>
+                  )}
+                  {!searchLoading && suggestions.length === 0 && (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">Sin páginas encontradas</div>
+                  )}
+                  {suggestions.map((s: CompetitorPageSuggestion) => (
+                    <button
+                      key={s.id}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setSelectedCompetitor({ id: s.id, name: s.name });
+                        setShowCompetitorSearch(false);
+                        setShowSuggestions(false);
+                        setCompetitorQuery("");
+                      }}
+                    >
+                      <span className="font-medium">{s.name}</span>
+                      {s.category && (
+                        <span className="ml-2 text-xs text-muted-foreground">{s.category}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <Button variant="outline" onClick={() => setShowCompetitorSearch(true)}>
+              Buscar competidor
+            </Button>
           )}
         </div>
-      ) : null}
+      </div>
 
-      {/* Módulo 3: Diagnóstico de Creatividades */}
-      <AdDiagnosticsTable
-        data={adDiagnosticsQuery.data?.data}
-        isLoading={adDiagnosticsQuery.isLoading}
-      />
+      {selectedCompetitor ? (
+        <div className="flex gap-4 lg:flex-row flex-col mt-6">
+          <div className="lg:w-1/2 w-full min-w-0 space-y-6">
+            {mainContent}
+          </div>
+          <div className="lg:w-1/2 w-full min-w-0">
+            <CompetitorPanel
+              pageId={selectedCompetitor.id}
+              pageName={selectedCompetitor.name}
+              onClose={() => setSelectedCompetitor(null)}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="mt-6">{mainContent}</div>
+      )}
     </div>
   );
 }
