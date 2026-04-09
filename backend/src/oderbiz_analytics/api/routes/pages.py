@@ -14,6 +14,7 @@ from oderbiz_analytics.adapters.meta.insights import fetch_insights, fetch_insig
 from oderbiz_analytics.api.deps import get_meta_access_token
 from oderbiz_analytics.api.utils import normalize_ad_account_id
 from oderbiz_analytics.config import Settings, get_settings
+from oderbiz_analytics.services.geo_formatter import enrich_geo_row
 
 router = APIRouter(prefix="/accounts", tags=["pages"])
 
@@ -412,7 +413,8 @@ async def get_page_geo(
     except httpx.RequestError:
         raise HTTPException(status_code=502, detail="No se pudo contactar a Meta.") from None
 
-    result = {"data": rows, "page_id": page_id, "date_preset": effective_preset, "breakdowns": ["region"]}
+    enriched_rows = [enrich_geo_row(row) for row in rows]
+    result = {"data": enriched_rows, "page_id": page_id, "date_preset": effective_preset, "breakdowns": ["region"]}
     set_cache(settings.duckdb_path, cache_key, result)
     return result
 
