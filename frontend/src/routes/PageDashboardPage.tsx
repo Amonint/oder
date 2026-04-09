@@ -3,20 +3,19 @@ import DateRangePickerModal from "@/components/DateRangePickerModal";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
-  fetchAdLabelsPerformance,
   fetchCampaigns,
-  fetchOrganicInsights,
-  fetchPageActions,
   fetchPageGeo,
   fetchPageInsights,
-  fetchPagePlacements,
-  fetchPageTimeseries,
+  fetchPageConversionTimeseries,
+  fetchPageTrafficQuality,
+  fetchPageAdDiagnostics,
   getMetaAccessToken,
   type GeoInsightRow,
   type GeoMetadata,
 } from "@/api/client";
-import AdLabelsSection from "@/components/AdLabelsSection";
-import OrganicKpiCard from "@/components/OrganicKpiCard";
+import RetentionModule from "@/components/RetentionModule";
+import TrafficQualityCard from "@/components/TrafficQualityCard";
+import AdDiagnosticsTable from "@/components/AdDiagnosticsTable";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,9 +35,6 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import KpiGrid from "@/components/KpiGrid";
-import ActionsChart from "@/components/ActionsChart";
-import TimeseriesChart from "@/components/TimeseriesChart";
-import PlacementChart from "@/components/PlacementChart";
 import GeoMap from "@/components/GeoMap";
 import ChoroplethMap from "@/components/ChoroplethMap";
 
@@ -102,24 +98,6 @@ export default function PageDashboardPage() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const actionsQuery = useQuery({
-    queryKey: ["page-actions", id, pid, datePreset, customDateStart, customDateStop, campaignId],
-    queryFn: () => fetchPageActions(id, pid, opts),
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const timeseriesQuery = useQuery({
-    queryKey: ["page-timeseries", id, pid, datePreset, customDateStart, customDateStop, campaignId],
-    queryFn: () => fetchPageTimeseries(id, pid, opts),
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const placementsQuery = useQuery({
-    queryKey: ["page-placements", id, pid, datePreset, customDateStart, customDateStop, campaignId],
-    queryFn: () => fetchPagePlacements(id, pid, opts),
-    staleTime: 5 * 60 * 1000,
-  });
-
   const geoQuery = useQuery({
     queryKey: ["page-geo", id, pid, datePreset, customDateStart, customDateStop, campaignId],
     queryFn: () => fetchPageGeo(id, pid, opts),
@@ -132,26 +110,27 @@ export default function PageDashboardPage() {
     staleTime: 10 * 60 * 1000,
   });
 
-  const organicQuery = useQuery({
-    queryKey: ["organic-insights", pid, datePreset, customDateStart, customDateStop],
-    queryFn: () => fetchOrganicInsights(pid, { ...effectiveDateParams }),
+  const conversionTsQuery = useQuery({
+    queryKey: ["page-conv-ts", id, pid, datePreset, customDateStart, customDateStop, campaignId],
+    queryFn: () => fetchPageConversionTimeseries(id, pid, opts),
     staleTime: 5 * 60 * 1000,
   });
 
-  const labelsQuery = useQuery({
-    queryKey: ["ad-labels", id, datePreset, customDateStart, customDateStop, campaignId],
-    queryFn: () =>
-      fetchAdLabelsPerformance(id, {
-        ...effectiveDateParams,
-        campaignId: campaignId || undefined,
-      }),
+  const trafficQualityQuery = useQuery({
+    queryKey: ["page-traffic-quality", id, pid, datePreset, customDateStart, customDateStop, campaignId],
+    queryFn: () => fetchPageTrafficQuality(id, pid, opts),
     staleTime: 5 * 60 * 1000,
   });
 
-  // Adaptar PageGeoRow → GeoInsightRow para GeoMap
+  const adDiagnosticsQuery = useQuery({
+    queryKey: ["page-ad-diagnostics", id, pid, datePreset, customDateStart, customDateStop, campaignId],
+    queryFn: () => fetchPageAdDiagnostics(id, pid, opts),
+    staleTime: 5 * 60 * 1000,
+  });
+
   const geoRows: GeoInsightRow[] = (geoQuery.data?.data ?? []).map((r) => ({
     region: r.region ?? "",
-    region_name: r.region ?? "",
+    region_name: r.region_name ?? r.region ?? "",
     impressions: parseInt(r.impressions ?? "0") || 0,
     clicks: 0,
     spend: r.spend ?? "0",
@@ -166,13 +145,7 @@ export default function PageDashboardPage() {
     note: `Página: ${pid}`,
   };
 
-  const isAnyLoading =
-    insightsQuery.isLoading ||
-    actionsQuery.isLoading ||
-    timeseriesQuery.isLoading;
-
-  const primaryError =
-    insightsQuery.error ?? actionsQuery.error ?? placementsQuery.error ?? null;
+  const primaryError = insightsQuery.error ?? null;
 
   return (
     <div className="w-full space-y-6 py-6">
@@ -188,6 +161,7 @@ export default function PageDashboardPage() {
         initialStart={customDateStart ?? undefined}
         initialEnd={customDateStop ?? undefined}
       />
+
       {/* Breadcrumb */}
       <Breadcrumb>
         <BreadcrumbList>
@@ -282,7 +256,7 @@ export default function PageDashboardPage() {
       ) : null}
 
       {/* KPIs */}
-      {isAnyLoading ? (
+      {insightsQuery.isLoading ? (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-24 w-full rounded-xl" />
@@ -295,25 +269,19 @@ export default function PageDashboardPage() {
         />
       )}
 
-      {/* Evolución + Acciones */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <TimeseriesChart
-          data={timeseriesQuery.data?.data}
-          isLoading={timeseriesQuery.isLoading}
-        />
-        <ActionsChart
-          data={actionsQuery.data?.data}
-          isLoading={actionsQuery.isLoading}
-        />
-      </div>
-
-      {/* Placements */}
-      <PlacementChart
-        data={placementsQuery.data?.data}
-        isLoading={placementsQuery.isLoading}
+      {/* Módulo 1: Rentabilidad y Adquisición */}
+      <RetentionModule
+        data={conversionTsQuery.data?.data}
+        isLoading={conversionTsQuery.isLoading}
       />
 
-      {/* Geo */}
+      {/* Módulo 2: Calidad de Tráfico */}
+      <TrafficQualityCard
+        data={trafficQualityQuery.data}
+        isLoading={trafficQualityQuery.isLoading}
+      />
+
+      {/* Distribución geográfica */}
       {geoQuery.isLoading ? (
         <Skeleton className="h-64 w-full rounded-xl" />
       ) : geoRows.length > 0 ? (
@@ -327,9 +295,9 @@ export default function PageDashboardPage() {
           {geoQuery.data && geoQuery.data.data.length > 0 && (
             <ChoroplethMap
               data={geoQuery.data.data.map((row) => ({
-                region_name: (row as { region_name?: string; region?: string }).region_name || (row as { region?: string }).region || "",
-                spend: parseFloat((row as { spend?: string }).spend ?? "0"),
-                impressions: parseInt((row as any).impressions ?? "0") || undefined,
+                region_name: row.region_name || row.region || "",
+                spend: parseFloat(row.spend ?? "0"),
+                impressions: parseInt(row.impressions ?? "0") || undefined,
               }))}
               metric="spend"
             />
@@ -337,24 +305,11 @@ export default function PageDashboardPage() {
         </div>
       ) : null}
 
-      {/* Métricas Orgánicas */}
-      <section className="space-y-2">
-        <h2 className="text-foreground text-lg font-semibold">Métricas Orgánicas</h2>
-        <OrganicKpiCard
-          metrics={organicQuery.data?.metrics}
-          isLoading={organicQuery.isLoading}
-        />
-      </section>
-
-      {/* Ad Labels */}
-      <section className="space-y-2">
-        <h2 className="text-foreground text-lg font-semibold">Rendimiento por Etiquetas</h2>
-        <AdLabelsSection
-          data={labelsQuery.data?.data}
-          isLoading={labelsQuery.isLoading}
-          metric="cpa"
-        />
-      </section>
+      {/* Módulo 3: Diagnóstico de Creatividades */}
+      <AdDiagnosticsTable
+        data={adDiagnosticsQuery.data?.data}
+        isLoading={adDiagnosticsQuery.isLoading}
+      />
     </div>
   );
 }
