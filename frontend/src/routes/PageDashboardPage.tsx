@@ -15,8 +15,8 @@ import {
   type GeoMetadata,
 } from "@/api/client";
 import CompetitorPanel from "@/components/CompetitorPanel";
-import { useCompetitorSearch } from "@/hooks/useCompetitorSearch";
-import type { CompetitorPageSuggestion } from "@/api/client";
+import { useCompetitorResolve } from "@/hooks/useCompetitorResolve";
+import type { CompetitorResolvedSuggestion } from "@/api/client";
 import RetentionModule from "@/components/RetentionModule";
 import TrafficQualityCard from "@/components/TrafficQualityCard";
 import AdDiagnosticsTable from "@/components/AdDiagnosticsTable";
@@ -71,21 +71,28 @@ export default function PageDashboardPage() {
     name: string;
   } | null>(null);
   const [showCompetitorSearch, setShowCompetitorSearch] = useState(false);
-  const [competitorQuery, setCompetitorQuery] = useState("");
-  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [competitorInput, setCompetitorInput] = useState("");
   const searchRef = useRef<HTMLDivElement>(null);
 
-  const { suggestions, isLoading: searchLoading } = useCompetitorSearch(competitorQuery);
+  const resolveState = useCompetitorResolve(competitorInput, pageId ? decodeURIComponent(pageId) : undefined);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
-        setShowSuggestions(false);
+        setCompetitorInput("");
       }
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
+
+  useEffect(() => {
+    if (resolveState.status === "resolved") {
+      setSelectedCompetitor({ id: resolveState.page_id, name: resolveState.name });
+      setShowCompetitorSearch(false);
+      setCompetitorInput("");
+    }
+  }, [resolveState]);
 
   const id = accountId ? decodeURIComponent(accountId) : "";
   const pid = pageId ? decodeURIComponent(pageId) : "";
@@ -365,7 +372,7 @@ export default function PageDashboardPage() {
                 onClick={() => {
                   setSelectedCompetitor(null);
                   setShowCompetitorSearch(false);
-                  setCompetitorQuery("");
+                  setCompetitorInput("");
                 }}
                 aria-label="Quitar competidor"
               >
@@ -376,39 +383,47 @@ export default function PageDashboardPage() {
             <div ref={searchRef} className="relative">
               <Input
                 autoFocus
-                placeholder="Buscar competidor…"
-                value={competitorQuery}
-                onChange={(e) => {
-                  setCompetitorQuery(e.target.value);
-                  setShowSuggestions(true);
-                }}
-                onFocus={() => setShowSuggestions(true)}
-                className="w-[min(100vw-2rem,280px)]"
+                placeholder="Pega URL de Facebook o Instagram, o escribe el nombre…"
+                value={competitorInput}
+                onChange={(e) => setCompetitorInput(e.target.value)}
+                className="w-[min(100vw-2rem,320px)]"
               />
-              {showSuggestions && competitorQuery.length >= 2 && (
+
+              {/* Resolving */}
+              {resolveState.status === "resolving" && (
+                <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-md px-3 py-2 text-sm text-muted-foreground">
+                  Buscando…
+                </div>
+              )}
+
+              {/* Error */}
+              {resolveState.status === "error" && (
+                <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-md px-3 py-2 text-sm text-destructive">
+                  {resolveState.message}
+                </div>
+              )}
+
+              {/* Sugerencias (texto libre) */}
+              {resolveState.status === "suggestions" && (
                 <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-md">
-                  {searchLoading && (
-                    <div className="px-3 py-2 text-sm text-muted-foreground">Buscando…</div>
+                  <div className="px-3 py-1.5 text-xs text-amber-600 border-b">
+                    ⚠ Resultados aproximados — pega la URL para exactitud
+                  </div>
+                  {resolveState.items.length === 0 && (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">Sin resultados</div>
                   )}
-                  {!searchLoading && suggestions.length === 0 && (
-                    <div className="px-3 py-2 text-sm text-muted-foreground">Sin páginas encontradas</div>
-                  )}
-                  {suggestions.map((s: CompetitorPageSuggestion) => (
+                  {resolveState.items.map((s: CompetitorResolvedSuggestion) => (
                     <button
-                      key={s.id}
+                      key={s.page_id}
                       className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors"
                       onMouseDown={(e) => {
                         e.preventDefault();
-                        setSelectedCompetitor({ id: s.id, name: s.name });
+                        setSelectedCompetitor({ id: s.page_id, name: s.name });
                         setShowCompetitorSearch(false);
-                        setShowSuggestions(false);
-                        setCompetitorQuery("");
+                        setCompetitorInput("");
                       }}
                     >
                       <span className="font-medium">{s.name}</span>
-                      {s.category && (
-                        <span className="ml-2 text-xs text-muted-foreground">{s.category}</span>
-                      )}
                     </button>
                   ))}
                 </div>
