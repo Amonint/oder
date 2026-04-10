@@ -869,6 +869,44 @@ export async function searchCompetitorPages(
   return r.json();
 }
 
+export interface CompetitorResolvedDirect {
+  platform: "facebook" | "instagram";
+  page_id: string;
+  name: string;
+  fan_count?: number;
+  category?: string | null;
+  is_approximate: false;
+}
+
+export interface CompetitorResolvedSuggestion {
+  page_id: string;
+  name: string;
+  is_approximate: true;
+}
+
+export interface CompetitorResolveResponse {
+  platform: "facebook" | "instagram";
+  page_id?: string;
+  name?: string;
+  fan_count?: number;
+  category?: string | null;
+  is_approximate?: boolean;
+  results?: CompetitorResolvedSuggestion[];
+}
+
+export async function resolveCompetitor(
+  input: string,
+  pageId?: string,
+): Promise<CompetitorResolveResponse> {
+  const r = await apiFetch("/api/v1/competitor/resolve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input, page_id: pageId ?? null }),
+  });
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
 export async function fetchCompetitorAds(
   pageId: string
 ): Promise<CompetitorAdsResponse> {
