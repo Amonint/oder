@@ -27,3 +27,25 @@ def test_facebook_home_url_is_free_text():
 def test_instagram_reel_url_is_free_text():
     result = parse_competitor_input("https://www.instagram.com/reel/abc123")
     assert result.strategy == ResolveStrategy.FREE_TEXT
+
+
+def test_facebook_watch_url_is_free_text():
+    result = parse_competitor_input("https://www.facebook.com/watch")
+    assert result.strategy == ResolveStrategy.FREE_TEXT
+
+
+def test_instagram_tv_url_is_free_text():
+    result = parse_competitor_input("https://www.instagram.com/tv/abc123")
+    assert result.strategy == ResolveStrategy.FREE_TEXT
+
+
+def test_empty_input_is_free_text():
+    result = parse_competitor_input("   ")
+    assert result.strategy == ResolveStrategy.FREE_TEXT
+    assert result.value == ""
+
+
+def test_facebook_alias_with_query_params():
+    result = parse_competitor_input("https://www.facebook.com/brand?ref=ts")
+    assert result.strategy == ResolveStrategy.FACEBOOK_ALIAS
+    assert result.value == "brand"

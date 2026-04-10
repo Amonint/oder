@@ -21,14 +21,14 @@ class ParseResult:
 
 _FB_PROFILE_ID = re.compile(r'facebook\.com/profile\.php\?id=(\d+)', re.IGNORECASE)
 _FB_PAGES_ID   = re.compile(r'facebook\.com/pages/[^/]+/(\d+)', re.IGNORECASE)
-_FB_ALIAS      = re.compile(r'facebook\.com/([A-Za-z0-9._%-]+)', re.IGNORECASE)
-_IG_USERNAME   = re.compile(r'instagram\.com/([A-Za-z0-9._]+)/?', re.IGNORECASE)
+_FB_ALIAS      = re.compile(r'facebook\.com/([A-Za-z0-9._-]+)', re.IGNORECASE)
+_IG_USERNAME   = re.compile(r'instagram\.com/([A-Za-z0-9._]+)/?(?:[?#]|$)', re.IGNORECASE)
 
 _FB_RESERVED = frozenset({
     "home", "login", "watch", "groups", "events", "marketplace",
-    "pages", "help", "share", "sharer",
+    "pages", "help", "share", "sharer", "profile.php",
 })
-_IG_RESERVED = frozenset({"p", "reel", "explore", "accounts", "direct", "stories"})
+_IG_RESERVED = frozenset({"p", "reel", "explore", "accounts", "direct", "stories", "tv", "reels", "tags", "saved", "highlights"})
 
 
 def parse_competitor_input(text: str) -> ParseResult:
