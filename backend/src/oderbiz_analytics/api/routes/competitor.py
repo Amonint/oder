@@ -1,10 +1,12 @@
 # backend/src/oderbiz_analytics/api/routes/competitor.py
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from oderbiz_analytics.adapters.meta.client import MetaGraphApiError, MetaGraphClient
 from oderbiz_analytics.api.deps import get_meta_graph_client
+from oderbiz_analytics.api.routes.url_parser import ResolveStrategy, parse_competitor_input
 
 router = APIRouter(prefix="/competitor", tags=["competitor"])
 
@@ -18,17 +20,72 @@ _ADS_ARCHIVE_FIELDS = (
 _DEFAULT_COUNTRIES = ["CO", "MX", "AR", "CL", "PE", "US", "ES"]
 
 
-@router.get("/search")
-async def search_competitor_pages(
-    q: str = Query(..., min_length=2, description="Nombre de la página a buscar"),
+class ResolveRequest(BaseModel):
+    input: str
+    page_id: str | None = None
+
+
+@router.post("/resolve")
+async def resolve_competitor(
+    body: ResolveRequest,
     client: MetaGraphClient = Depends(get_meta_graph_client),
 ) -> dict:
-    """Busca páginas de Facebook por nombre para autocompletar el buscador de competidores."""
+    """Resuelve URL de Facebook/Instagram o texto libre a un perfil competidor."""
+    parsed = parse_competitor_input(body.input)
+
+    if parsed.strategy in (ResolveStrategy.FACEBOOK_ALIAS, ResolveStrategy.FACEBOOK_ID):
+        try:
+            page = await client.lookup_page(alias_or_id=parsed.value)
+        except MetaGraphApiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        return {
+            "platform": "facebook",
+            "page_id": page["id"],
+            "name": page.get("name", ""),
+            "fan_count": page.get("fan_count"),
+            "category": page.get("category"),
+            "is_approximate": False,
+        }
+
+    if parsed.strategy == ResolveStrategy.INSTAGRAM_USERNAME:
+        if not body.page_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Se requiere page_id para resolver cuentas de Instagram.",
+            )
+        try:
+            ig_user_id = await client.get_ig_user_id(page_id=body.page_id)
+            ig_data = await client.instagram_business_discovery(
+                ig_user_id=ig_user_id,
+                username=parsed.value,
+            )
+        except MetaGraphApiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        bd = ig_data.get("business_discovery", {})
+        return {
+            "platform": "instagram",
+            "page_id": bd.get("id", parsed.value),
+            "name": bd.get("name") or bd.get("username") or parsed.value,
+            "fan_count": bd.get("followers_count"),
+            "category": None,
+            "is_approximate": False,
+        }
+
+    # FREE_TEXT — fallback con ads_archive
     try:
-        data = await client.search_pages(query=q)
+        pages = await client.search_ads_by_terms(
+            search_terms=parsed.value,
+            countries=_DEFAULT_COUNTRIES,
+        )
     except MetaGraphApiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    return {"data": data}
+    return {
+        "platform": "facebook",
+        "results": [
+            {"page_id": p["page_id"], "name": p["name"], "is_approximate": True}
+            for p in pages
+        ],
+    }
 
 
 @router.get("/{page_id}/ads")
