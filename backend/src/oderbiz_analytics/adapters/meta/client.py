@@ -158,3 +158,118 @@ class MetaGraphClient:
         if not isinstance(data, list):
             raise MetaGraphApiError(status_code=502, message="Respuesta de /ads_archive sin lista `data`")
         return data
+
+    async def lookup_page(
+        self,
+        *,
+        alias_or_id: str,
+        fields: str = "id,name,fan_count,category",
+    ) -> dict:
+        """Lookup directo de página Facebook por alias o ID numérico."""
+        r = await self._client.get(
+            f"{self._base}/{alias_or_id}",
+            params={"fields": fields, "access_token": self._token},
+        )
+        if r.is_error:
+            raise MetaGraphApiError(
+                status_code=r.status_code,
+                message=_meta_error_message(r),
+            )
+        data = r.json()
+        if not isinstance(data, dict) or "id" not in data:
+            raise MetaGraphApiError(status_code=404, message="Página no encontrada")
+        return data
+
+    async def get_ig_user_id(self, *, page_id: str) -> str:
+        """Obtiene el IG User ID vinculado a una página de Facebook."""
+        r = await self._client.get(
+            f"{self._base}/{page_id}",
+            params={"fields": "instagram_business_account", "access_token": self._token},
+        )
+        if r.is_error:
+            raise MetaGraphApiError(
+                status_code=r.status_code,
+                message=_meta_error_message(r),
+            )
+        data = r.json()
+        ig = data.get("instagram_business_account")
+        if not ig or not isinstance(ig, dict) or "id" not in ig:
+            raise MetaGraphApiError(
+                status_code=422,
+                message="Esta página de Facebook no tiene una cuenta de Instagram de negocio vinculada.",
+            )
+        return ig["id"]
+
+    async def instagram_business_discovery(
+        self,
+        *,
+        ig_user_id: str,
+        username: str,
+    ) -> dict:
+        """Busca una cuenta de Instagram business/creator por username."""
+        fields = (
+            "business_discovery.fields("
+            "id,username,name,followers_count,media_count"
+            ")"
+        )
+        r = await self._client.get(
+            f"{self._base}/{ig_user_id}",
+            params={
+                "fields": fields,
+                "username": username,
+                "access_token": self._token,
+            },
+        )
+        if r.is_error:
+            raise MetaGraphApiError(
+                status_code=r.status_code,
+                message=_meta_error_message(r),
+            )
+        data = r.json()
+        if "business_discovery" not in data:
+            raise MetaGraphApiError(
+                status_code=422,
+                message=(
+                    "Esta cuenta de Instagram no es una cuenta de negocio/creador. "
+                    "Business Discovery solo funciona con esas cuentas."
+                ),
+            )
+        return data
+
+    async def search_ads_by_terms(
+        self,
+        *,
+        search_terms: str,
+        countries: list[str],
+        limit: int = 10,
+    ) -> list[dict]:
+        """Busca en ads_archive por texto libre; devuelve páginas únicas deduplicadas."""
+        r = await self._client.get(
+            f"{self._base}/ads_archive",
+            params={
+                "search_terms": search_terms,
+                "ad_reached_countries": json.dumps(countries),
+                "ad_active_status": "ALL",
+                "fields": "page_id,page_name",
+                "limit": limit,
+                "access_token": self._token,
+            },
+        )
+        if r.is_error:
+            raise MetaGraphApiError(
+                status_code=r.status_code,
+                message=_meta_error_message(r),
+            )
+        payload = r.json()
+        data = payload.get("data", [])
+        if not isinstance(data, list):
+            raise MetaGraphApiError(status_code=502, message="Respuesta de /ads_archive sin lista `data`")
+        seen: set[str] = set()
+        pages: list[dict] = []
+        for ad in data:
+            pid = ad.get("page_id")
+            pname = ad.get("page_name") or pid or ""
+            if pid and pid not in seen:
+                seen.add(pid)
+                pages.append({"page_id": pid, "name": pname})
+        return pages
