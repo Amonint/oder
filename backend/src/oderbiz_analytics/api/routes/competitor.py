@@ -1,6 +1,11 @@
 # backend/src/oderbiz_analytics/api/routes/competitor.py
 from __future__ import annotations
 
+import asyncio
+import re
+from collections import Counter
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -9,6 +14,122 @@ from oderbiz_analytics.api.deps import get_meta_graph_client
 from oderbiz_analytics.api.routes.url_parser import ResolveStrategy, parse_competitor_input
 
 router = APIRouter(prefix="/competitor", tags=["competitor"])
+
+_MONITOR_COUNTRIES = ["EC", "CO", "MX", "AR", "CL", "PE", "VE", "HN", "GT", "BO", "US", "ES"]
+
+_RADAR_AD_FIELDS = (
+    "id,ad_creation_time,ad_creative_bodies,ad_creative_link_titles,"
+    "ad_delivery_start_time,ad_delivery_stop_time,"
+    "publisher_platforms,languages,page_name,page_id,media_type"
+)
+
+_STOPWORDS = {
+    "de", "la", "el", "en", "y", "a", "los", "las", "un", "una", "que", "con",
+    "su", "por", "para", "es", "del", "se", "the", "and", "of", "to", "in",
+    "for", "que", "no", "al", "más", "por", "con", "una", "sus", "pero",
+}
+
+CATEGORY_KEYWORDS: dict[str, list[str]] = {
+    "Education": ["educación superior", "universidad", "rector", "liderazgo académico"],
+    "Hotel": ["hotel", "hospedaje", "turismo", "alojamiento"],
+    "Restaurant": ["restaurante", "gastronomía", "comida", "chef"],
+    "Health/medical": ["salud", "clínica", "médico", "bienestar"],
+    "Consulting/business services": ["consultoría", "gestión empresarial", "management"],
+    "Nonprofit organization": ["organización", "fundación", "asociación", "ONG"],
+    "E-commerce": ["tienda online", "ecommerce", "compra online", "envíos"],
+    "Real estate": ["inmobiliaria", "bienes raíces", "apartamento", "propiedad"],
+}
+
+
+def _keywords_for_category(category: str, page_name: str) -> list[str]:
+    for key, kws in CATEGORY_KEYWORDS.items():
+        if key.lower() in category.lower():
+            return kws
+    return [page_name]
+
+
+def _is_active(ad: dict) -> bool:
+    stop = ad.get("ad_delivery_stop_time")
+    if stop is None:
+        return True
+    try:
+        stop_dt = datetime.fromisoformat(stop.replace("+0000", "+00:00"))
+        return stop_dt > datetime.now(timezone.utc)
+    except Exception:
+        return False
+
+
+def _monthly_activity(ads: list[dict]) -> dict[str, int]:
+    months: Counter = Counter()
+    for ad in ads:
+        t = ad.get("ad_creation_time") or ""
+        if len(t) >= 7:
+            months[t[:7]] += 1
+    return dict(sorted(months.items()))
+
+
+def _top_words(all_ads: list[list[dict]], top_n: int = 10) -> list[dict]:
+    words: Counter = Counter()
+    for ads in all_ads:
+        for ad in ads:
+            texts: list[str] = []
+            texts.extend(ad.get("ad_creative_bodies") or [])
+            texts.extend(ad.get("ad_creative_link_titles") or [])
+            for text in texts:
+                tokens = re.findall(r"\b[a-záéíóúüñA-ZÁÉÍÓÚÜÑ]{4,}\b", text.lower())
+                for tok in tokens:
+                    if tok not in _STOPWORDS:
+                        words[tok] += 1
+    return [{"word": w, "count": c} for w, c in words.most_common(top_n)]
+
+
+def _build_competitor_entry(page: dict, ads: list[dict]) -> dict:
+    active = sum(1 for ad in ads if _is_active(ad))
+    platforms: set[str] = set()
+    languages: set[str] = set()
+    media_types: set[str] = set()
+    for ad in ads:
+        platforms.update(ad.get("publisher_platforms") or [])
+        languages.update(ad.get("languages") or [])
+        if ad.get("media_type"):
+            media_types.add(ad["media_type"])
+    dates = [ad["ad_creation_time"] for ad in ads if ad.get("ad_creation_time")]
+    return {
+        "page_id": page["page_id"],
+        "name": page["name"],
+        "active_ads": active,
+        "total_ads": len(ads),
+        "platforms": sorted(platforms),
+        "languages": sorted(languages),
+        "media_types": sorted(media_types),
+        "latest_ad_date": max(dates) if dates else None,
+        "monthly_activity": _monthly_activity(ads),
+    }
+
+
+def _build_market_summary(
+    competitors: list[dict],
+    country_results: list[list[dict] | Exception],
+) -> dict:
+    # top_countries: cuántos anunciantes únicos encontrados por país
+    top_countries = []
+    for i, country in enumerate(_MONITOR_COUNTRIES):
+        result = country_results[i]
+        if isinstance(result, list):
+            top_countries.append({"country": country, "advertiser_count": len(result)})
+
+    # top_platforms: conteo de ads por plataforma agregado de todos los competidores
+    platform_count: Counter = Counter()
+    for comp in competitors:
+        for platform in comp["platforms"]:
+            platform_count[platform] += comp["total_ads"]
+
+    return {
+        "top_countries": sorted(top_countries, key=lambda x: x["advertiser_count"], reverse=True),
+        "top_platforms": [
+            {"platform": p, "ad_count": c} for p, c in platform_count.most_common()
+        ],
+    }
 
 _ADS_ARCHIVE_FIELDS = (
     "id,ad_creation_time,ad_creative_bodies,ad_creative_link_titles,"
@@ -104,3 +225,87 @@ async def get_competitor_ads(
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     page_name = data[0].get("page_name", "") if data else ""
     return {"data": data, "page_name": page_name, "page_id": page_id}
+
+
+@router.get("/market-radar")
+async def get_market_radar(
+    page_id: str,
+    client: MetaGraphClient = Depends(get_meta_graph_client),
+) -> dict:
+    """Auto-descubre competidores en el mismo segmento de la página dada."""
+    # 1. Detectar categoría de la página del cliente
+    try:
+        page_data = await client.get_page_public_profile(page_id=page_id)
+    except MetaGraphApiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    category = page_data.get("category", "")
+    page_name = page_data.get("name", page_id)
+    keywords = _keywords_for_category(category, page_name)
+    primary_keyword = keywords[0]
+
+    # 2. Buscar competidores con todos los países monitoreados
+    try:
+        competitor_pages = await client.search_ads_by_terms(
+            search_terms=primary_keyword,
+            countries=_MONITOR_COUNTRIES,
+            limit=20,
+        )
+    except MetaGraphApiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    # Excluir la propia página del cliente
+    competitor_pages = [p for p in competitor_pages if p["page_id"] != page_id]
+
+    # 3. En paralelo: ads por competidor + búsqueda por país
+    ads_tasks = [
+        client.get_ads_archive(
+            page_id=p["page_id"],
+            countries=_MONITOR_COUNTRIES,
+            fields=_RADAR_AD_FIELDS,
+            limit=50,
+        )
+        for p in competitor_pages
+    ]
+    country_tasks = [
+        client.search_ads_by_terms(
+            search_terms=primary_keyword,
+            countries=[country],
+            limit=10,
+        )
+        for country in _MONITOR_COUNTRIES
+    ]
+
+    all_results = await asyncio.gather(
+        *ads_tasks, *country_tasks, return_exceptions=True
+    )
+
+    n_comp = len(competitor_pages)
+    ads_results = all_results[:n_comp]
+    country_results = all_results[n_comp:]
+
+    # 4. Construir respuesta
+    competitors = []
+    for page, ads_result in zip(competitor_pages, ads_results):
+        ads = ads_result if isinstance(ads_result, list) else []
+        competitors.append(_build_competitor_entry(page, ads))
+
+    # Ordenar por active_ads descendente
+    competitors.sort(key=lambda c: c["active_ads"], reverse=True)
+
+    all_ads_nested = [
+        ads_results[i] for i in range(n_comp) if isinstance(ads_results[i], list)
+    ]
+    market_summary = _build_market_summary(competitors, list(country_results))
+    market_summary["top_words"] = _top_words(all_ads_nested)  # type: ignore[assignment]
+
+    return {
+        "client_page": {
+            "page_id": page_id,
+            "name": page_name,
+            "category": category,
+            "keywords_used": keywords,
+        },
+        "competitors": competitors,
+        "market_summary": market_summary,
+    }
