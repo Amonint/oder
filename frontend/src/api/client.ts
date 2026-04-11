@@ -914,3 +914,45 @@ export async function fetchCompetitorAds(
   if (!r.ok) throw new Error(await readErrorMessage(r));
   return r.json();
 }
+
+// ─── Market Radar ────────────────────────────────────────────────────────────
+
+export interface MarketRadarCompetitor {
+  page_id: string;
+  name: string;
+  active_ads: number;
+  total_ads: number;
+  platforms: string[];
+  languages: string[];
+  media_types: string[];
+  latest_ad_date: string | null;
+  monthly_activity: Record<string, number>; // { "2026-01": 3, ... }
+}
+
+export interface MarketRadarResponse {
+  client_page: {
+    page_id: string;
+    name: string;
+    category: string;
+    keywords_used: string[];
+  };
+  competitors: MarketRadarCompetitor[];
+  market_summary: {
+    top_countries: { country: string; advertiser_count: number }[];
+    top_platforms: { platform: string; ad_count: number }[];
+    top_words: { word: string; count: number }[];
+  };
+}
+
+export async function fetchMarketRadar(pageId: string): Promise<MarketRadarResponse> {
+  const token = getMetaAccessToken();
+  const res = await fetch(
+    `${base}/api/v1/competitor/market-radar?page_id=${encodeURIComponent(pageId)}`,
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "Error al cargar Radar de Mercado");
+  }
+  return res.json();
+}
