@@ -236,6 +236,22 @@ class MetaGraphClient:
             )
         return data
 
+    async def get_page_public_profile(self, *, page_id: str) -> dict:
+        """Obtiene perfil público de una página (id, name, category)."""
+        r = await self._client.get(
+            f"{self._base}/{page_id}",
+            params={"fields": "id,name,category", "access_token": self._token},
+        )
+        if r.is_error:
+            raise MetaGraphApiError(
+                status_code=r.status_code,
+                message=_meta_error_message(r),
+            )
+        data = r.json()
+        if not isinstance(data, dict) or "id" not in data:
+            raise MetaGraphApiError(status_code=404, message="Página no encontrada")
+        return data
+
     async def search_ads_by_terms(
         self,
         *,
