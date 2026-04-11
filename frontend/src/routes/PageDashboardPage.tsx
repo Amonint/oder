@@ -15,6 +15,7 @@ import {
   type GeoMetadata,
 } from "@/api/client";
 import CompetitorPanel from "@/components/CompetitorPanel";
+import MarketRadarPanel from "@/components/MarketRadarPanel";
 import { useCompetitorResolve } from "@/hooks/useCompetitorResolve";
 import type { CompetitorResolvedSuggestion } from "@/api/client";
 import RetentionModule from "@/components/RetentionModule";
@@ -72,6 +73,7 @@ export default function PageDashboardPage() {
   } | null>(null);
   const [showCompetitorSearch, setShowCompetitorSearch] = useState(false);
   const [competitorInput, setCompetitorInput] = useState("");
+  const [marketRadarOpen, setMarketRadarOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
 
   const resolveState = useCompetitorResolve(competitorInput, pageId ? decodeURIComponent(pageId) : undefined);
@@ -112,6 +114,18 @@ export default function PageDashboardPage() {
     }
     return { datePreset };
   }, [datePreset, customDateStart, customDateStop]);
+
+  function handleOpenMarketRadar() {
+    setSelectedCompetitor(null);
+    setShowCompetitorSearch(false);
+    setCompetitorInput("");
+    setMarketRadarOpen(true);
+  }
+
+  function handleSelectCompetitorFromRadar(id: string, name: string) {
+    setMarketRadarOpen(false);
+    setSelectedCompetitor({ id, name });
+  }
 
   function handleDatePresetChange(value: string) {
     if (value === "custom") {
@@ -359,6 +373,29 @@ export default function PageDashboardPage() {
           </Select>
         </div>
 
+        {/* Radar de Mercado */}
+        <div className="space-y-1.5">
+          <span className="text-muted-foreground text-xs">Radar de Mercado</span>
+          {marketRadarOpen ? (
+            <div className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+              <span className="font-medium text-primary">Activo</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 w-5 p-0 ml-1"
+                onClick={() => setMarketRadarOpen(false)}
+                aria-label="Cerrar Radar"
+              >
+                ✕
+              </Button>
+            </div>
+          ) : (
+            <Button variant="outline" onClick={handleOpenMarketRadar}>
+              🎯 Radar de Mercado
+            </Button>
+          )}
+        </div>
+
         {/* Buscador de competidor */}
         <div className="space-y-1.5">
           <span className="text-muted-foreground text-xs">Inteligencia competitiva</span>
@@ -437,17 +474,26 @@ export default function PageDashboardPage() {
         </div>
       </div>
 
-      {selectedCompetitor ? (
+      {selectedCompetitor || marketRadarOpen ? (
         <div className="flex gap-4 lg:flex-row flex-col mt-6">
           <div className="lg:w-1/2 w-full min-w-0 space-y-6">
             {mainContent}
           </div>
           <div className="lg:w-1/2 w-full min-w-0">
-            <CompetitorPanel
-              pageId={selectedCompetitor.id}
-              pageName={selectedCompetitor.name}
-              onClose={() => setSelectedCompetitor(null)}
-            />
+            {selectedCompetitor && (
+              <CompetitorPanel
+                pageId={selectedCompetitor.id}
+                pageName={selectedCompetitor.name}
+                onClose={() => setSelectedCompetitor(null)}
+              />
+            )}
+            {marketRadarOpen && (
+              <MarketRadarPanel
+                pageId={pid}
+                onClose={() => setMarketRadarOpen(false)}
+                onSelectCompetitor={handleSelectCompetitorFromRadar}
+              />
+            )}
           </div>
         </div>
       ) : (
