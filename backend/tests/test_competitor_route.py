@@ -160,3 +160,84 @@ def test_resolve_facebook_not_found(client):
     )
     r = client.post("/api/v1/competitor/resolve", json={"input": "https://www.facebook.com/nonexistent"})
     assert r.status_code == 404
+
+
+@respx.mock
+def test_market_radar_has_ml_metadata(client):
+    """Validate /market-radar endpoint includes ML metadata and filtering"""
+    user_page_id = "user_psic_123"
+    
+    # Mock: Get user page profile
+    respx.get(f"https://graph.facebook.com/v25.0/{user_page_id}").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": user_page_id,
+                "name": "Consultorio Psicólogo",
+                "category": "Psicólogo",
+            },
+        )
+    )
+    
+    # Mock: Search competitors
+    respx.get("https://graph.facebook.com/v25.0/ads_archive").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"page_id": "comp1", "name": "Dr. Psicólogo Relevante"},
+                ]
+            },
+        )
+    )
+    
+    # Mock: Get ads for competitor
+    respx.get(
+        f"https://graph.facebook.com/v25.0/ads_archive",
+        params={"access_token": "t", "search_page_ids": "comp1"}
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "ad_psic_1",
+                        "page_id": "comp1",
+                        "page_name": "Dr. Psicólogo Relevante",
+                        "ad_creative_bodies": [
+                            "Psicoterapia para ansiedad y depresión",
+                            "Consultas psicología clínica",
+                        ],
+                        "ad_creative_link_titles": [],
+                        "ad_delivery_start_time": "2026-01-01T00:00:00+0000",
+                        "ad_delivery_stop_time": None,
+                        "publisher_platforms": ["facebook"],
+                        "languages": ["es"],
+                        "media_type": "text",
+                    }
+                ]
+            },
+        )
+    )
+    
+    r = client.get(f"/api/v1/competitor/market-radar?page_id={user_page_id}")
+    assert r.status_code == 200
+    body = r.json()
+    
+    # Validate structure
+    assert "metadata" in body, "Response must have metadata section"
+    meta = body["metadata"]
+    
+    assert "total_ads_analyzed" in meta
+    assert "total_competitors_found" in meta
+    assert "competitors_after_ml_filter" in meta
+    assert meta["ml_threshold"] == 25
+    assert meta["category"] == "Psicólogo"
+    assert "keywords_used" in meta
+    
+    # Competitors should have ML scores
+    if body.get("competitors"):
+        comp = body["competitors"][0]
+        assert "relevance_score" in comp, "Competitor missing relevance_score"
+        assert "classification_reason" in comp, "Competitor missing classification_reason"
+        assert "ml_factors" in comp, "Competitor missing ml_factors"

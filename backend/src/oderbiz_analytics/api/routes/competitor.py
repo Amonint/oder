@@ -329,19 +329,70 @@ async def get_market_radar(
     ads_results = all_results[:n_comp]
     country_results = all_results[n_comp:]
 
-    # 4. Construir respuesta
-    competitors = []
+    # 4. Construir entrada de competidores SIN filtrado aún (para metadata)
+    competitors_before_filter = []
+    competitor_ads_map = {}  # Para usar en clasificación
+
     for page, ads_result in zip(competitor_pages, ads_results):
         ads = ads_result if isinstance(ads_result, list) else []
-        competitors.append(_build_competitor_entry(page, ads))
+        competitors_before_filter.append(_build_competitor_entry(page, ads))
+        competitor_ads_map[page["page_id"]] = ads
 
-    # Ordenar por active_ads descendente
-    competitors.sort(key=lambda c: c["active_ads"], reverse=True)
+    # 5. PIPELINE SECTION 4.2: Inicializar clasificador ML
+    classifier = CompetitorClassifier(
+        user_category=category,
+        user_keywords=keywords,
+    )
 
+    # 6. Clasificar cada competidor y filtrar por score >= 25
+    ml_threshold = 25
+    competitors_filtered = []
+
+    for page, ads_result in zip(competitor_pages, ads_results):
+        ads = ads_result if isinstance(ads_result, list) else []
+
+        if not ads:
+            # Si no hay ads, no clasificar
+            continue
+
+        # Extraer cuerpos de anuncios para clasificación
+        ad_creative_bodies = []
+        for ad in ads:
+            ad_creative_bodies.extend(ad.get("ad_creative_bodies", []))
+
+        # Clasificar con ML
+        classification = classifier.classify(
+            page_name=page["name"],
+            ad_bodies=ad_creative_bodies,
+        )
+
+        # Solo incluir si cumple threshold
+        if classification.score >= ml_threshold:
+            competitor_entry = _build_competitor_entry(page, ads)
+            # Agregar metadata de ML
+            competitor_entry["relevance_score"] = classification.score
+            competitor_entry["classification_reason"] = classification.reason
+            competitor_entry["ml_factors"] = {
+                "positive_bonus": classification.factors["positive_bonus"],
+                "negative_penalty": classification.factors["negative_penalty"],
+                "category_bonus": classification.factors["category_bonus"],
+            }
+            competitors_filtered.append(competitor_entry)
+
+    # 7. Ordenar por relevance_score DESC, luego por active_ads DESC
+    competitors_filtered.sort(
+        key=lambda c: (c.get("relevance_score", 0), c["active_ads"]),
+        reverse=True
+    )
+
+    # 8. Top 5 competidores
+    top_competitors = competitors_filtered[:5]
+
+    # Construir metadata para debugging/monitoring
     all_ads_nested = [
         ads_results[i] for i in range(n_comp) if isinstance(ads_results[i], list)
     ]
-    market_summary = _build_market_summary(competitors, list(country_results))
+    market_summary = _build_market_summary(competitors_before_filter, list(country_results))
     market_summary["top_words"] = _top_words(all_ads_nested)  # type: ignore[assignment]
 
     return {
@@ -351,8 +402,16 @@ async def get_market_radar(
             "category": category,
             "keywords_used": keywords,
         },
-        "competitors": competitors,
+        "competitors": top_competitors,  # Top 5 filtered
         "market_summary": market_summary,
+        "metadata": {
+            "total_ads_analyzed": sum(len(ads_results[i]) for i in range(n_comp) if isinstance(ads_results[i], list)),
+            "total_competitors_found": len(competitors_before_filter),
+            "competitors_after_ml_filter": len(competitors_filtered),
+            "ml_threshold": ml_threshold,
+            "category": category,
+            "keywords_used": keywords,
+        },
     }
 
 
