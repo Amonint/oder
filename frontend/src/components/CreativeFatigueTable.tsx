@@ -85,6 +85,7 @@ export default function CreativeFatigueTable({
   const currentSort = SORT_OPTIONS.find((o) => o.value === sortBy)!;
 
   return (
+    <TooltipProvider delayDuration={300}>
     <section className="space-y-4">
       <div>
         <h2 className="text-foreground text-lg font-semibold">Fatiga de creatividades</h2>
@@ -148,8 +149,7 @@ export default function CreativeFatigueTable({
                 : "Sin datos de creatividades en este periodo."}
             </p>
           ) : (
-            <TooltipProvider delayDuration={300}>
-              <div className="overflow-x-auto">
+            <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -212,10 +212,10 @@ export default function CreativeFatigueTable({
                   </TableBody>
                 </Table>
               </div>
-            </TooltipProvider>
-          )}
+            )}
         </CardContent>
       </Card>
     </section>
+    </TooltipProvider>
   );
 }
