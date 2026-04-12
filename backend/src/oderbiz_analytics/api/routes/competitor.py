@@ -380,30 +380,16 @@ async def get_market_radar(
             competitors_filtered.append(competitor_entry)
 
     # 7. Ordenar por relevance_score DESC, luego por active_ads DESC
+    # Using negative values for explicit descending order (spec requirement)
     competitors_filtered.sort(
-        key=lambda c: (c.get("relevance_score", 0), c["active_ads"]),
-        reverse=True
+        key=lambda c: (-c.get("relevance_score", 0), -c["active_ads"])
     )
 
     # 8. Top 5 competidores
     top_competitors = competitors_filtered[:5]
 
-    # Construir metadata para debugging/monitoring
-    all_ads_nested = [
-        ads_results[i] for i in range(n_comp) if isinstance(ads_results[i], list)
-    ]
-    market_summary = _build_market_summary(competitors_before_filter, list(country_results))
-    market_summary["top_words"] = _top_words(all_ads_nested)  # type: ignore[assignment]
-
     return {
-        "client_page": {
-            "page_id": page_id,
-            "name": page_name,
-            "category": category,
-            "keywords_used": keywords,
-        },
         "competitors": top_competitors,  # Top 5 filtered
-        "market_summary": market_summary,
         "metadata": {
             "total_ads_analyzed": sum(len(ads_results[i]) for i in range(n_comp) if isinstance(ads_results[i], list)),
             "total_competitors_found": len(competitors_before_filter),

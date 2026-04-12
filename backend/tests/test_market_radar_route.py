@@ -30,8 +30,8 @@ def test_market_radar_detects_category(client):
     r = client.get("/api/v1/competitor/market-radar?page_id=page_edu")
     assert r.status_code == 200
     body = r.json()
-    assert body["client_page"]["category"] == "Education"
-    assert body["client_page"]["keywords_used"] == ["Education"]
+    assert body["metadata"]["category"] == "Education"
+    assert body["metadata"]["keywords_used"] == ["Education"]
     assert body["competitors"] == []
 
 
@@ -56,13 +56,14 @@ def test_market_radar_returns_competitors(client):
     r = client.get("/api/v1/competitor/market-radar?page_id=page_edu")
     assert r.status_code == 200
     body = r.json()
-    # Since competitor has no specific ads in the mock, it gets filtered out
-    # But metadata should exist
+    # Response should contain competitors and metadata per spec
     assert "metadata" in body
-    assert "market_summary" in body
-    assert "top_countries" in body["market_summary"]
-    assert "top_platforms" in body["market_summary"]
-    assert "top_words" in body["market_summary"]
+    assert "competitors" in body
+    # Metadata should have required fields per spec section 3.3
+    assert "total_ads_analyzed" in body["metadata"]
+    assert "total_competitors_found" in body["metadata"]
+    assert "competitors_after_ml_filter" in body["metadata"]
+    assert "ml_threshold" in body["metadata"]
 
 
 @respx.mock
@@ -103,7 +104,7 @@ def test_market_radar_unknown_category_uses_page_name(client):
     )
     r = client.get("/api/v1/competitor/market-radar?page_id=page_xyz")
     body = r.json()
-    assert body["client_page"]["keywords_used"] == ["Bodega Estudio"]
+    assert body["metadata"]["keywords_used"] == ["Bodega Estudio"]
 
 
 @respx.mock
