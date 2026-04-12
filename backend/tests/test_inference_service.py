@@ -32,7 +32,7 @@ def test_infer_province_from_ad_copy():
             "ad_creative_link_descriptions": ["Disponible desde Pichincha"]
         }]
     )
-    assert result == ("Pichincha", 0.5, "ad_copy")
+    assert result == ("Pichincha", 0.5, "ad_copy_province")
 
 
 def test_infer_province_fallback():

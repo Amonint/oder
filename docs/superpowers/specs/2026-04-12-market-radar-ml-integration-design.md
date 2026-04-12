@@ -1,4 +1,5 @@
 # Market Radar ML Integration Design
+
 **Date:** 2026-04-12  
 **Status:** Design  
 **Objective:** Integrate CompetitorClassifier into `/market-radar` endpoint for automatic competitor relevance filtering across all business categories.
@@ -70,6 +71,7 @@ def get_keywords_for_category(self, category: str) -> list[str]:
 ## 3. Endpoint Flow: `/market-radar`
 
 ### 3.1 Request
+
 ```
 GET /market-radar?page_id={page_id}&country=EC
 ```
@@ -122,6 +124,7 @@ Step 7: Return filtered results
 ### 3.3 Response Changes
 
 **Before (current):**
+
 ```json
 {
   "competitors": [
@@ -133,6 +136,7 @@ Step 7: Return filtered results
 ```
 
 **After (with ML):**
+
 ```json
 {
   "competitors": [
@@ -157,17 +161,20 @@ Step 7: Return filtered results
 ### 4.1 `CompetitorClassifier.py`
 
 **Add:**
+
 - Class constant: `CATEGORY_KEYWORDS` (dict)
 - Class constant: `GENERIC_KEYWORDS` (list)
 - Method: `get_keywords_for_category(category: str) -> list[str]`
 
 **Modify:**
+
 - Constructor to accept keywords from caller
 - (No other changes needed)
 
 ### 4.2 `competitor.py` - `/market-radar` endpoint
 
 **Changes:**
+
 1. Import `CATEGORY_KEYWORDS` from classifier
 2. When getting page data, extract category
 3. Get keywords using `get_keywords_for_category()`
@@ -177,6 +184,7 @@ Step 7: Return filtered results
 7. Add metadata to response
 
 **Code outline:**
+
 ```python
 @router.get("/market-radar")
 async def get_market_radar(page_id: str, client: MetaGraphClient = Depends(...)) -> dict:
@@ -255,13 +263,15 @@ Frontend sees: Tyler Foster, AcademiaCortex (clean, relevant)
 
 ## 6. Error Handling
 
-| Scenario | Handling |
-|----------|----------|
-| No category on page | Use `GENERIC_KEYWORDS` (safe fallback) |
-| Unknown category | Use `GENERIC_KEYWORDS` |
-| Meta API fails | Return error (existing behavior) |
-| No competitors found | Empty list (existing behavior) |
-| All competitors filtered out | Empty list + metadata shows why |
+
+| Scenario                     | Handling                               |
+| ---------------------------- | -------------------------------------- |
+| No category on page          | Use `GENERIC_KEYWORDS` (safe fallback) |
+| Unknown category             | Use `GENERIC_KEYWORDS`                 |
+| Meta API fails               | Return error (existing behavior)       |
+| No competitors found         | Empty list (existing behavior)         |
+| All competitors filtered out | Empty list + metadata shows why        |
+
 
 ---
 
@@ -279,11 +289,13 @@ Frontend sees: Tyler Foster, AcademiaCortex (clean, relevant)
 ## 8. Testing Strategy
 
 ### Unit Tests
+
 - `test_get_keywords_for_category()` - Verify keyword selection
 - `test_classifier_with_category()` - Verify scoring with category keywords
 - `test_market_radar_filters_irrelevant()` - Verify endpoint filters DramaBox, etc.
 
 ### Integration Tests
+
 - End-to-end: Psicólogo page → returns only psicólogos
 - Unknown category: Falls back to generic keywords
 - Different categories: Dentista, Restaurante, etc.

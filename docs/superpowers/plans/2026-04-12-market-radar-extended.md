@@ -16,10 +16,12 @@ Backend exposes `/market-radar-extended` endpoint that detects province (Meta lo
 ### Backend Files
 
 **New:**
+
 - `backend/src/oderbiz_analytics/services/inference_service.py` — Province inference logic
 - `backend/src/oderbiz_analytics/models/competitor.py` — Pydantic models for responses
 
 **Modified:**
+
 - `backend/src/oderbiz_analytics/api/routes/competitor.py` — Add `/market-radar-extended` endpoint
 - `backend/src/oderbiz_analytics/adapters/meta/client.py` — Add `get_page_location()` method
 - `backend/src/oderbiz_analytics/utils/db.py` — DuckDB table setup functions
@@ -27,6 +29,7 @@ Backend exposes `/market-radar-extended` endpoint that detects province (Meta lo
 ### Frontend Files
 
 **New:**
+
 - `frontend/src/hooks/useMarketRadarExtended.ts` — React Query hook
 - `frontend/src/components/market-radar/TopAdvertisersSection.tsx` — Top 5 ranking table
 - `frontend/src/components/market-radar/CompetitorCard.tsx` — Card with metadata
@@ -34,6 +37,7 @@ Backend exposes `/market-radar-extended` endpoint that detects province (Meta lo
 - `frontend/src/components/market-radar/AdModal.tsx` — Full ad details modal
 
 **Modified:**
+
 - `frontend/src/components/MarketRadarPanel.tsx` — Add two sections + new components
 
 ---
@@ -43,9 +47,9 @@ Backend exposes `/market-radar-extended` endpoint that detects province (Meta lo
 ### Task 1: DuckDB Schema — Create Tables
 
 **Files:**
-- Create: `backend/src/oderbiz_analytics/utils/db.py` (new or modify if exists)
 
-- [ ] **Step 1: Write schema setup function**
+- Create: `backend/src/oderbiz_analytics/utils/db.py` (new or modify if exists)
+- **Step 1: Write schema setup function**
 
 Open `backend/src/oderbiz_analytics/utils/db.py` and add:
 
@@ -100,7 +104,7 @@ def init_competitors_tables(db_path: str):
     conn.close()
 ```
 
-- [ ] **Step 2: Test by running init function**
+- **Step 2: Test by running init function**
 
 Add to `backend/src/oderbiz_analytics/main.py` startup:
 
@@ -112,9 +116,10 @@ async def startup():
     init_competitors_tables(os.getenv("DUCKDB_PATH"))
 ```
 
-- [ ] **Step 3: Verify tables exist**
+- **Step 3: Verify tables exist**
 
 Run:
+
 ```bash
 cd backend
 python -c "
@@ -126,7 +131,7 @@ print(conn.execute('SELECT * FROM information_schema.tables WHERE table_name LIK
 
 Expected: Two rows (competitors, competitor_ads)
 
-- [ ] **Step 4: Commit**
+- **Step 4: Commit**
 
 ```bash
 git add backend/src/oderbiz_analytics/utils/db.py backend/src/oderbiz_analytics/main.py
@@ -138,9 +143,9 @@ git commit -m "feat: add DuckDB schema for competitors and ads"
 ### Task 2: Province Inference Service
 
 **Files:**
-- Create: `backend/src/oderbiz_analytics/services/inference_service.py`
 
-- [ ] **Step 1: Create inference service with heuristics**
+- Create: `backend/src/oderbiz_analytics/services/inference_service.py`
+- **Step 1: Create inference service with heuristics**
 
 ```python
 from typing import Optional, Tuple
@@ -215,7 +220,7 @@ class ProvinceInferenceService:
         return None, 0.0, "unknown"
 ```
 
-- [ ] **Step 2: Test inference with mock data**
+- **Step 2: Test inference with mock data**
 
 Create `backend/tests/test_inference_service.py`:
 
@@ -263,7 +268,7 @@ def test_infer_province_fallback():
     assert result == (None, 0.0, "unknown")
 ```
 
-- [ ] **Step 3: Run tests**
+- **Step 3: Run tests**
 
 ```bash
 cd backend
@@ -272,7 +277,7 @@ python -m pytest tests/test_inference_service.py -v
 
 Expected: All 4 tests PASS
 
-- [ ] **Step 4: Commit**
+- **Step 4: Commit**
 
 ```bash
 git add backend/src/oderbiz_analytics/services/inference_service.py backend/tests/test_inference_service.py
@@ -284,9 +289,9 @@ git commit -m "feat: add ProvinceInferenceService with heuristics"
 ### Task 3: Add get_page_location to Meta Client
 
 **Files:**
-- Modify: `backend/src/oderbiz_analytics/adapters/meta/client.py`
 
-- [ ] **Step 1: Add method to MetaGraphClient**
+- Modify: `backend/src/oderbiz_analytics/adapters/meta/client.py`
+- **Step 1: Add method to MetaGraphClient**
 
 Find the `MetaGraphClient` class and add:
 
@@ -306,7 +311,7 @@ async def get_page_location(self, page_id: str) -> dict:
         return data.get("location", {})
 ```
 
-- [ ] **Step 2: Test get_page_location**
+- **Step 2: Test get_page_location**
 
 In `backend/tests/test_meta_client.py`, add:
 
@@ -329,7 +334,7 @@ async def test_get_page_location():
         assert result["city"] == "Loja"
 ```
 
-- [ ] **Step 3: Run test**
+- **Step 3: Run test**
 
 ```bash
 cd backend
@@ -338,7 +343,7 @@ python -m pytest tests/test_meta_client.py::test_get_page_location -v
 
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- **Step 4: Commit**
 
 ```bash
 git add backend/src/oderbiz_analytics/adapters/meta/client.py backend/tests/test_meta_client.py
@@ -350,9 +355,9 @@ git commit -m "feat: add get_page_location method to MetaGraphClient"
 ### Task 4: Pydantic Models for Extended Radar Response
 
 **Files:**
-- Create: `backend/src/oderbiz_analytics/models/competitor.py`
 
-- [ ] **Step 1: Define response models**
+- Create: `backend/src/oderbiz_analytics/models/competitor.py`
+- **Step 1: Define response models**
 
 ```python
 from pydantic import BaseModel
@@ -410,7 +415,7 @@ class MarketRadarExtendedResponse(BaseModel):
     metadata: MarketRadarMetadata
 ```
 
-- [ ] **Step 2: Commit**
+- **Step 2: Commit**
 
 ```bash
 git add backend/src/oderbiz_analytics/models/competitor.py
@@ -422,9 +427,9 @@ git commit -m "feat: add Pydantic models for market radar extended"
 ### Task 5: Implement /market-radar-extended Endpoint
 
 **Files:**
-- Modify: `backend/src/oderbiz_analytics/api/routes/competitor.py`
 
-- [ ] **Step 1: Add imports and helper functions**
+- Modify: `backend/src/oderbiz_analytics/api/routes/competitor.py`
+- **Step 1: Add imports and helper functions**
 
 At top of file:
 
@@ -439,7 +444,7 @@ import duckdb
 import json
 ```
 
-- [ ] **Step 2: Add endpoint**
+- **Step 2: Add endpoint**
 
 After existing `/market-radar` endpoint, add:
 
@@ -654,7 +659,7 @@ async def get_market_radar_extended(
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 ```
 
-- [ ] **Step 3: Add missing import**
+- **Step 3: Add missing import**
 
 At top of file:
 
@@ -662,7 +667,7 @@ At top of file:
 import os
 ```
 
-- [ ] **Step 4: Test endpoint with mock**
+- **Step 4: Test endpoint with mock**
 
 In `backend/tests/test_competitor_route.py`, add:
 
@@ -687,7 +692,7 @@ def test_market_radar_extended(client):
     assert "metadata" in body
 ```
 
-- [ ] **Step 5: Run test**
+- **Step 5: Run test**
 
 ```bash
 cd backend
@@ -696,7 +701,7 @@ python -m pytest tests/test_competitor_route.py::test_market_radar_extended -v
 
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- **Step 6: Commit**
 
 ```bash
 git add backend/src/oderbiz_analytics/api/routes/competitor.py
@@ -708,9 +713,9 @@ git commit -m "feat: add /market-radar-extended endpoint with full competitor an
 ### Task 6: Create useMarketRadarExtended Hook
 
 **Files:**
-- Create: `frontend/src/hooks/useMarketRadarExtended.ts`
 
-- [ ] **Step 1: Create hook**
+- Create: `frontend/src/hooks/useMarketRadarExtended.ts`
+- **Step 1: Create hook**
 
 ```typescript
 import { useQuery } from '@tanstack/react-query';
@@ -734,7 +739,7 @@ export function useMarketRadarExtended({ pageId }: UseMarketRadarExtendedOptions
 }
 ```
 
-- [ ] **Step 2: Add API function**
+- **Step 2: Add API function**
 
 In `frontend/src/api/client.ts`, add:
 
@@ -749,7 +754,7 @@ export async function fetchMarketRadarExtended(pageId: string) {
 }
 ```
 
-- [ ] **Step 3: Test hook compiles**
+- **Step 3: Test hook compiles**
 
 ```bash
 cd frontend
@@ -758,7 +763,7 @@ npm run build --no-error-on-unmatched-pattern 2>&1 | grep -i "error" | head -5
 
 Expected: No TypeScript errors
 
-- [ ] **Step 4: Commit**
+- **Step 4: Commit**
 
 ```bash
 git add frontend/src/hooks/useMarketRadarExtended.ts frontend/src/api/client.ts
@@ -770,9 +775,9 @@ git commit -m "feat: add useMarketRadarExtended hook and API function"
 ### Task 7: Create TopAdvertisersSection Component
 
 **Files:**
-- Create: `frontend/src/components/market-radar/TopAdvertisersSection.tsx`
 
-- [ ] **Step 1: Create component**
+- Create: `frontend/src/components/market-radar/TopAdvertisersSection.tsx`
+- **Step 1: Create component**
 
 ```typescript
 import React from 'react';
@@ -824,7 +829,7 @@ export function TopAdvertisersSection({ competitors, title, onSelectCompetitor }
 }
 ```
 
-- [ ] **Step 2: Commit**
+- **Step 2: Commit**
 
 ```bash
 git add frontend/src/components/market-radar/TopAdvertisersSection.tsx
@@ -836,9 +841,9 @@ git commit -m "feat: add TopAdvertisersSection component"
 ### Task 8: Create CompetitorCard Component
 
 **Files:**
-- Create: `frontend/src/components/market-radar/CompetitorCard.tsx`
 
-- [ ] **Step 1: Create component**
+- Create: `frontend/src/components/market-radar/CompetitorCard.tsx`
+- **Step 1: Create component**
 
 ```typescript
 import React, { useState } from 'react';
@@ -934,7 +939,7 @@ export function CompetitorCard({ competitor, onSelectCompetitor }: Props) {
 }
 ```
 
-- [ ] **Step 2: Commit**
+- **Step 2: Commit**
 
 ```bash
 git add frontend/src/components/market-radar/CompetitorCard.tsx
@@ -946,9 +951,9 @@ git commit -m "feat: add CompetitorCard component with expand/collapse"
 ### Task 9: Create AdPreview Component
 
 **Files:**
-- Create: `frontend/src/components/market-radar/AdPreview.tsx`
 
-- [ ] **Step 1: Create component**
+- Create: `frontend/src/components/market-radar/AdPreview.tsx`
+- **Step 1: Create component**
 
 ```typescript
 import React, { useState } from 'react';
@@ -1000,7 +1005,7 @@ export function AdPreview({ ad }: Props) {
 }
 ```
 
-- [ ] **Step 2: Commit**
+- **Step 2: Commit**
 
 ```bash
 git add frontend/src/components/market-radar/AdPreview.tsx
@@ -1012,9 +1017,9 @@ git commit -m "feat: add AdPreview component with thumbnail"
 ### Task 10: Create AdModal Component
 
 **Files:**
-- Create: `frontend/src/components/market-radar/AdModal.tsx`
 
-- [ ] **Step 1: Create component**
+- Create: `frontend/src/components/market-radar/AdModal.tsx`
+- **Step 1: Create component**
 
 ```typescript
 import React from 'react';
@@ -1142,7 +1147,7 @@ export function AdModal({ ad, isOpen, onClose }: Props) {
 }
 ```
 
-- [ ] **Step 2: Commit**
+- **Step 2: Commit**
 
 ```bash
 git add frontend/src/components/market-radar/AdModal.tsx
@@ -1154,9 +1159,9 @@ git commit -m "feat: add AdModal component with full ad details"
 ### Task 11: Modify MarketRadarPanel to Add Two Sections
 
 **Files:**
-- Modify: `frontend/src/components/MarketRadarPanel.tsx`
 
-- [ ] **Step 1: Update imports**
+- Modify: `frontend/src/components/MarketRadarPanel.tsx`
+- **Step 1: Update imports**
 
 Replace existing imports with:
 
@@ -1169,19 +1174,21 @@ import { useMarketRadarExtended } from "@/hooks/useMarketRadarExtended";
 import { TopAdvertisersSection } from "@/components/market-radar/TopAdvertisersSection";
 ```
 
-- [ ] **Step 2: Replace hook call**
+- **Step 2: Replace hook call**
 
 Replace:
+
 ```typescript
 const { data, isLoading, error } = useMarketRadar(pageId);
 ```
 
 With:
+
 ```typescript
 const { data, isLoading, error } = useMarketRadarExtended({ pageId });
 ```
 
-- [ ] **Step 3: Update JSX to show two sections**
+- **Step 3: Update JSX to show two sections**
 
 Replace the data section with:
 
@@ -1223,7 +1230,7 @@ Replace the data section with:
 )}
 ```
 
-- [ ] **Step 4: Test component renders**
+- **Step 4: Test component renders**
 
 ```bash
 cd frontend
@@ -1232,7 +1239,7 @@ npm run build 2>&1 | grep -i "error" | head -5
 
 Expected: No TypeScript errors
 
-- [ ] **Step 5: Commit**
+- **Step 5: Commit**
 
 ```bash
 git add frontend/src/components/MarketRadarPanel.tsx
