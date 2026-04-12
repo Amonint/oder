@@ -28,6 +28,30 @@ class ProvinceInferenceService:
         "cañar": "Cañar",
     }
 
+    # Major cities mapped to provinces
+    CITIES_TO_PROVINCE = {
+        "quito": "Pichincha",
+        "guayaquil": "Guayas",
+        "cuenca": "Azuay",
+        "loja": "Loja",
+        "machala": "El Oro",
+        "manta": "Manabí",
+        "ambato": "Tungurahua",
+        "latacunga": "Cotopaxi",
+        "ibarra": "Imbabura",
+        "riobamba": "Chimborazo",
+        "santo domingo": "Santo Domingo de los Tsáchilas",
+        "esmeraldas": "Esmeraldas",
+        "puyo": "Pastaza",
+        "tena": "Napo",
+        "nuevo rocafuerte": "Orellana",
+        "tulcán": "Carchi",
+        "sucúa": "Morona Santiago",
+        "zamora": "Zamora Chinchipe",
+        "santa rosa": "El Oro",
+        "puerto lópez": "Santa Elena",
+    }
+
     @staticmethod
     def infer_province(
         page_id: str,
@@ -53,16 +77,24 @@ class ProvinceInferenceService:
             if keyword in name_lower:
                 return province, 0.7, "page_name"
 
-        # Step 3: Ad copy heuristic
+        # Step 3: Ad copy heuristic - look for cities and provinces
         for ad in ads[:10]:
             copy = (
                 " ".join(ad.get("ad_creative_bodies") or []) +
                 " " +
                 " ".join(ad.get("ad_creative_link_descriptions") or [])
             ).lower()
+
+            # First try to find cities (highest precision)
+            for city, province in ProvinceInferenceService.CITIES_TO_PROVINCE.items():
+                # Look for city mentions: "en Loja", "de Loja", "Loja", etc.
+                if re.search(rf'\b{city}\b', copy):
+                    return province, 0.6, "ad_copy_city"
+
+            # Then try provinces with direct mention
             for keyword, province in ProvinceInferenceService.PROVINCES_EC.items():
                 if f"en {keyword}" in copy or f"desde {keyword}" in copy:
-                    return province, 0.5, "ad_copy"
+                    return province, 0.5, "ad_copy_province"
 
         # Step 4: Landing page (would need URL extraction)
         # For now, skip as requires additional scraping
