@@ -18,6 +18,7 @@ import {
   fetchLeadsInsights,
   fetchCreativeFatigue,
   getMetaAccessToken,
+  type AdPerformanceRow,
 } from "@/api/client";
 import DemographicsPanel from "@/components/DemographicsPanel";
 import AttributionWindowPanel from "@/components/AttributionWindowPanel";
@@ -102,6 +103,155 @@ function formatNum(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(2)}k`;
   return n.toLocaleString("es", { maximumFractionDigits: 2 });
+}
+
+interface ActionDistributionSectionProps {
+  adRows: AdPerformanceRow[];
+  availableTypes: string[];
+}
+
+function ActionDistributionSection({ adRows, availableTypes }: ActionDistributionSectionProps) {
+  const [selectedActionType, setSelectedActionType] = useState<string>(availableTypes[0] ?? "");
+
+  type AdActionRow = {
+    ad_id: string;
+    ad_name: string;
+    campaign_name: string;
+    volume: number;
+    cost: number | null;
+  };
+
+  const byAd: AdActionRow[] = adRows
+    .map((row) => {
+      const vol = (row.actions ?? [])
+        .filter((a) => String(a.action_type) === selectedActionType)
+        .reduce((s, a) => s + Number(a.value ?? 0), 0);
+      const cost = (row.cost_per_action_type ?? [])
+        .find((a) => String(a.action_type) === selectedActionType);
+      return {
+        ad_id: row.ad_id,
+        ad_name: row.ad_name,
+        campaign_name: row.campaign_name,
+        volume: vol,
+        cost: cost ? Number(cost.value) : null,
+      };
+    })
+    .filter((r) => r.volume > 0)
+    .sort((a, b) => b.volume - a.volume)
+    .slice(0, 10);
+
+  const byCampaign = Object.values(
+    byAd.reduce<Record<string, { campaign_name: string; volume: number; totalCost: number; count: number }>>(
+      (acc, row) => {
+        if (!acc[row.campaign_name]) {
+          acc[row.campaign_name] = { campaign_name: row.campaign_name, volume: 0, totalCost: 0, count: 0 };
+        }
+        const entry = acc[row.campaign_name];
+        entry.volume += row.volume;
+        if (row.cost !== null) {
+          entry.totalCost += row.cost;
+          entry.count += 1;
+        }
+        return acc;
+      },
+      {}
+    )
+  ).sort((a, b) => b.volume - a.volume);
+
+  return (
+    <div className="space-y-4 pt-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <h3 className="text-foreground font-semibold">Distribución de acciones</h3>
+        <Select value={selectedActionType} onValueChange={setSelectedActionType}>
+          <SelectTrigger className="w-[260px]">
+            <SelectValue placeholder="Tipo de acción" />
+          </SelectTrigger>
+          <SelectContent>
+            {availableTypes.map((t) => (
+              <SelectItem key={t} value={t}>
+                {labelForMetaActionType(t)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Por anuncio */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Por anuncio (top 10)</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {byAd.length === 0 ? (
+              <p className="text-muted-foreground p-4 text-sm">Sin datos para este tipo de acción.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Anuncio</TableHead>
+                      <TableHead className="text-right">Volumen</TableHead>
+                      <TableHead className="text-right">Costo / acción</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {byAd.map((row) => (
+                      <TableRow key={row.ad_id}>
+                        <TableCell>
+                          <p className="truncate text-sm font-medium max-w-[180px]">{row.ad_name}</p>
+                          <p className="text-muted-foreground text-xs">{row.campaign_name}</p>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">{row.volume.toLocaleString("es")}</TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">
+                          {row.cost !== null ? `$${row.cost.toFixed(2)}` : "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Por campaña */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Por campaña</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {byCampaign.length === 0 ? (
+              <p className="text-muted-foreground p-4 text-sm">Sin datos para este tipo de acción.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Campaña</TableHead>
+                      <TableHead className="text-right">Volumen</TableHead>
+                      <TableHead className="text-right">CPA promedio</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {byCampaign.map((row) => (
+                      <TableRow key={row.campaign_name}>
+                        <TableCell className="text-sm font-medium max-w-[200px] truncate">{row.campaign_name}</TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">{row.volume.toLocaleString("es")}</TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">
+                          {row.count > 0 ? `$${(row.totalCost / row.count).toFixed(2)}` : "—"}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
 }
 
 export default function DashboardPage() {
@@ -988,6 +1138,28 @@ export default function DashboardPage() {
                   )}
                 </CardContent>
               </Card>
+
+              {/* ── Distribución de acciones por anuncio/campaña ── */}
+              {(() => {
+                const adRows = rankingQuery.data?.data ?? [];
+                if (adRows.length === 0) return null;
+
+                // Collect all action types present in the data
+                const actionTypeCounts: Map<string, number> = new Map();
+                for (const row of adRows) {
+                  for (const a of row.actions ?? []) {
+                    const t = String(a.action_type);
+                    actionTypeCounts.set(t, (actionTypeCounts.get(t) ?? 0) + Number(a.value ?? 0));
+                  }
+                }
+                const availableTypes = Array.from(actionTypeCounts.entries())
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([t]) => t);
+
+                if (availableTypes.length === 0) return null;
+
+                return <ActionDistributionSection adRows={adRows} availableTypes={availableTypes} />;
+              })()}
             </>
           ) : null}
         </TabsContent>
