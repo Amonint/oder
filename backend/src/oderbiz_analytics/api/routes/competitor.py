@@ -158,6 +158,34 @@ _ADS_ARCHIVE_FIELDS = (
 
 _DEFAULT_COUNTRIES = ["CO", "MX", "AR", "CL", "PE", "US", "ES"]
 
+# Mapa de provincias de Ecuador a su ciudad principal (para búsquedas localizadas)
+_PROVINCE_MAIN_CITY = {
+    "Loja": "Loja",
+    "Pichincha": "Quito",
+    "Guayas": "Guayaquil",
+    "Tungurahua": "Ambato",
+    "Chimborazo": "Riobamba",
+    "Imbabura": "Ibarra",
+    "Carchi": "Tulcán",
+    "Azuay": "Cuenca",
+    "Cotopaxi": "Latacunga",
+    "Manabí": "Manta",
+    "El Oro": "Machala",
+    "Esmeraldas": "Esmeraldas",
+    "Los Ríos": "Babahoyo",
+    "Sucumbíos": "Nueva Loja",
+    "Orellana": "Francisco de Orellana",
+    "Pastaza": "Puyo",
+    "Morona Santiago": "Macas",
+    "Zamora Chinchipe": "Zamora",
+    "Santa Elena": "Santa Elena",
+    "Santo Domingo de los Tsáchilas": "Santo Domingo",
+    "Napo": "Tena",
+    "Bolívar": "Guaranda",
+    "Cañar": "Azogues",
+    "Galápagos": "Puerto Baquerizo Moreno",
+}
+
 
 class ResolveRequest(BaseModel):
     input: str
@@ -292,14 +320,40 @@ async def get_market_radar(
     primary_keyword = keywords[0]
 
     # 2. Buscar competidores solo en país especificado
-    try:
-        competitor_pages = await client.search_ads_by_terms(
+    # Si se filtra por provincia, también buscar con ciudad para resultados más locales
+    search_tasks = [
+        client.search_ads_by_terms(
             search_terms=primary_keyword,
             countries=[country],
             limit=20,
         )
+    ]
+    if province:
+        city = _PROVINCE_MAIN_CITY.get(province, province)
+        search_tasks.append(
+            client.search_ads_by_terms(
+                search_terms=f"{primary_keyword} en {city}",
+                countries=[country],
+                limit=10,
+            )
+        )
+
+    try:
+        search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
     except MetaGraphApiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    # Merge deduplicando por page_id
+    seen_page_ids: set[str] = set()
+    competitor_pages: list[dict] = []
+    for result in search_results:
+        if isinstance(result, list):
+            for p in result:
+                if p["page_id"] not in seen_page_ids:
+                    seen_page_ids.add(p["page_id"])
+                    competitor_pages.append(p)
+        elif isinstance(result, Exception):
+            logger.warning(f"Search task failed: {result}")
 
     # Excluir la propia página del cliente
     competitor_pages = [p for p in competitor_pages if p["page_id"] != page_id]
@@ -418,6 +472,7 @@ async def get_market_radar(
     # 8. Top 5 competidores
     top_competitors = competitors_filtered[:5]
 
+    province_city = _PROVINCE_MAIN_CITY.get(province, province) if province else None
     return {
         "competitors": top_competitors,  # Top 5 filtered
         "metadata": {
@@ -428,6 +483,7 @@ async def get_market_radar(
             "category": category,
             "country": country,
             "province_filter": province,
+            "province_city": province_city,
             "keywords_used": keywords,
         },
     }
