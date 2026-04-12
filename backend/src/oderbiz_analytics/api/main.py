@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from oderbiz_analytics.adapters.duckdb.client import init_db
+from oderbiz_analytics.utils.db import init_competitors_tables
 from oderbiz_analytics.api.routes.accounts import router as accounts_router
 from oderbiz_analytics.api.routes.business_portfolio import router as business_portfolio_router
 from oderbiz_analytics.api.routes.ads_ranking import router as ads_ranking_router
@@ -26,6 +27,7 @@ from oderbiz_analytics.config import get_settings
 async def lifespan(app: FastAPI):
     settings = get_settings()
     init_db(settings.duckdb_path)
+    init_competitors_tables(settings.duckdb_path)
     yield
 
 
