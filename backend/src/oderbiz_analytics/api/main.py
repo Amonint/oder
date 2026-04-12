@@ -20,6 +20,7 @@ from oderbiz_analytics.api.routes.pages import router as pages_router
 from oderbiz_analytics.api.routes.targeting import router as targeting_router
 from oderbiz_analytics.api.routes.ad_labels import router as ad_labels_router
 from oderbiz_analytics.api.routes.competitor import router as competitor_router
+from oderbiz_analytics.api.routes.demographics import router as demographics_router
 from oderbiz_analytics.config import get_settings
 
 
@@ -56,6 +57,7 @@ app.include_router(organic_router, prefix="/api/v1")
 app.include_router(pages_router, prefix="/api/v1")
 app.include_router(ad_labels_router, prefix="/api/v1")
 app.include_router(competitor_router, prefix="/api/v1")
+app.include_router(demographics_router, prefix="/api/v1")
 
 
 @app.get("/health")
