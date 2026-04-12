@@ -817,17 +817,16 @@ export default function DashboardPage() {
                 const costPerReplied = replies > 0 ? spend / replies : null;
 
                 const costs = [
-                  { label: "CPA promedio", value: cpaAvg, tip: "Gasto ÷ total de resultados (excluyendo interacciones triviales). Derivado.", available: cpaAvg !== null },
-                  { label: "Costo por resultado", value: costPerResult, tip: "Primer cost_per_action_type devuelto por Meta para el objetivo principal. Nativo.", available: costPerResult !== null },
-                  { label: "Costo / conv. iniciada", value: costPerConvStarted, tip: "Gasto ÷ conversaciones iniciadas (onsite_conversion.messaging_conversation_started_7d). Derivado.", available: costPerConvStarted !== null },
-                  { label: "Costo / conv. respondida", value: costPerReplied, tip: "Gasto ÷ primeras respuestas (messaging_first_reply). Derivado. Puede no estar disponible en todas las cuentas.", available: costPerReplied !== null },
+                  { label: "CPA promedio", value: cpaAvg, tip: "Gasto ÷ total de resultados (excluyendo interacciones triviales). Derivado." },
+                  { label: "Costo por resultado", value: costPerResult, tip: "Primer cost_per_action_type devuelto por Meta para el objetivo principal. Nativo." },
+                  { label: "Costo / conv. iniciada", value: costPerConvStarted, tip: "Gasto ÷ conversaciones iniciadas (onsite_conversion.messaging_conversation_started_7d). Derivado." },
+                  { label: "Costo / conv. respondida", value: costPerReplied, tip: "Gasto ÷ primeras respuestas (messaging_first_reply). Derivado. Puede no estar disponible en todas las cuentas." },
                 ];
 
-                if (costs.every((c) => !c.available)) return null;
+                if (costs.every((c) => c.value === null)) return null;
 
                 return (
-                  <TooltipProvider delayDuration={300}>
-                    <Card>
+                  <Card>
                       <CardHeader className="pb-2">
                         <CardTitle className="text-base">Costos de adquisición</CardTitle>
                         <CardDescription>Comparativa de costos según etapa del embudo publicitario</CardDescription>
@@ -841,14 +840,13 @@ export default function DashboardPage() {
                                 <InfoTooltip text={c.tip} />
                               </span>
                               <span className="text-foreground text-xl font-bold tabular-nums">
-                                {c.available ? `$${(c.value as number).toFixed(2)}` : "—"}
+                                {c.value !== null ? `$${c.value.toFixed(2)}` : "—"}
                               </span>
                             </div>
                           ))}
                         </div>
                       </CardContent>
-                    </Card>
-                  </TooltipProvider>
+                  </Card>
                 );
               })()}
 
