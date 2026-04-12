@@ -23,6 +23,7 @@ from oderbiz_analytics.api.routes.competitor import router as competitor_router
 from oderbiz_analytics.api.routes.demographics import router as demographics_router
 from oderbiz_analytics.api.routes.attribution import router as attribution_router
 from oderbiz_analytics.api.routes.leads import router as leads_router
+from oderbiz_analytics.api.routes.creative_fatigue import router as creative_fatigue_router
 from oderbiz_analytics.config import get_settings
 
 
@@ -62,6 +63,7 @@ app.include_router(competitor_router, prefix="/api/v1")
 app.include_router(demographics_router, prefix="/api/v1")
 app.include_router(attribution_router, prefix="/api/v1")
 app.include_router(leads_router, prefix="/api/v1")
+app.include_router(creative_fatigue_router, prefix="/api/v1")
 
 
 @app.get("/health")
