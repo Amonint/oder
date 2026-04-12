@@ -275,9 +275,10 @@ async def get_competitor_ads(
 @router.get("/market-radar")
 async def get_market_radar(
     page_id: str,
+    country: str = "EC",
     client: MetaGraphClient = Depends(get_meta_graph_client),
 ) -> dict:
-    """Auto-descubre competidores en el mismo segmento de la página dada."""
+    """Auto-descubre competidores en el mismo segmento de la página dada en país específico."""
     # 1. Detectar categoría de la página del cliente
     try:
         page_data = await client.get_page_public_profile(page_id=page_id)
@@ -289,11 +290,11 @@ async def get_market_radar(
     keywords = _keywords_for_category(category, page_name)
     primary_keyword = keywords[0]
 
-    # 2. Buscar competidores con todos los países monitoreados
+    # 2. Buscar competidores solo en país especificado
     try:
         competitor_pages = await client.search_ads_by_terms(
             search_terms=primary_keyword,
-            countries=_MONITOR_COUNTRIES,
+            countries=[country],
             limit=20,
         )
     except MetaGraphApiError as exc:
@@ -302,32 +303,21 @@ async def get_market_radar(
     # Excluir la propia página del cliente
     competitor_pages = [p for p in competitor_pages if p["page_id"] != page_id]
 
-    # 3. En paralelo: ads por competidor + búsqueda por país
+    # 3. En paralelo: ads por competidor en el país especificado
     ads_tasks = [
         client.get_ads_archive(
             page_id=p["page_id"],
-            countries=_MONITOR_COUNTRIES,
+            countries=[country],
             fields=_RADAR_AD_FIELDS,
             limit=50,
         )
         for p in competitor_pages
     ]
-    country_tasks = [
-        client.search_ads_by_terms(
-            search_terms=primary_keyword,
-            countries=[country],
-            limit=10,
-        )
-        for country in _MONITOR_COUNTRIES
-    ]
+    country_tasks = []  # No needed for single country
 
-    all_results = await asyncio.gather(
-        *ads_tasks, *country_tasks, return_exceptions=True
+    ads_results = await asyncio.gather(
+        *ads_tasks, return_exceptions=True
     )
-
-    n_comp = len(competitor_pages)
-    ads_results = all_results[:n_comp]
-    country_results = all_results[n_comp:]
 
     # 4. Construir entrada de competidores SIN filtrado aún (para metadata)
     competitors_before_filter = []
@@ -391,11 +381,12 @@ async def get_market_radar(
     return {
         "competitors": top_competitors,  # Top 5 filtered
         "metadata": {
-            "total_ads_analyzed": sum(len(ads_results[i]) for i in range(n_comp) if isinstance(ads_results[i], list)),
+            "total_ads_analyzed": sum(len(ads_results[i]) for i in range(len(competitor_pages)) if isinstance(ads_results[i], list)),
             "total_competitors_found": len(competitors_before_filter),
             "competitors_after_ml_filter": len(competitors_filtered),
             "ml_threshold": ml_threshold,
             "category": category,
+            "country": country,
             "keywords_used": keywords,
         },
     }
