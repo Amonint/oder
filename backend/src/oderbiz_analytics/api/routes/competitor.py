@@ -39,10 +39,31 @@ _STOPWORDS = {
 }
 
 def _keywords_for_category(category: str, page_name: str) -> list[str]:
-    """Use Meta's category directly. Fallback to page name if no category."""
-    if category and category.strip():
+    """
+    Get keywords for a category.
+    - If category exists in CATEGORY_KEYWORDS, use those keywords
+    - If category is a single-word "macro" category (like Education, Business), use [category]
+    - If category is multi-word (like "Arts and crafts"), use [page_name] as fallback
+    - If no category, use page_name
+    """
+    if not category or not category.strip():
+        return [page_name]
+
+    # Check if category exists in CATEGORY_KEYWORDS
+    classifier = CompetitorClassifier()
+    keywords = classifier.get_keywords_for_category(category)
+
+    # If we found keywords in the dictionary, use them
+    if keywords != classifier.GENERIC_KEYWORDS:
+        return keywords
+
+    # If not in dictionary, heuristic:
+    # Single-word categories are likely "macro" categories from Meta (Education, Business, etc)
+    # Multi-word categories are likely specific/custom (Arts and crafts), so use page_name
+    if len(category.split()) == 1:
         return [category]
-    return [page_name]
+    else:
+        return [page_name]
 
 
 def _is_active(ad: dict) -> bool:

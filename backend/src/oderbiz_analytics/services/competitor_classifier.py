@@ -21,7 +21,27 @@ class CompetitorClassifier:
     """
     Clasificador de competidores usando análisis de contenido + reglas inteligentes.
     """
-    
+
+    # Default keywords for common business categories
+    CATEGORY_KEYWORDS = {
+        "Psicólogo": ["psicoterapia", "counseling", "salud mental", "terapia", "psicología clínica"],
+        "Dentista": ["odontología", "dental", "ortodoncia", "implante", "diente"],
+        "Restaurante": ["comida", "chef", "cocina", "receta", "menú", "gastronomía"],
+        "Abogado": ["derecho", "legal", "asesoría", "abogacía", "litigio"],
+        "Médico": ["medicina", "clínica", "consulta médica", "diagnóstico", "tratamiento"],
+        "Contador": ["contabilidad", "impuestos", "auditoría", "fiscal", "tributario"],
+        "Peluquería": ["peluquería", "corte", "cabello", "estética", "salon"],
+        "Gym": ["fitness", "entrenamiento", "ejercicio", "musculación", "crossfit"],
+        "Tienda": ["venta", "compra", "tienda", "boutique", "retail"],
+        "Consultor": ["consultoría", "asesor", "coaching", "mentoring", "estrategia"],
+    }
+
+    # Fallback keywords when category not found
+    GENERIC_KEYWORDS = [
+        "servicio", "profesional", "consulta", "experto", "asesor",
+        "especialista", "centro", "clínica", "empresa", "negocio"
+    ]
+
     def __init__(
         self,
         user_category: str = "",
@@ -104,7 +124,23 @@ class CompetitorClassifier:
     def _score_category_match(self) -> float:
         """Bonificación si la página del usuario tiene categoría."""
         return 10.0 if self.user_category else 0.0
-    
+
+    def get_keywords_for_category(self, category: str) -> list[str]:
+        """Get keywords for a category, with fallback to generic keywords."""
+        if not category:
+            return self.GENERIC_KEYWORDS
+
+        # Normalize category (lowercase, strip)
+        cat_normalized = category.lower().strip()
+
+        # Check if category exists in keywords DB
+        for key in self.CATEGORY_KEYWORDS:
+            if key.lower() == cat_normalized:
+                return self.CATEGORY_KEYWORDS[key]
+
+        # Fallback: unknown category → use generic keywords
+        return self.GENERIC_KEYWORDS
+
     def classify(
         self,
         page_name: str,
