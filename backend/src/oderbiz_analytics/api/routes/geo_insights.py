@@ -17,7 +17,37 @@ from oderbiz_analytics.services.geo_formatter import (
 
 router = APIRouter(prefix="/accounts", tags=["geo_insights"])
 
-GEO_FIELDS = "impressions,clicks,spend,reach"
+_TRIVIAL_ACTIONS = {"post_engagement", "page_engagement", "photo_view"}
+
+
+def _extract_results_and_cpa(row: dict) -> dict:
+    """Extrae resultados y CPA de actions/cost_per_action_type."""
+    actions = row.get("actions") or []
+    cost_per = row.get("cost_per_action_type") or []
+    spend = float(row.get("spend", 0) or 0)
+
+    results = 0
+    for a in actions:
+        action_type = str(a.get("action_type", ""))
+        if action_type not in _TRIVIAL_ACTIONS:
+            try:
+                results = int(float(a.get("value", 0)))
+                break
+            except (TypeError, ValueError):
+                pass
+
+    cpa: float | None = None
+    if cost_per:
+        try:
+            cpa = float(cost_per[0].get("value", 0) or 0)
+        except (TypeError, ValueError):
+            pass
+    if cpa is None and results > 0:
+        cpa = spend / results
+
+    return {"results": results, "cpa": round(cpa, 2) if cpa is not None else None}
+
+GEO_FIELDS = "impressions,clicks,spend,reach,actions,cost_per_action_type"
 
 
 @router.get("/{ad_account_id}/insights/geo")
@@ -92,8 +122,12 @@ async def get_geo_insights(
             detail="No se pudo contactar a la API de Meta.",
         ) from None
 
-    # Enriquecer cada row con nombre de región
-    enriched_rows = [enrich_geo_row(row) for row in rows]
+    # Enriquecer cada row con nombre de región y métricas de eficiencia
+    enriched_rows = []
+    for row in rows:
+        enriched = enrich_geo_row(row)
+        enriched.update(_extract_results_and_cpa(row))
+        enriched_rows.append(enriched)
 
     # Metadata de cobertura completa y alcance
     metadata = get_geo_metadata(
