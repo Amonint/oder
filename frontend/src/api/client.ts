@@ -956,3 +956,42 @@ export async function fetchMarketRadar(pageId: string): Promise<MarketRadarRespo
   }
   return res.json();
 }
+
+// ─── Market Radar Extended ────────────────────────────────────────────────────
+
+export interface MarketRadarExtendedCompetitor {
+  rank: number;
+  page_id: string;
+  name: string;
+  province: string | null;
+  province_confidence: number;
+  active_ads: number;
+  total_ads: number;
+  platforms: string[];
+  languages: string[];
+  ads: CompetitorAdItem[];
+}
+
+export interface MarketRadarExtendedResponse {
+  client_page: {
+    page_id: string;
+    name: string;
+    category: string;
+  };
+  top_advertisers: MarketRadarExtendedCompetitor[];
+  emerging_advertisers: MarketRadarExtendedCompetitor[];
+  declining_advertisers: MarketRadarExtendedCompetitor[];
+}
+
+export async function fetchMarketRadarExtended(pageId: string): Promise<MarketRadarExtendedResponse> {
+  const token = getMetaAccessToken();
+  const res = await fetch(
+    `${base}/api/v1/competitor/market-radar-extended?page_id=${encodeURIComponent(pageId)}`,
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail ?? "Error al cargar Radar de Mercado Extendido");
+  }
+  return res.json();
+}
