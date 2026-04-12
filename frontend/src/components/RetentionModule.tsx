@@ -119,12 +119,13 @@ export default function RetentionModule({ data, isLoading }: RetentionModuleProp
                   label={{ value: "CPA ($)", angle: 90, position: "insideRight", offset: 4, style: { fontSize: 11 } }}
                 />
                 <Tooltip
-                  formatter={(value: number, name: string) => {
-                    if (name === "Gasto") return [`$${value.toFixed(2)}`, name];
-                    if (name === "CPA") return [`$${value.toFixed(2)}`, name];
-                    return [value, name];
+                  formatter={(value, name) => {
+                    const v = Number(value);
+                    if (name === "Gasto") return [`$${v.toFixed(2)}`, name as string];
+                    if (name === "CPA") return [`$${v.toFixed(2)}`, name as string];
+                    return [v, name as string];
                   }}
-                  labelFormatter={(label: string) => `Fecha: ${label}`}
+                  labelFormatter={(label) => `Fecha: ${String(label)}`}
                 />
                 <Legend />
                 <Bar

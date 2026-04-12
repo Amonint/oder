@@ -57,7 +57,7 @@ export default function AdLabelsSection({
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                 <XAxis type="number" tick={{ fontSize: 11 }} />
                 <YAxis type="category" dataKey="label" width={130} tick={{ fontSize: 11 }} />
-                <Tooltip formatter={(v: number) => [`${v.toFixed(2)}`, yLabel]} />
+                <Tooltip formatter={(value) => [`${Number(value).toFixed(2)}`, yLabel]} />
                 <Bar dataKey="value" fill="#8b5cf6" radius={[0, 3, 3, 0]} />
               </BarChart>
             </ResponsiveContainer>

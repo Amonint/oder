@@ -37,7 +37,7 @@ export default function PlacementChart({ data, isLoading }: PlacementChartProps)
             <BarChart data={rows} layout="vertical" margin={{ left: 16, right: 32 }}>
               <XAxis type="number" tickFormatter={(v) => `$${v.toFixed(0)}`} tick={{ fontSize: 12 }} />
               <YAxis type="category" dataKey="label" width={160} tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(v: number) => [`$${v.toFixed(2)}`, "Gasto"]} />
+              <Tooltip formatter={(value) => [`$${Number(value).toFixed(2)}`, "Gasto"]} />
               <Bar dataKey="spend" radius={[0, 4, 4, 0]}>
                 {rows.map((_, i) => (
                   <Cell key={i} fill={COLORS[i % COLORS.length]} />

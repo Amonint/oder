@@ -21,7 +21,7 @@ export default function GeoMap({ data, metadata, metric = "impressions" }: GeoMa
   const chartData = data
     .map((row) => ({
       region: row.region_name || row.region,
-      value: metric === "spend" ? parseFloat(row.spend) : Number((row as Record<string, unknown>)[metric]),
+      value: metric === "spend" ? parseFloat(row.spend) : Number((row as unknown as Record<string, unknown>)[metric]),
     }))
     .sort((a, b) => b.value - a.value);
 

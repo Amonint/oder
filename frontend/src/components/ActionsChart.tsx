@@ -51,7 +51,7 @@ export default function ActionsChart({ data, isLoading }: ActionsChartProps) {
             <BarChart data={rows} margin={{ left: 8, right: 8 }}>
               <XAxis dataKey="label" tick={{ fontSize: 12 }} />
               <YAxis tick={{ fontSize: 12 }} />
-              <Tooltip formatter={(v: number) => [v.toFixed(0), "Acciones"]} />
+              <Tooltip formatter={(value) => [Number(value).toFixed(0), "Acciones"]} />
               <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                 {rows.map((r, i) => (
                   <Cell key={i} fill={CATEGORY_COLORS[r.category] ?? "#6b7280"} />

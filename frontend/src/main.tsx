@@ -19,6 +19,10 @@ createRoot(document.getElementById("root")!).render(
           <Route path="/" element={<TokenPage />} />
           <Route path="/accounts" element={<AccountsPage />} />
           <Route
+            path="/accounts/:accountId/dashboard"
+            element={<DashboardPage />}
+          />
+          <Route
             path="/accounts/:accountId/pages"
             element={<PagesPage />}
           />

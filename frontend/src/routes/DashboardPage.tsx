@@ -322,7 +322,7 @@ export default function DashboardPage() {
     const actions = data?.actions ?? [];
     return groupActionsByCategory(
       actions.map((a) => ({
-        action_type: a.action_type,
+        action_type: String(a.action_type),
         value: Number(a.value ?? 0),
       })),
     ).map((r) => ({ label: r.label, value: r.value }));

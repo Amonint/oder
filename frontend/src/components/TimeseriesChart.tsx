@@ -96,9 +96,10 @@ export default function TimeseriesChart({ data, isLoading }: TimeseriesChartProp
                 tickFormatter={(v: number) => `${v.toFixed(1)}%`}
               />
               <Tooltip
-                formatter={(v: number, name: string) => {
+                formatter={(value, name) => {
+                  const v = Number(value);
                   const s = SERIES.find((x) => x.label === name);
-                  return [s ? s.format(v) : String(v), name];
+                  return [s ? s.format(v) : String(v), name as string];
                 }}
               />
               <Legend />
