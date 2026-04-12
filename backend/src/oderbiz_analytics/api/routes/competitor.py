@@ -550,21 +550,39 @@ async def get_market_radar_extended(
 @router.get("/market-radar-temporal")
 async def get_market_radar_temporal(
     page_id: str,
-    search_term: str = "psicólogo",
+    search_term: str | None = None,
     country: str = "EC",
     client: MetaGraphClient = Depends(get_meta_graph_client),
 ) -> dict:
     """
-    Análisis temporal de competencia: cuándo y cómo frecuentemente pautan los competidores.
+    Análisis temporal de competencia con FILTRADO por relevancia.
+    
+    Si no proporciona search_term, usa la categoría de su página.
+    Filtra competidores irrelevantes (ej: DramaBox, películas).
     
     Devuelve:
-    - Competidores encontrados
-    - Frecuencia de pauta (mensual, anual)
-    - Patrones estacionales
-    - Días preferidos de pauta
+    - Competidores encontrados (solo relevantes)
+    - Frecuencia de pauta temporal
+    - Patrones por día de la semana
     """
     try:
-        # 1. Buscar anuncios por término
+        # 1. Si no hay search_term, intentar obtener categoría de la página del usuario
+        if not search_term:
+            try:
+                page_data = await client.get_page_public_profile(page_id=page_id)
+                category = page_data.get("category", "")
+                if category:
+                    search_term = category
+                    logger.info(f"Usando categoría de página: {category}")
+            except Exception as e:
+                logger.warning(f"No se pudo obtener categoría de página: {e}")
+                # Si falla, avisar al usuario
+                raise HTTPException(
+                    status_code=400,
+                    detail="Proporcione search_term o asegúrese de que la página tiene categoría configurada",
+                )
+        
+        # 2. Buscar anuncios por término
         ads = await client.search_ads_with_history(
             search_terms=search_term,
             countries=[country],
@@ -577,14 +595,48 @@ async def get_market_radar_temporal(
                 detail=f"No se encontraron anuncios para '{search_term}' en {country}",
             )
         
-        # 2. Agrupar por competidor y analizar patrones
+        # 3. Palabras clave irrelevantes (ruido a filtrar)
+        irrelevant_keywords = {
+            "drama", "película", "series", "film", "movie", "show", "tvshow",
+            "streaming", "netflix", "youtube", "video", "contenido",
+            "juego", "game", "gaming", "casino", "apuesta", "bet",
+            "tienda", "compra", "venta", "ecommerce", "shop",
+        }
+        
+        def is_irrelevant(page_name: str, ad_bodies: list) -> bool:
+            """Determina si una página es irrelevante para el análisis."""
+            page_name_lower = (page_name or "").lower()
+            
+            # Filtrar por nombre de página
+            for keyword in irrelevant_keywords:
+                if keyword in page_name_lower:
+                    return True
+            
+            # Filtrar por contenido de anuncios
+            for body in ad_bodies:
+                if not body:
+                    continue
+                body_lower = body.lower()
+                for keyword in irrelevant_keywords:
+                    if keyword in body_lower:
+                        return True
+            
+            return False
+        
+        # 4. Agrupar por competidor y analizar patrones (CON FILTRADO)
         competitors_temporal = {}
+        filtered_count = 0
         
         for ad in ads:
             page_id_comp = ad.get("page_id", "")
             page_name = ad.get("page_name", "Sin nombre")
             start_date = ad.get("ad_delivery_start_time", "")
-            end_date = ad.get("ad_delivery_stop_time", "")
+            ad_bodies = ad.get("ad_creative_bodies", [])
+            
+            # Filtrar por relevancia
+            if is_irrelevant(page_name, ad_bodies):
+                filtered_count += 1
+                continue
             
             if not page_id_comp or not start_date:
                 continue
@@ -605,27 +657,31 @@ async def get_market_radar_temporal(
             # Análisis por mes
             if len(start_date) >= 7:
                 month_key = start_date[:7]  # YYYY-MM
-                competitors_temporal[page_id_comp]["months"][month_key] = \
-                    competitors_temporal[page_id_comp]["months"].get(month_key, 0) + 1
+                competitors_temporal[page_id_comp]["months"][month_key] =                     competitors_temporal[page_id_comp]["months"].get(month_key, 0) + 1
             
             # Análisis por día de semana
             try:
                 from datetime import datetime as dt
                 date_obj = dt.strptime(start_date, "%Y-%m-%d")
                 day_name = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"][date_obj.weekday()]
-                competitors_temporal[page_id_comp]["days_of_week"][day_name] = \
-                    competitors_temporal[page_id_comp]["days_of_week"].get(day_name, 0) + 1
+                competitors_temporal[page_id_comp]["days_of_week"][day_name] =                     competitors_temporal[page_id_comp]["days_of_week"].get(day_name, 0) + 1
             except Exception:
                 pass
         
-        # 3. Ordenar por frecuencia de pauta
+        if not competitors_temporal:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontraron competidores relevantes para '{search_term}'. Todos los resultados fueron filtrados.",
+            )
+        
+        # 5. Ordenar por frecuencia de pauta
         competitors_list = sorted(
             competitors_temporal.values(),
             key=lambda x: x["total_ads"],
             reverse=True,
         )
         
-        # 4. Top 5 competidores
+        # 6. Top 5 competidores
         top_competitors = competitors_list[:5]
         
         # Limpiar datos para respuesta
@@ -638,12 +694,16 @@ async def get_market_radar_temporal(
             "search_term": search_term,
             "country": country,
             "total_competitors_found": len(competitors_temporal),
+            "total_ads_analyzed": len(ads),
+            "total_ads_filtered": filtered_count,
             "top_competitors": top_competitors,
             "summary": {
-                "total_unique_ads": len(ads),
-                "analysis_period": f"Basado en los últimos 100 anuncios encontrados",
+                "analysis_period": f"Basado en {len(ads)} anuncios (filtrados: {filtered_count})",
+                "relevance_filter": "Excluye: películas, series, gaming, ecommerce",
             },
         }
         
+    except HTTPException:
+        raise
     except MetaGraphApiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
