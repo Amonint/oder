@@ -23,6 +23,7 @@ export default function LeadsPanel({ data, isLoading, isError, errorMessage }: L
   const summary = data?.summary;
 
   return (
+    <TooltipProvider delayDuration={300}>
     <section className="space-y-4">
       <div>
         <h2 className="text-foreground text-lg font-semibold">Lead Ads</h2>
@@ -90,8 +91,7 @@ export default function LeadsPanel({ data, isLoading, isError, errorMessage }: L
           ) : rows.length === 0 ? (
             <p className="text-muted-foreground p-4 text-sm">Sin leads en este periodo.</p>
           ) : (
-            <TooltipProvider delayDuration={300}>
-              <div className="overflow-x-auto">
+            <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -121,10 +121,10 @@ export default function LeadsPanel({ data, isLoading, isError, errorMessage }: L
                   </TableBody>
                 </Table>
               </div>
-            </TooltipProvider>
           )}
         </CardContent>
       </Card>
     </section>
+    </TooltipProvider>
   );
 }

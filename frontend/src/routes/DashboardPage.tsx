@@ -938,6 +938,7 @@ export default function DashboardPage() {
               </TooltipProvider>
 
               {/* ── Card comparativa: costos de adquisición ── */}
+              <TooltipProvider delayDuration={300}>
               {(() => {
                 const spend = Number(data.summary.spend ?? 0);
                 if (spend === 0) return null;
@@ -1001,6 +1002,7 @@ export default function DashboardPage() {
                   </Card>
                 );
               })()}
+              </TooltipProvider>
 
               <p className="text-muted-foreground text-sm">
                 {data.scope === "campaign" && data.campaign_id ? (
