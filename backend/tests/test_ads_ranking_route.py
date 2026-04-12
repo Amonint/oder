@@ -28,6 +28,19 @@ def test_ads_performance_returns_200(client):
 
 
 @respx.mock
+def test_ads_performance_accepts_campaign_filter(client):
+    respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
+        return_value=httpx.Response(200, json={"data": [{"ad_id": "1", "spend": "10"}]})
+    )
+    r = client.get(
+        "/api/v1/accounts/act_123/ads/performance",
+        params={"date_preset": "last_7d", "campaign_id": "555555"},
+        headers={"Authorization": "Bearer test_tok"},
+    )
+    assert r.status_code == 200
+
+
+@respx.mock
 def test_ads_performance_uses_time_range(client):
     respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
         return_value=httpx.Response(200, json={"data": [{"ad_id": "1", "spend": "5"}]})

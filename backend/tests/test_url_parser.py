@@ -49,3 +49,17 @@ def test_facebook_alias_with_query_params():
     result = parse_competitor_input("https://www.facebook.com/brand?ref=ts")
     assert result.strategy == ResolveStrategy.FACEBOOK_ALIAS
     assert result.value == "brand"
+
+
+def test_ads_library_url_extracts_page_id():
+    url = "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&view_all_page_id=56050620920"
+    result = parse_competitor_input(url)
+    assert result.strategy == ResolveStrategy.FACEBOOK_ID
+    assert result.value == "56050620920"
+
+
+def test_ads_library_url_full_params():
+    url = "https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&is_targeted_country=false&media_type=all&search_type=page&sort_data[direction]=desc&sort_data[mode]=total_impressions&view_all_page_id=56050620920"
+    result = parse_competitor_input(url)
+    assert result.strategy == ResolveStrategy.FACEBOOK_ID
+    assert result.value == "56050620920"

@@ -58,10 +58,11 @@ def test_get_competitor_ads_empty_returns_empty_list(client):
 
 @respx.mock
 def test_resolve_facebook_url(client):
-    respx.get("https://graph.facebook.com/v25.0/FarmaciasAmericanas").mock(
+    # FACEBOOK_ALIAS → ads_archive search_terms
+    respx.get("https://graph.facebook.com/v25.0/ads_archive").mock(
         return_value=httpx.Response(
             200,
-            json={"id": "111222333", "name": "Farmacias Americanas Ecuador", "fan_count": 45000, "category": "Pharmacy"},
+            json={"data": [{"page_id": "111222333", "page_name": "Farmacias Americanas Ecuador"}]},
         )
     )
     r = client.post("/api/v1/competitor/resolve", json={"input": "https://www.facebook.com/FarmaciasAmericanas"})
@@ -75,10 +76,11 @@ def test_resolve_facebook_url(client):
 
 @respx.mock
 def test_resolve_facebook_profile_id_url(client):
-    respx.get("https://graph.facebook.com/v25.0/999888777").mock(
+    # FACEBOOK_ID → ads_archive search_page_ids
+    respx.get("https://graph.facebook.com/v25.0/ads_archive").mock(
         return_value=httpx.Response(
             200,
-            json={"id": "999888777", "name": "Test Page", "fan_count": 1000, "category": "Retail"},
+            json={"data": [{"page_id": "999888777", "page_name": "Test Page"}]},
         )
     )
     r = client.post("/api/v1/competitor/resolve", json={"input": "https://www.facebook.com/profile.php?id=999888777"})
@@ -152,11 +154,9 @@ def test_resolve_free_text_returns_suggestions(client):
 
 @respx.mock
 def test_resolve_facebook_not_found(client):
-    respx.get("https://graph.facebook.com/v25.0/nonexistent").mock(
-        return_value=httpx.Response(
-            404,
-            json={"error": {"message": "Page not found"}},
-        )
+    # alias sin anuncios → 404
+    respx.get("https://graph.facebook.com/v25.0/ads_archive").mock(
+        return_value=httpx.Response(200, json={"data": []})
     )
     r = client.post("/api/v1/competitor/resolve", json={"input": "https://www.facebook.com/nonexistent"})
     assert r.status_code == 404

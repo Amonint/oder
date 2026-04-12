@@ -154,18 +154,45 @@ async def resolve_competitor(
     """Resuelve URL de Facebook/Instagram o texto libre a un perfil competidor."""
     parsed = parse_competitor_input(body.input)
 
-    if parsed.strategy in (ResolveStrategy.FACEBOOK_ALIAS, ResolveStrategy.FACEBOOK_ID):
-        try:
-            page = await client.lookup_page(alias_or_id=parsed.value)
-        except MetaGraphApiError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    if parsed.strategy == ResolveStrategy.FACEBOOK_ID:
+        # Ya tenemos el ID — buscamos el nombre en ads_archive
+        page = await client.search_ads_by_page_id(page_id=parsed.value)
+        name = page["name"] if page else parsed.value
         return {
             "platform": "facebook",
-            "page_id": page["id"],
-            "name": page.get("name", ""),
-            "fan_count": page.get("fan_count"),
-            "category": page.get("category"),
+            "page_id": parsed.value,
+            "name": name,
             "is_approximate": False,
+        }
+
+    if parsed.strategy == ResolveStrategy.FACEBOOK_ALIAS:
+        # GET /{alias} requiere app review — usamos ads_archive
+        try:
+            pages = await client.search_ads_by_terms(
+                search_terms=parsed.value,
+                countries=_DEFAULT_COUNTRIES,
+                limit=5,
+            )
+        except MetaGraphApiError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        if not pages:
+            raise HTTPException(
+                status_code=404,
+                detail="No se encontraron anuncios para esa página. Verifica que tenga pauta activa o pasada en Ad Library.",
+            )
+        if len(pages) == 1:
+            return {
+                "platform": "facebook",
+                "page_id": pages[0]["page_id"],
+                "name": pages[0]["name"],
+                "is_approximate": False,
+            }
+        return {
+            "platform": "facebook",
+            "results": [
+                {"page_id": p["page_id"], "name": p["name"], "is_approximate": True}
+                for p in pages
+            ],
         }
 
     if parsed.strategy == ResolveStrategy.INSTAGRAM_USERNAME:

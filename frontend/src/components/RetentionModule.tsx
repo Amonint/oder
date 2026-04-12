@@ -11,6 +11,8 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import InfoTooltip from "@/components/InfoTooltip";
 import type { ConversionTimeseriesRow } from "@/api/client";
 
 interface RetentionModuleProps {
@@ -18,10 +20,13 @@ interface RetentionModuleProps {
   isLoading: boolean;
 }
 
-function KpiTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function KpiTile({ label, value, sub, tooltip }: { label: string; value: string; sub?: string; tooltip: string }) {
   return (
     <div className="bg-muted/40 rounded-xl p-4 space-y-1">
-      <p className="text-muted-foreground text-xs">{label}</p>
+      <p className="text-muted-foreground text-xs flex items-center">
+        {label}
+        <InfoTooltip text={tooltip} />
+      </p>
       <p className="text-foreground text-xl font-semibold">{value}</p>
       {sub && <p className="text-muted-foreground text-xs">{sub}</p>}
     </div>
@@ -34,9 +39,9 @@ export default function RetentionModule({ data, isLoading }: RetentionModuleProp
   // Totales para KPI cards
   const totalSpend = rows.reduce((s, r) => s + r.spend, 0);
   const totalConversions = rows.reduce((s, r) => s + r.conversions, 0);
-  const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
+  const totalReplied = rows.reduce((s, r) => s + (r.replied ?? 0), 0);
   const avgCpa = totalConversions > 0 ? totalSpend / totalConversions : 0;
-  const roas = totalSpend > 0 ? totalRevenue / totalSpend : 0;
+  const replyRate = totalConversions > 0 ? (totalReplied / totalConversions) * 100 : 0;
 
   const fmt = (n: number) => `$${n.toFixed(2)}`;
 
@@ -48,12 +53,34 @@ export default function RetentionModule({ data, isLoading }: RetentionModuleProp
           {[0,1,2,3].map((i) => <Skeleton key={i} className="h-20 w-full rounded-xl" />)}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <KpiTile label="CPA Promedio" value={fmt(avgCpa)} sub="Costo por resultado" />
-          <KpiTile label="ROAS" value={roas > 0 ? `${roas.toFixed(2)}x` : "—"} sub="Retorno sobre inversión" />
-          <KpiTile label="Conversiones" value={totalConversions.toFixed(0)} sub="Leads / Compras / Mensajes" />
-          <KpiTile label="Valor generado" value={totalRevenue > 0 ? fmt(totalRevenue) : "—"} sub="Revenue total" />
-        </div>
+        <TooltipProvider delayDuration={300}>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <KpiTile
+              label="CPA Promedio"
+              value={fmt(avgCpa)}
+              sub="Costo por resultado"
+              tooltip="Costo promedio por conversión (lead, mensaje iniciado o compra). Se calcula: Gasto total ÷ Total de conversiones del período."
+            />
+            <KpiTile
+              label="Tasa de Respuesta"
+              value={replyRate > 0 ? `${replyRate.toFixed(1)}%` : "—"}
+              sub="Conversaciones con respuesta"
+              tooltip="Porcentaje de conversaciones donde el prospecto respondió activamente. Se calcula: Conversaciones con respuesta ÷ Conversaciones iniciadas × 100. Mide la calidad del lead."
+            />
+            <KpiTile
+              label="Conversiones"
+              value={totalConversions.toFixed(0)}
+              sub="Leads / Mensajes iniciados"
+              tooltip="Total de conversiones del período: leads generados, mensajes de WhatsApp o Messenger iniciados, o compras. Fuente: campo actions de la API, filtrado por tipos de conversión configurados."
+            />
+            <KpiTile
+              label="Primeras Respuestas"
+              value={totalReplied > 0 ? totalReplied.toFixed(0) : "—"}
+              sub="Personas que respondieron"
+              tooltip="Número de conversaciones donde el prospecto respondió al mensaje. Indica interés real del lead. Fuente: acción onsite_conversion.messaging_conversation_replied_7d de Meta."
+            />
+          </div>
+        </TooltipProvider>
       )}
 
       <Card>

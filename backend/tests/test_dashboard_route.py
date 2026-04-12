@@ -111,6 +111,45 @@ def test_dashboard_normalizes_numeric_ad_account_id(client):
 
 
 @respx.mock
+def test_dashboard_with_campaign_filter_uses_campaign_level(client):
+    route = respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "impressions": "500",
+                        "clicks": "20",
+                        "spend": "5.00",
+                        "reach": "400",
+                        "frequency": "1.1",
+                        "cpm": "10",
+                        "cpp": "12",
+                        "ctr": "4",
+                        "actions": [],
+                        "cost_per_action_type": [],
+                        "date_start": "2026-03-01",
+                        "date_stop": "2026-03-31",
+                    }
+                ]
+            },
+        )
+    )
+
+    r = client.get(
+        "/api/v1/accounts/act_123/dashboard",
+        params={"campaign_id": "777888"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["scope"] == "campaign"
+    assert body["campaign_id"] == "777888"
+    assert body["summary"]["impressions"] == 500.0
+    assert route.called
+    assert "level=campaign" in str(route.calls[0].request.url)
+
+
+@respx.mock
 def test_dashboard_meta_http_error_returns_502(client):
     respx.get("https://graph.facebook.com/v25.0/act_bad/insights").mock(
         return_value=httpx.Response(500, json={"error": {"message": "oops"}})

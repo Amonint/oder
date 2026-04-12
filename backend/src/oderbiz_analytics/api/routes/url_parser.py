@@ -19,9 +19,10 @@ class ParseResult:
     value: str
 
 
-_FB_PROFILE_ID = re.compile(r'facebook\.com/profile\.php\?id=(\d+)', re.IGNORECASE)
-_FB_PAGES_ID   = re.compile(r'facebook\.com/pages/[^/]+/(\d+)', re.IGNORECASE)
-_FB_ALIAS      = re.compile(r'facebook\.com/([A-Za-z0-9._-]+)', re.IGNORECASE)
+_FB_ADS_LIBRARY = re.compile(r'facebook\.com/ads/library[^?]*\?[^#]*view_all_page_id=(\d+)', re.IGNORECASE)
+_FB_PROFILE_ID  = re.compile(r'facebook\.com/profile\.php\?id=(\d+)', re.IGNORECASE)
+_FB_PAGES_ID    = re.compile(r'facebook\.com/pages/[^/]+/(\d+)', re.IGNORECASE)
+_FB_ALIAS       = re.compile(r'facebook\.com/([A-Za-z0-9._-]+)', re.IGNORECASE)
 _IG_USERNAME   = re.compile(r'instagram\.com/([A-Za-z0-9._]+)/?(?:[?#]|$)', re.IGNORECASE)
 
 _FB_RESERVED = frozenset({
@@ -33,6 +34,10 @@ _IG_RESERVED = frozenset({"p", "reel", "explore", "accounts", "direct", "stories
 
 def parse_competitor_input(text: str) -> ParseResult:
     text = text.strip()
+
+    m = _FB_ADS_LIBRARY.search(text)
+    if m:
+        return ParseResult(strategy=ResolveStrategy.FACEBOOK_ID, value=m.group(1))
 
     m = _FB_PROFILE_ID.search(text)
     if m:

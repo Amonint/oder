@@ -163,7 +163,7 @@ class MetaGraphClient:
         self,
         *,
         alias_or_id: str,
-        fields: str = "id,name,fan_count,category",
+        fields: str = "id,name",
     ) -> dict:
         """Lookup directo de página Facebook por alias o ID numérico."""
         r = await self._client.get(
@@ -251,6 +251,25 @@ class MetaGraphClient:
         if not isinstance(data, dict) or "id" not in data:
             raise MetaGraphApiError(status_code=404, message="Página no encontrada")
         return data
+
+    async def search_ads_by_page_id(self, *, page_id: str) -> dict | None:
+        """Obtiene nombre de página desde ads_archive usando su ID numérico."""
+        r = await self._client.get(
+            f"{self._base}/ads_archive",
+            params={
+                "search_page_ids": json.dumps([page_id]),
+                "ad_active_status": "ALL",
+                "fields": "page_id,page_name",
+                "limit": 1,
+                "access_token": self._token,
+            },
+        )
+        if r.is_error:
+            return None
+        data = r.json().get("data", [])
+        if data:
+            return {"page_id": data[0].get("page_id", page_id), "name": data[0].get("page_name", "")}
+        return None
 
     async def search_ads_by_terms(
         self,

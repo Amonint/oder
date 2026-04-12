@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { FormattedTargeting } from "@/api/client";
+import type { FormattedTargeting } from "@/api/client";
 
 interface TargetingPanelProps {
   targeting: FormattedTargeting;
