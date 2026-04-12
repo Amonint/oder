@@ -13,8 +13,16 @@ import {
   fetchGeoInsights,
   fetchPlacementInsights,
   fetchAdTargeting,
+  fetchDemographicsInsights,
+  fetchAttributionInsights,
+  fetchLeadsInsights,
+  fetchCreativeFatigue,
   getMetaAccessToken,
 } from "@/api/client";
+import DemographicsPanel from "@/components/DemographicsPanel";
+import AttributionWindowPanel from "@/components/AttributionWindowPanel";
+import LeadsPanel from "@/components/LeadsPanel";
+import CreativeFatigueTable from "@/components/CreativeFatigueTable";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import GeoMap from "@/components/GeoMap";
@@ -98,6 +106,8 @@ export default function DashboardPage() {
   const [showDateModal, setShowDateModal] = useState(false);
   const [customDateStart, setCustomDateStart] = useState<string | null>(null);
   const [customDateStop, setCustomDateStop] = useState<string | null>(null);
+  const [demographicsBreakdown, setDemographicsBreakdown] = useState<"age" | "gender" | "age,gender">("age");
+  const [attributionWindow, setAttributionWindow] = useState<string>("click_7d");
   const hasToken = Boolean(getMetaAccessToken());
   const id = accountId ? decodeURIComponent(accountId) : "";
   const campaignKey = campaignSelect !== ALL ? campaignSelect : null;
@@ -206,6 +216,50 @@ export default function DashboardPage() {
     queryKey: ["targeting", id, selectedAdId],
     queryFn: () => fetchAdTargeting(id, selectedAdId!),
     enabled: hasToken && Boolean(id) && Boolean(selectedAdId),
+  });
+
+  const demographicsQuery = useQuery({
+    queryKey: ["demographics", id, demographicsBreakdown, datePreset, campaignKey, customDateStart, customDateStop],
+    queryFn: () => fetchDemographicsInsights(id, {
+      breakdown: demographicsBreakdown,
+      ...effectiveDateParams,
+      campaignId: campaignKey ?? undefined,
+    }),
+    enabled: hasToken && Boolean(id) && mainTab === "demografia",
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const attributionQuery = useQuery({
+    queryKey: ["attribution", id, attributionWindow, datePreset, campaignKey, customDateStart, customDateStop],
+    queryFn: () => fetchAttributionInsights(id, {
+      window: attributionWindow,
+      ...effectiveDateParams,
+      campaignId: campaignKey ?? undefined,
+    }),
+    enabled: hasToken && Boolean(id) && mainTab === "atribucion",
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const leadsQuery = useQuery({
+    queryKey: ["leads", id, datePreset, campaignKey, customDateStart, customDateStop],
+    queryFn: () => fetchLeadsInsights(id, {
+      level: "campaign",
+      ...effectiveDateParams,
+      campaignId: campaignKey ?? undefined,
+    }),
+    enabled: hasToken && Boolean(id) && mainTab === "leads",
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const fatigueQuery = useQuery({
+    queryKey: ["fatigue", id, datePreset, campaignKey, adsetSelect, customDateStart, customDateStop],
+    queryFn: () => fetchCreativeFatigue(id, {
+      ...effectiveDateParams,
+      campaignId: campaignKey ?? undefined,
+      adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
+    }),
+    enabled: hasToken && Boolean(id) && mainTab === "fatiga",
+    staleTime: 5 * 60 * 1000,
   });
 
   const effectiveDateParams = useMemo(() => {
@@ -622,6 +676,10 @@ export default function DashboardPage() {
           <TabsTrigger value="plataformas">Plataformas</TabsTrigger>
           <TabsTrigger value="geografia">Geografía</TabsTrigger>
           <TabsTrigger value="targeting">Targeting</TabsTrigger>
+          <TabsTrigger value="demografia">Demografía</TabsTrigger>
+          <TabsTrigger value="atribucion">Atribución</TabsTrigger>
+          <TabsTrigger value="leads">Leads</TabsTrigger>
+          <TabsTrigger value="fatiga">Fatiga creativa</TabsTrigger>
         </TabsList>
 
         {/* ── Tab: Resumen ── */}
@@ -658,6 +716,22 @@ export default function DashboardPage() {
                     </CardHeader>
                   </Card>
                 ))}
+                {(() => {
+                  const spend = Number(data.summary.spend ?? 0);
+                  const replies = (data.actions ?? [])
+                    .filter((a) => String(a.action_type) === "messaging_first_reply")
+                    .reduce((s, a) => s + Number(a.value ?? 0), 0);
+                  if (replies === 0) return null;
+                  const cpc = spend / replies;
+                  return (
+                    <Card key="costo_conv">
+                      <CardHeader className="pb-2">
+                        <CardDescription>Costo / conversación respondida</CardDescription>
+                        <CardTitle className="text-2xl tabular-nums">${cpc.toFixed(2)}</CardTitle>
+                      </CardHeader>
+                    </Card>
+                  );
+                })()}
               </div>
 
               <p className="text-muted-foreground text-sm">
@@ -1129,14 +1203,20 @@ export default function DashboardPage() {
                           <TableHead>Plataforma</TableHead>
                           <TableHead>Posición</TableHead>
                           <TableHead className="text-right">Gasto</TableHead>
+                          <TableHead className="text-right">% Gasto</TableHead>
                           <TableHead className="text-right">Impresiones</TableHead>
                           <TableHead className="text-right">Clics</TableHead>
+                          <TableHead className="text-right">CTR</TableHead>
+                          <TableHead className="text-right">CPM</TableHead>
+                          <TableHead className="text-right">CPC</TableHead>
+                          <TableHead className="text-right">Frecuencia</TableHead>
+                          <TableHead className="text-right">CPA</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {(placementQuery.data?.data ?? []).length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={5} className="text-center text-muted-foreground">
+                            <TableCell colSpan={11} className="text-center text-muted-foreground">
                               Sin filas de placement para este periodo o filtros.
                             </TableCell>
                           </TableRow>
@@ -1147,14 +1227,32 @@ export default function DashboardPage() {
                               <TableCell className="max-w-[180px] truncate text-xs">
                                 {row.platform_position ?? "—"}
                               </TableCell>
-                              <TableCell className="text-right tabular-nums">
+                              <TableCell className="text-right tabular-nums text-xs">
                                 ${String(row.spend ?? "—")}
                               </TableCell>
-                              <TableCell className="text-right tabular-nums">
+                              <TableCell className="text-right tabular-nums text-xs">
+                                {row.pct_spend != null ? `${row.pct_spend.toFixed(1)}%` : "—"}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-xs">
                                 {String(row.impressions ?? "—")}
                               </TableCell>
-                              <TableCell className="text-right tabular-nums">
+                              <TableCell className="text-right tabular-nums text-xs">
                                 {String(row.clicks ?? "—")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-xs">
+                                {row.ctr != null ? `${String(row.ctr)}%` : "—"}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-xs">
+                                {row.cpm != null ? `$${String(row.cpm)}` : "—"}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-xs">
+                                {row.cpc != null ? `$${String(row.cpc)}` : "—"}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-xs">
+                                {row.frequency != null ? String(row.frequency) : "—"}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-xs">
+                                {row.cpa_derived != null ? `$${row.cpa_derived.toFixed(2)}` : "—"}
                               </TableCell>
                             </TableRow>
                           ))
@@ -1232,33 +1330,45 @@ export default function DashboardPage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="rounded-md border">
+                  <div className="rounded-md border overflow-x-auto">
                     <Table>
                       <TableHeader>
                         <TableRow>
                           <TableHead>Región</TableHead>
                           <TableHead className="text-right">Impresiones</TableHead>
                           <TableHead className="text-right">Clics</TableHead>
+                          <TableHead className="text-right">Gasto</TableHead>
+                          <TableHead className="text-right">Resultados</TableHead>
+                          <TableHead className="text-right">CPA</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {(geoQuery.data?.data ?? []).length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={3} className="text-center">
+                            <TableCell colSpan={6} className="text-center">
                               Sin datos geográficos para este periodo.
                             </TableCell>
                           </TableRow>
                         ) : (
                           (geoQuery.data?.data ?? []).map((row, idx) => (
                             <TableRow key={String(row.region ?? row.region_name ?? idx)}>
-                              <TableCell className="font-medium">
+                              <TableCell className="font-medium text-sm">
                                 {String(row.region ?? row.region_name ?? "Desconocido")}
                               </TableCell>
-                              <TableCell className="text-right tabular-nums">
+                              <TableCell className="text-right tabular-nums text-sm">
                                 {Number(row.impressions ?? 0).toLocaleString("es")}
                               </TableCell>
-                              <TableCell className="text-right tabular-nums">
+                              <TableCell className="text-right tabular-nums text-sm">
                                 {String(row.clicks ?? "—")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-sm">
+                                ${String(row.spend ?? "—")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-sm">
+                                {row.results != null ? row.results.toLocaleString("es") : "—"}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-sm">
+                                {row.cpa != null ? `$${row.cpa.toFixed(2)}` : "—"}
                               </TableCell>
                             </TableRow>
                           ))
@@ -1329,6 +1439,51 @@ export default function DashboardPage() {
               ) : null}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* ── Tab: Demografía ── */}
+        <TabsContent value="demografia" className="pt-4">
+          <DemographicsPanel
+            data={demographicsQuery.data?.data}
+            isLoading={demographicsQuery.isLoading}
+            isError={demographicsQuery.isError}
+            errorMessage={demographicsQuery.error instanceof Error ? demographicsQuery.error.message : undefined}
+            breakdown={demographicsBreakdown}
+            onBreakdownChange={setDemographicsBreakdown}
+          />
+        </TabsContent>
+
+        {/* ── Tab: Atribución ── */}
+        <TabsContent value="atribucion" className="pt-4">
+          <AttributionWindowPanel
+            data={attributionQuery.data}
+            isLoading={attributionQuery.isLoading}
+            isError={attributionQuery.isError}
+            errorMessage={attributionQuery.error instanceof Error ? attributionQuery.error.message : undefined}
+            window={attributionWindow}
+            onWindowChange={setAttributionWindow}
+          />
+        </TabsContent>
+
+        {/* ── Tab: Leads ── */}
+        <TabsContent value="leads" className="pt-4">
+          <LeadsPanel
+            data={leadsQuery.data}
+            isLoading={leadsQuery.isLoading}
+            isError={leadsQuery.isError}
+            errorMessage={leadsQuery.error instanceof Error ? leadsQuery.error.message : undefined}
+          />
+        </TabsContent>
+
+        {/* ── Tab: Fatiga creativa ── */}
+        <TabsContent value="fatiga" className="pt-4">
+          <CreativeFatigueTable
+            data={fatigueQuery.data?.data}
+            alerts={fatigueQuery.data?.alerts}
+            isLoading={fatigueQuery.isLoading}
+            isError={fatigueQuery.isError}
+            errorMessage={fatigueQuery.error instanceof Error ? fatigueQuery.error.message : undefined}
+          />
         </TabsContent>
       </Tabs>
     </div>

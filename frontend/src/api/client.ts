@@ -140,6 +140,7 @@ export interface AdPerformanceRow {
   cpm?: string;
   cpp?: string;
   ctr?: string;
+  cpc?: string;
   actions?: InsightActionItem[];
   cost_per_action_type?: InsightActionItem[];
   date_start?: string;
@@ -171,6 +172,8 @@ export interface GeoInsightRow {
   clicks: number;
   spend: string;
   reach: number;
+  results?: number;
+  cpa?: number | null;
 }
 
 export interface GeoInsightsResponse {
@@ -375,6 +378,8 @@ export async function fetchAdsPerformance(
 export interface PlacementInsightRow extends AdPerformanceRow {
   publisher_platform?: string;
   platform_position?: string;
+  pct_spend?: number;
+  cpa_derived?: number | null;
 }
 
 export interface PlacementInsightsResponse {
