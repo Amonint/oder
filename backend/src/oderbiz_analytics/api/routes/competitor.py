@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import time
@@ -19,6 +20,7 @@ from oderbiz_analytics.api.routes.url_parser import ResolveStrategy, parse_compe
 from oderbiz_analytics.services.inference_service import ProvinceInferenceService
 
 router = APIRouter(prefix="/competitor", tags=["competitor"])
+logger = logging.getLogger(__name__)
 
 _MONITOR_COUNTRIES = ["EC", "CO", "MX", "AR", "CL", "PE", "VE", "HN", "GT", "BO", "US", "ES"]
 
@@ -436,70 +438,70 @@ async def get_market_radar_extended(
             try:
                 db_path = os.getenv("DUCKDB_PATH", "analytics.duckdb")
                 conn = duckdb.connect(db_path)
-
-                conn.execute(
-                    """
-                    INSERT INTO competitors (page_id, name, category, province_ec, province_confidence,
-                                           province_source, last_detected, active_ads_count, total_ads_count,
-                                           platforms, languages, metadata)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT (page_id) DO UPDATE SET
-                        last_detected = EXCLUDED.last_detected,
-                        active_ads_count = EXCLUDED.active_ads_count,
-                        total_ads_count = EXCLUDED.total_ads_count,
-                        province_ec = EXCLUDED.province_ec,
-                        province_confidence = EXCLUDED.province_confidence,
-                        province_source = EXCLUDED.province_source
-                    """,
-                    [
-                        page["page_id"],
-                        page["name"],
-                        category,
-                        province,
-                        confidence,
-                        source,
-                        comp_data["last_detected"],
-                        active_ads,
-                        len(ads),
-                        json.dumps(comp_data["platforms"]),
-                        json.dumps(comp_data["languages"]),
-                        json.dumps({"inferred_at": datetime.now(timezone.utc).isoformat()}),
-                    ],
-                )
-
-                # Insert ads
-                for ad in ads[:10]:
+                try:
                     conn.execute(
                         """
-                        INSERT INTO competitor_ads (ad_id, page_id, ad_creative_bodies, ad_creative_link_titles,
-                                                   ad_creative_link_descriptions, ad_creative_link_captions,
-                                                   ad_snapshot_url, publisher_platforms, languages, media_type,
-                                                   ad_creation_time, ad_delivery_start_time, ad_delivery_stop_time, is_active)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO competitors (page_id, name, category, province_ec, province_confidence,
+                                               province_source, last_detected, active_ads_count, total_ads_count,
+                                               platforms, languages, metadata)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT (page_id) DO UPDATE SET
+                            last_detected = EXCLUDED.last_detected,
+                            active_ads_count = EXCLUDED.active_ads_count,
+                            total_ads_count = EXCLUDED.total_ads_count,
+                            province_ec = EXCLUDED.province_ec,
+                            province_confidence = EXCLUDED.province_confidence,
+                            province_source = EXCLUDED.province_source
                         """,
                         [
-                            ad["id"],
                             page["page_id"],
-                            json.dumps(ad.get("ad_creative_bodies") or []),
-                            json.dumps(ad.get("ad_creative_link_titles") or []),
-                            json.dumps(ad.get("ad_creative_link_descriptions") or []),
-                            json.dumps(ad.get("ad_creative_link_captions") or []),
-                            ad.get("ad_snapshot_url"),
-                            json.dumps(ad.get("publisher_platforms") or []),
-                            json.dumps(ad.get("languages") or []),
-                            ad.get("media_type"),
-                            ad.get("ad_creation_time"),
-                            ad.get("ad_delivery_start_time"),
-                            ad.get("ad_delivery_stop_time"),
-                            _is_active(ad),
+                            page["name"],
+                            category,
+                            province,
+                            confidence,
+                            source,
+                            comp_data["last_detected"],
+                            active_ads,
+                            len(ads),
+                            json.dumps(comp_data["platforms"]),
+                            json.dumps(comp_data["languages"]),
+                            json.dumps({"inferred_at": datetime.now(timezone.utc).isoformat()}),
                         ],
                     )
 
-                conn.commit()
-                conn.close()
+                    # Insert ads
+                    for ad in ads[:10]:
+                        conn.execute(
+                            """
+                            INSERT INTO competitor_ads (ad_id, page_id, ad_creative_bodies, ad_creative_link_titles,
+                                                       ad_creative_link_descriptions, ad_creative_link_captions,
+                                                       ad_snapshot_url, publisher_platforms, languages, media_type,
+                                                       ad_creation_time, ad_delivery_start_time, ad_delivery_stop_time, is_active)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            [
+                                ad["id"],
+                                page["page_id"],
+                                json.dumps(ad.get("ad_creative_bodies") or []),
+                                json.dumps(ad.get("ad_creative_link_titles") or []),
+                                json.dumps(ad.get("ad_creative_link_descriptions") or []),
+                                json.dumps(ad.get("ad_creative_link_captions") or []),
+                                ad.get("ad_snapshot_url"),
+                                json.dumps(ad.get("publisher_platforms") or []),
+                                json.dumps(ad.get("languages") or []),
+                                ad.get("media_type"),
+                                ad.get("ad_creation_time"),
+                                ad.get("ad_delivery_start_time"),
+                                ad.get("ad_delivery_stop_time"),
+                                _is_active(ad),
+                            ],
+                        )
+
+                    conn.commit()
+                finally:
+                    conn.close()
             except Exception as e:
-                # Log but don't fail — data returned in real-time
-                print(f"DuckDB persist error: {e}")
+                logger.error(f"DuckDB persist error: {e}")
 
         # 6. Rank by activity
         competitors_data.sort(key=lambda c: c["active_ads"], reverse=True)
@@ -513,7 +515,7 @@ async def get_market_radar_extended(
         province_top5 = [
             {**c, "rank": i + 1}
             for i, c in enumerate(
-                [c for c in competitors_data if c["province"] == client_province][:5]
+                [c for c in competitors_data if c["province"] == client_province and client_province is not None][:5]
             )
         ]
 

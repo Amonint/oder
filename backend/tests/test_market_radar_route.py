@@ -120,6 +120,23 @@ def test_market_radar_extended(client):
             json={"id": "page_edu", "name": "Rectoral Board", "category": "Education"},
         )
     )
+    # Mock page location (for province inference)
+    respx.get("https://graph.facebook.com/v25.0/page_edu").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "page_edu",
+                "name": "Rectoral Board",
+                "category": "Education",
+                "location": {
+                    "city": "Quito",
+                    "state": "Pichincha",
+                    "country": "EC",
+                    "zip": "170000"
+                }
+            },
+        )
+    )
     # Mock search ads by terms (competitors found)
     respx.get("https://graph.facebook.com/v25.0/ads_archive").mock(
         return_value=httpx.Response(
