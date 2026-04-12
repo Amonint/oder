@@ -28,6 +28,7 @@ import ManualDataPanel from "@/components/ManualDataPanel";
 import SemaphoreKpiCard from "@/components/SemaphoreKpiCard";
 import HealthScoreCard from "@/components/HealthScoreCard";
 import FunnelExtendedCard from "@/components/FunnelExtendedCard";
+import FunnelLevelTable, { type FunnelLevelRow } from "@/components/FunnelLevelTable";
 import { fetchManualData } from "@/api/client";
 import { computeManualKpis, aggregateManualRecords } from "@/lib/manualKpis";
 import { loadThresholds, evaluateSemaphore } from "@/lib/semaphoreRules";
@@ -262,6 +263,7 @@ export default function DashboardPage() {
   const [campaignSelect, setCampaignSelect] = useState<string>(ALL);
   const [adsetSelect, setAdsetSelect] = useState<string>(ALL);
   const [geoScope, setGeoScope] = useState<"account" | "ad">("account");
+  const [funnelLevel, setFunnelLevel] = useState<"account" | "campaign" | "ad">("account");
   const [geoMetric, setGeoMetric] = useState<"impressions" | "spend" | "cpa" | "results">("impressions");
   const [mainTab, setMainTab] = useState<string>("resumen");
   const [perfGranularity, setPerfGranularity] = useState<"period" | "daily">("period");
@@ -1848,6 +1850,81 @@ export default function DashboardPage() {
                     firstReplies={firstReplies}
                     manualRecord={aggregatedManual}
                   />
+
+                  {/* ── Embudo por nivel ── */}
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <span className="text-foreground text-sm font-medium">Nivel de análisis:</span>
+                      <Select value={funnelLevel} onValueChange={(v) => setFunnelLevel(v as typeof funnelLevel)}>
+                        <SelectTrigger className="w-[200px]">
+                          <SelectValue placeholder="Nivel" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="account">Consolidado (cuenta)</SelectItem>
+                          <SelectItem value="campaign">Por campaña</SelectItem>
+                          <SelectItem value="ad">Por anuncio</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {funnelLevel !== "account" && (() => {
+                      const adRows = rankingQuery.data?.data ?? [];
+
+                      if (funnelLevel === "ad") {
+                        const rows: FunnelLevelRow[] = adRows.map((row) => {
+                          const rowActions = row.actions ?? [];
+                          return {
+                            id: row.ad_id,
+                            name: row.ad_name,
+                            impressions: Number(row.impressions ?? 0),
+                            reach: Number(row.reach ?? 0),
+                            clicks: Number(row.clicks ?? 0),
+                            conversations_started: rowActions
+                              .filter((a) => String(a.action_type) === "onsite_conversion.messaging_conversation_started_7d")
+                              .reduce((s, a) => s + Number(a.value ?? 0), 0),
+                            first_replies: rowActions
+                              .filter((a) => String(a.action_type) === "messaging_first_reply")
+                              .reduce((s, a) => s + Number(a.value ?? 0), 0),
+                            spend: Number(row.spend ?? 0),
+                          };
+                        }).sort((a, b) => b.conversations_started - a.conversations_started);
+                        return <FunnelLevelTable rows={rows} level="ad" />;
+                      }
+
+                      // By campaign: group adRows by campaign_id
+                      const campaignMap: Record<string, FunnelLevelRow> = {};
+                      for (const row of adRows) {
+                        const cid = row.campaign_id ?? row.campaign_name;
+                        if (!campaignMap[cid]) {
+                          campaignMap[cid] = {
+                            id: cid,
+                            name: row.campaign_name,
+                            impressions: 0,
+                            reach: 0,
+                            clicks: 0,
+                            conversations_started: 0,
+                            first_replies: 0,
+                            spend: 0,
+                          };
+                        }
+                        const entry = campaignMap[cid];
+                        entry.impressions += Number(row.impressions ?? 0);
+                        entry.reach += Number(row.reach ?? 0);
+                        entry.clicks += Number(row.clicks ?? 0);
+                        entry.spend += Number(row.spend ?? 0);
+                        for (const a of row.actions ?? []) {
+                          if (String(a.action_type) === "onsite_conversion.messaging_conversation_started_7d") {
+                            entry.conversations_started += Number(a.value ?? 0);
+                          }
+                          if (String(a.action_type) === "messaging_first_reply") {
+                            entry.first_replies += Number(a.value ?? 0);
+                          }
+                        }
+                      }
+                      const campaignRows = Object.values(campaignMap).sort((a, b) => b.conversations_started - a.conversations_started);
+                      return <FunnelLevelTable rows={campaignRows} level="campaign" />;
+                    })()}
+                  </div>
                 </div>
 
                 <div className="space-y-4">
