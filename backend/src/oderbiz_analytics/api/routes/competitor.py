@@ -276,9 +276,10 @@ async def get_competitor_ads(
 async def get_market_radar(
     page_id: str,
     country: str = "EC",
+    province: str | None = None,
     client: MetaGraphClient = Depends(get_meta_graph_client),
 ) -> dict:
-    """Auto-descubre competidores en el mismo segmento de la página dada en país específico."""
+    """Auto-descubre competidores en el mismo segmento de la página dada, con filtrado opcional por provincia."""
     # 1. Detectar categoría de la página del cliente
     try:
         page_data = await client.get_page_public_profile(page_id=page_id)
@@ -303,7 +304,7 @@ async def get_market_radar(
     # Excluir la propia página del cliente
     competitor_pages = [p for p in competitor_pages if p["page_id"] != page_id]
 
-    # 3. En paralelo: ads por competidor en el país especificado
+    # 3. En paralelo: ads + ubicación por competidor en el país especificado
     ads_tasks = [
         client.get_ads_archive(
             page_id=p["page_id"],
@@ -313,19 +314,48 @@ async def get_market_radar(
         )
         for p in competitor_pages
     ]
-    country_tasks = []  # No needed for single country
+    location_tasks = [
+        client.get_page_location(page_id=p["page_id"])
+        for p in competitor_pages
+    ]
 
-    ads_results = await asyncio.gather(
-        *ads_tasks, return_exceptions=True
+    all_results = await asyncio.gather(
+        *ads_tasks, *location_tasks, return_exceptions=True
     )
 
-    # 4. Construir entrada de competidores SIN filtrado aún (para metadata)
+    n_comp = len(competitor_pages)
+    ads_results = all_results[:n_comp]
+    location_results = all_results[n_comp:]
+
+    # 4. Construir entrada de competidores CON provincia (sin ML filtrado aún)
     competitors_before_filter = []
     competitor_ads_map = {}  # Para usar en clasificación
+    competitor_provinces = {}  # Para filtrado por provincia
 
-    for page, ads_result in zip(competitor_pages, ads_results):
+    for page, ads_result, location_result in zip(competitor_pages, ads_results, location_results):
         ads = ads_result if isinstance(ads_result, list) else []
-        competitors_before_filter.append(_build_competitor_entry(page, ads))
+        location = location_result if isinstance(location_result, dict) else None
+
+        # Inferir provincia del competidor
+        inferred_province, province_confidence, province_source = ProvinceInferenceService.infer_province(
+            page_id=page["page_id"],
+            page_name=page["name"],
+            page_location=location,
+            ads=ads,
+        )
+
+        competitor_provinces[page["page_id"]] = {
+            "province": inferred_province,
+            "confidence": province_confidence,
+            "source": province_source,
+        }
+
+        entry = _build_competitor_entry(page, ads)
+        entry["province"] = inferred_province
+        entry["province_confidence"] = province_confidence
+        entry["province_source"] = province_source
+
+        competitors_before_filter.append(entry)
         competitor_ads_map[page["page_id"]] = ads
 
     # 5. PIPELINE SECTION 4.2: Inicializar clasificador ML
@@ -334,7 +364,7 @@ async def get_market_radar(
         user_keywords=keywords,
     )
 
-    # 6. Clasificar cada competidor y filtrar por score >= 25
+    # 6. Clasificar cada competidor y filtrar por score >= 25 + provincia opcional
     ml_threshold = 25
     competitors_filtered = []
 
@@ -345,7 +375,7 @@ async def get_market_radar(
             # Si no hay ads, no clasificar
             continue
 
-        # Extraer cuerpos de anuncios para clasificación
+        # Extraer buerpos de anuncios para clasificación
         ad_creative_bodies = []
         for ad in ads:
             ad_creative_bodies.extend(ad.get("ad_creative_bodies", []))
@@ -367,6 +397,16 @@ async def get_market_radar(
                 "negative_penalty": classification.factors["negative_penalty"],
                 "category_bonus": classification.factors["category_bonus"],
             }
+            # Agregar provincia
+            prov_data = competitor_provinces[page["page_id"]]
+            competitor_entry["province"] = prov_data["province"]
+            competitor_entry["province_confidence"] = prov_data["confidence"]
+            competitor_entry["province_source"] = prov_data["source"]
+
+            # Filtrar por provincia si se especifica
+            if province and prov_data["province"] != province:
+                continue
+
             competitors_filtered.append(competitor_entry)
 
     # 7. Ordenar por relevance_score DESC, luego por active_ads DESC
@@ -387,6 +427,7 @@ async def get_market_radar(
             "ml_threshold": ml_threshold,
             "category": category,
             "country": country,
+            "province_filter": province,
             "keywords_used": keywords,
         },
     }
