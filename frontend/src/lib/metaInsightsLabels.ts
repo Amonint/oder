@@ -15,6 +15,58 @@ export const DASHBOARD_KPI_LABELS: Record<string, string> = {
   ctr: "Tasa de clics (CTR)",
 };
 
+/** Tooltips descriptivos para KPIs del resumen */
+export const DASHBOARD_KPI_TOOLTIPS: Record<string, { description: string; formula: string; source: string; type: "nativo" | "derivado" }> = {
+  impressions: {
+    description: "Número de veces que los anuncios fueron mostrados.",
+    formula: "Suma de impresiones en el período.",
+    source: "Meta Ads Insights",
+    type: "nativo",
+  },
+  clicks: {
+    description: "Clics realizados en el anuncio hacia un destino.",
+    formula: "Suma de clicks en el período.",
+    source: "Meta Ads Insights",
+    type: "nativo",
+  },
+  spend: {
+    description: "Total invertido en publicidad en el período.",
+    formula: "Suma de gasto diario.",
+    source: "Meta Ads Insights",
+    type: "nativo",
+  },
+  reach: {
+    description: "Personas únicas que vieron al menos un anuncio.",
+    formula: "Usuarios únicos alcanzados.",
+    source: "Meta Ads Insights",
+    type: "nativo",
+  },
+  frequency: {
+    description: "Promedio de veces que cada persona vio los anuncios.",
+    formula: "Impresiones ÷ Alcance.",
+    source: "Meta Ads Insights",
+    type: "derivado",
+  },
+  cpm: {
+    description: "Costo promedio por cada 1,000 impresiones.",
+    formula: "(Gasto ÷ Impresiones) × 1,000.",
+    source: "Meta Ads Insights",
+    type: "derivado",
+  },
+  cpp: {
+    description: "Costo promedio por cada 1,000 personas alcanzadas.",
+    formula: "(Gasto ÷ Alcance) × 1,000.",
+    source: "Meta Ads Insights",
+    type: "derivado",
+  },
+  ctr: {
+    description: "Porcentaje de impresiones que resultaron en un clic.",
+    formula: "(Clics ÷ Impresiones) × 100.",
+    source: "Meta Ads Insights",
+    type: "derivado",
+  },
+};
+
 /** Selector y leyendas del ranking por anuncio */
 export const RANKING_METRIC_LABELS: Record<string, string> = {
   impressions: "Impresiones",

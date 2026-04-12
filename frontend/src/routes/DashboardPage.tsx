@@ -78,10 +78,13 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DASHBOARD_KPI_LABELS,
+  DASHBOARD_KPI_TOOLTIPS,
   RANKING_METRIC_LABELS,
   labelForMetaActionType,
   shortActionTypeLabel,
 } from "@/lib/metaInsightsLabels";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import InfoTooltip from "@/components/InfoTooltip";
 import { groupActionsByCategory } from "@/lib/actionCategories";
 
 const ALL = "__all__";
@@ -741,36 +744,113 @@ export default function DashboardPage() {
 
           {data && !isLoading ? (
             <>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {Object.entries(data.summary).map(([key, val]) => (
-                  <Card key={key}>
-                    <CardHeader className="pb-2">
-                      <CardDescription>
-                        {DASHBOARD_KPI_LABELS[key] ?? key}
-                      </CardDescription>
-                      <CardTitle className="text-2xl tabular-nums">
-                        {formatNum(val)}
-                      </CardTitle>
-                    </CardHeader>
-                  </Card>
-                ))}
-                {(() => {
-                  const spend = Number(data.summary.spend ?? 0);
-                  const replies = (data.actions ?? [])
-                    .filter((a) => String(a.action_type) === "messaging_first_reply")
-                    .reduce((s, a) => s + Number(a.value ?? 0), 0);
-                  if (replies === 0) return null;
-                  const cpc = spend / replies;
-                  return (
-                    <Card key="costo_conv">
+              <TooltipProvider delayDuration={300}>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  {Object.entries(data.summary).map(([key, val]) => {
+                    const tipData = DASHBOARD_KPI_TOOLTIPS[key];
+                    const tipText = tipData
+                      ? `${tipData.description} Fórmula: ${tipData.formula} Fuente: ${tipData.source} (${tipData.type})`
+                      : undefined;
+                    return (
+                      <Card key={key}>
+                        <CardHeader className="pb-2">
+                          <CardDescription className="flex items-center gap-1">
+                            {DASHBOARD_KPI_LABELS[key] ?? key}
+                            {tipText && <InfoTooltip text={tipText} />}
+                          </CardDescription>
+                          <CardTitle className="text-2xl tabular-nums">{formatNum(val)}</CardTitle>
+                        </CardHeader>
+                      </Card>
+                    );
+                  })}
+                  {(() => {
+                    const spend = Number(data.summary.spend ?? 0);
+                    const replies = (data.actions ?? [])
+                      .filter((a) => String(a.action_type) === "messaging_first_reply")
+                      .reduce((s, a) => s + Number(a.value ?? 0), 0);
+                    if (replies === 0) return null;
+                    const cpc = spend / replies;
+                    return (
+                      <Card key="costo_conv">
+                        <CardHeader className="pb-2">
+                          <CardDescription className="flex items-center gap-1">
+                            Costo / conversación respondida
+                            <InfoTooltip text="KPI derivado. Fórmula: Gasto ÷ primeras respuestas (messaging_first_reply). Fuente: Meta Insights (derivado). Puede no estar disponible en todas las cuentas." />
+                          </CardDescription>
+                          <CardTitle className="text-2xl tabular-nums">${cpc.toFixed(2)}</CardTitle>
+                        </CardHeader>
+                      </Card>
+                    );
+                  })()}
+                </div>
+              </TooltipProvider>
+
+              {/* ── Card comparativa: costos de adquisición ── */}
+              {(() => {
+                const spend = Number(data.summary.spend ?? 0);
+                if (spend === 0) return null;
+
+                const actions = data.actions ?? [];
+                const costActions = data.cost_per_action_type ?? [];
+
+                // Costo por resultado: primer cost_per_action_type disponible (excluyendo triviales)
+                const TRIVIAL = new Set(["post_engagement", "page_engagement", "photo_view", "video_view"]);
+                const mainCostAction = costActions.find((a) => !TRIVIAL.has(String(a.action_type)));
+                const costPerResult = mainCostAction ? Number(mainCostAction.value) : null;
+
+                // CPA promedio = gasto / total acciones de resultado
+                const totalResults = actions
+                  .filter((a) => !TRIVIAL.has(String(a.action_type)))
+                  .reduce((s, a) => s + Number(a.value ?? 0), 0);
+                const cpaAvg = totalResults > 0 ? spend / totalResults : null;
+
+                // Costo por conversación iniciada
+                const convsStarted = actions
+                  .filter((a) => String(a.action_type) === "onsite_conversion.messaging_conversation_started_7d")
+                  .reduce((s, a) => s + Number(a.value ?? 0), 0);
+                const costPerConvStarted = convsStarted > 0 ? spend / convsStarted : null;
+
+                // Costo por conversación respondida
+                const replies = actions
+                  .filter((a) => String(a.action_type) === "messaging_first_reply")
+                  .reduce((s, a) => s + Number(a.value ?? 0), 0);
+                const costPerReplied = replies > 0 ? spend / replies : null;
+
+                const costs = [
+                  { label: "CPA promedio", value: cpaAvg, tip: "Gasto ÷ total de resultados (excluyendo interacciones triviales). Derivado.", available: cpaAvg !== null },
+                  { label: "Costo por resultado", value: costPerResult, tip: "Primer cost_per_action_type devuelto por Meta para el objetivo principal. Nativo.", available: costPerResult !== null },
+                  { label: "Costo / conv. iniciada", value: costPerConvStarted, tip: "Gasto ÷ conversaciones iniciadas (onsite_conversion.messaging_conversation_started_7d). Derivado.", available: costPerConvStarted !== null },
+                  { label: "Costo / conv. respondida", value: costPerReplied, tip: "Gasto ÷ primeras respuestas (messaging_first_reply). Derivado. Puede no estar disponible en todas las cuentas.", available: costPerReplied !== null },
+                ];
+
+                if (costs.every((c) => !c.available)) return null;
+
+                return (
+                  <TooltipProvider delayDuration={300}>
+                    <Card>
                       <CardHeader className="pb-2">
-                        <CardDescription>Costo / conversación respondida</CardDescription>
-                        <CardTitle className="text-2xl tabular-nums">${cpc.toFixed(2)}</CardTitle>
+                        <CardTitle className="text-base">Costos de adquisición</CardTitle>
+                        <CardDescription>Comparativa de costos según etapa del embudo publicitario</CardDescription>
                       </CardHeader>
+                      <CardContent>
+                        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                          {costs.map((c) => (
+                            <div key={c.label} className="flex flex-col gap-0.5">
+                              <span className="text-muted-foreground text-xs flex items-center gap-0.5">
+                                {c.label}
+                                <InfoTooltip text={c.tip} />
+                              </span>
+                              <span className="text-foreground text-xl font-bold tabular-nums">
+                                {c.available ? `$${(c.value as number).toFixed(2)}` : "—"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
                     </Card>
-                  );
-                })()}
-              </div>
+                  </TooltipProvider>
+                );
+              })()}
 
               <p className="text-muted-foreground text-sm">
                 {data.scope === "campaign" && data.campaign_id ? (
