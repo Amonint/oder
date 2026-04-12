@@ -2,16 +2,21 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import re
+import time
 from collections import Counter
 from datetime import datetime, timezone
 
+import duckdb
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from oderbiz_analytics.adapters.meta.client import MetaGraphApiError, MetaGraphClient
 from oderbiz_analytics.api.deps import get_meta_graph_client
 from oderbiz_analytics.api.routes.url_parser import ResolveStrategy, parse_competitor_input
+from oderbiz_analytics.services.inference_service import ProvinceInferenceService
 
 router = APIRouter(prefix="/competitor", tags=["competitor"])
 
@@ -29,22 +34,10 @@ _STOPWORDS = {
     "for", "que", "no", "al", "más", "por", "con", "una", "sus", "pero",
 }
 
-CATEGORY_KEYWORDS: dict[str, list[str]] = {
-    "Education": ["educación superior", "universidad", "rector", "liderazgo académico"],
-    "Hotel": ["hotel", "hospedaje", "turismo", "alojamiento"],
-    "Restaurant": ["restaurante", "gastronomía", "comida", "chef"],
-    "Health/medical": ["salud", "clínica", "médico", "bienestar"],
-    "Consulting/business services": ["consultoría", "gestión empresarial", "management"],
-    "Nonprofit organization": ["organización", "fundación", "asociación", "ONG"],
-    "E-commerce": ["tienda online", "ecommerce", "compra online", "envíos"],
-    "Real estate": ["inmobiliaria", "bienes raíces", "apartamento", "propiedad"],
-}
-
-
 def _keywords_for_category(category: str, page_name: str) -> list[str]:
-    for key, kws in CATEGORY_KEYWORDS.items():
-        if key.lower() in category.lower():
-            return kws
+    """Use Meta's category directly. Fallback to page name if no category."""
+    if category and category.strip():
+        return [category]
     return [page_name]
 
 
@@ -336,3 +329,217 @@ async def get_market_radar(
         "competitors": competitors,
         "market_summary": market_summary,
     }
+
+
+@router.get("/market-radar-extended")
+async def get_market_radar_extended(
+    page_id: str,
+    client: MetaGraphClient = Depends(get_meta_graph_client),
+) -> dict:
+    """Extended market radar with top 5 Ecuador + province, full ad details, and persistence."""
+    start_time = time.time()
+
+    try:
+        # 1. Get client page info + location
+        page_data = await client.get_page_public_profile(page_id=page_id)
+        page_location = await client.get_page_location(page_id=page_id)
+
+        category = page_data.get("category", "")
+        page_name = page_data.get("name", page_id)
+        keywords = _keywords_for_category(category, page_name)
+        primary_keyword = keywords[0]
+
+        # 2. Infer client province
+        client_province, client_confidence, client_source = ProvinceInferenceService.infer_province(
+            page_id=page_id,
+            page_name=page_name,
+            page_location=page_location,
+            ads=[],  # No ads for client yet
+        )
+
+        # 3. Search competitors across all countries
+        competitor_pages = await client.search_ads_by_terms(
+            search_terms=primary_keyword,
+            countries=_MONITOR_COUNTRIES,
+            limit=20,
+        )
+        competitor_pages = [p for p in competitor_pages if p["page_id"] != page_id]
+
+        # 4. Get ads for each competitor in parallel
+        ads_tasks = [
+            client.get_ads_archive(
+                page_id=p["page_id"],
+                countries=_MONITOR_COUNTRIES,
+                fields=_ADS_ARCHIVE_FIELDS,
+                limit=50,
+            )
+            for p in competitor_pages
+        ]
+        ads_results = await asyncio.gather(*ads_tasks, return_exceptions=True)
+
+        # 5. Build competitors with province inference
+        competitors_data = []
+        for page, ads_result in zip(competitor_pages, ads_results):
+            ads = ads_result if isinstance(ads_result, list) else []
+
+            # Get page location
+            try:
+                page_loc = await client.get_page_location(page_id=page["page_id"])
+            except Exception:
+                page_loc = None
+
+            # Infer province
+            province, confidence, source = ProvinceInferenceService.infer_province(
+                page_id=page["page_id"],
+                page_name=page["name"],
+                page_location=page_loc,
+                ads=ads,
+            )
+
+            # Build competitor entry
+            active_ads = sum(1 for ad in ads if _is_active(ad))
+
+            comp_data = {
+                "page_id": page["page_id"],
+                "name": page["name"],
+                "province": province,
+                "province_confidence": confidence,
+                "province_source": source,
+                "active_ads": active_ads,
+                "total_ads": len(ads),
+                "platforms": list(set(p for ad in ads for p in (ad.get("publisher_platforms") or []))),
+                "languages": list(set(l for ad in ads for l in (ad.get("languages") or []))),
+                "ads": [
+                    {
+                        "id": ad.get("id", ""),
+                        "ad_creative_bodies": ad.get("ad_creative_bodies") or [],
+                        "ad_creative_link_titles": ad.get("ad_creative_link_titles") or [],
+                        "ad_creative_link_descriptions": ad.get("ad_creative_link_descriptions") or [],
+                        "ad_creative_link_captions": ad.get("ad_creative_link_captions") or [],
+                        "ad_snapshot_url": ad.get("ad_snapshot_url"),
+                        "publisher_platforms": ad.get("publisher_platforms") or [],
+                        "languages": ad.get("languages") or [],
+                        "media_type": ad.get("media_type"),
+                        "ad_creation_time": ad.get("ad_creation_time"),
+                        "ad_delivery_start_time": ad.get("ad_delivery_start_time"),
+                        "ad_delivery_stop_time": ad.get("ad_delivery_stop_time"),
+                        "is_active": _is_active(ad),
+                    }
+                    for ad in ads[:10]  # Only last 10 ads in response
+                ],
+                "last_detected": datetime.now(timezone.utc).date().isoformat(),
+            }
+
+            competitors_data.append(comp_data)
+
+            # Persist to DuckDB
+            try:
+                db_path = os.getenv("DUCKDB_PATH", "analytics.duckdb")
+                conn = duckdb.connect(db_path)
+
+                conn.execute(
+                    """
+                    INSERT INTO competitors (page_id, name, category, province_ec, province_confidence,
+                                           province_source, last_detected, active_ads_count, total_ads_count,
+                                           platforms, languages, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (page_id) DO UPDATE SET
+                        last_detected = EXCLUDED.last_detected,
+                        active_ads_count = EXCLUDED.active_ads_count,
+                        total_ads_count = EXCLUDED.total_ads_count,
+                        province_ec = EXCLUDED.province_ec,
+                        province_confidence = EXCLUDED.province_confidence,
+                        province_source = EXCLUDED.province_source
+                    """,
+                    [
+                        page["page_id"],
+                        page["name"],
+                        category,
+                        province,
+                        confidence,
+                        source,
+                        comp_data["last_detected"],
+                        active_ads,
+                        len(ads),
+                        json.dumps(comp_data["platforms"]),
+                        json.dumps(comp_data["languages"]),
+                        json.dumps({"inferred_at": datetime.now(timezone.utc).isoformat()}),
+                    ],
+                )
+
+                # Insert ads
+                for ad in ads[:10]:
+                    conn.execute(
+                        """
+                        INSERT INTO competitor_ads (ad_id, page_id, ad_creative_bodies, ad_creative_link_titles,
+                                                   ad_creative_link_descriptions, ad_creative_link_captions,
+                                                   ad_snapshot_url, publisher_platforms, languages, media_type,
+                                                   ad_creation_time, ad_delivery_start_time, ad_delivery_stop_time, is_active)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            ad["id"],
+                            page["page_id"],
+                            json.dumps(ad.get("ad_creative_bodies") or []),
+                            json.dumps(ad.get("ad_creative_link_titles") or []),
+                            json.dumps(ad.get("ad_creative_link_descriptions") or []),
+                            json.dumps(ad.get("ad_creative_link_captions") or []),
+                            ad.get("ad_snapshot_url"),
+                            json.dumps(ad.get("publisher_platforms") or []),
+                            json.dumps(ad.get("languages") or []),
+                            ad.get("media_type"),
+                            ad.get("ad_creation_time"),
+                            ad.get("ad_delivery_start_time"),
+                            ad.get("ad_delivery_stop_time"),
+                            _is_active(ad),
+                        ],
+                    )
+
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                # Log but don't fail — data returned in real-time
+                print(f"DuckDB persist error: {e}")
+
+        # 6. Rank by activity
+        competitors_data.sort(key=lambda c: c["active_ads"], reverse=True)
+
+        # 7. Split Ecuador vs Province
+        ecuador_top5 = [
+            {**c, "rank": i + 1}
+            for i, c in enumerate(competitors_data[:5])
+        ]
+
+        province_top5 = [
+            {**c, "rank": i + 1}
+            for i, c in enumerate(
+                [c for c in competitors_data if c["province"] == client_province][:5]
+            )
+        ]
+
+        sync_duration = time.time() - start_time
+
+        return {
+            "client_page": {
+                "page_id": page_id,
+                "name": page_name,
+                "category": category,
+                "province": client_province,
+                "province_confidence": client_confidence,
+                "province_source": client_source,
+            },
+            "ecuador_top5": ecuador_top5,
+            "province_top5": province_top5,
+            "metadata": {
+                "total_competitors_detected": len(competitors_data),
+                "ecuador_competitors": len(competitors_data),
+                "province_competitors": len(
+                    [c for c in competitors_data if c["province"] == client_province]
+                ),
+                "last_sync": datetime.now(timezone.utc).isoformat(),
+                "sync_duration_seconds": sync_duration,
+            },
+        }
+
+    except MetaGraphApiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc

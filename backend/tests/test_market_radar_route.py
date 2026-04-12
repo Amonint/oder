@@ -31,7 +31,7 @@ def test_market_radar_detects_category(client):
     assert r.status_code == 200
     body = r.json()
     assert body["client_page"]["category"] == "Education"
-    assert "educación superior" in body["client_page"]["keywords_used"]
+    assert body["client_page"]["keywords_used"] == ["Education"]
     assert body["competitors"] == []
 
 
@@ -107,4 +107,40 @@ def test_market_radar_unknown_category_uses_page_name(client):
     )
     r = client.get("/api/v1/competitor/market-radar?page_id=page_xyz")
     body = r.json()
-    assert "Bodega Estudio" in body["client_page"]["keywords_used"]
+    assert body["client_page"]["keywords_used"] == ["Bodega Estudio"]
+
+
+@respx.mock
+def test_market_radar_extended(client):
+    """Test /market-radar-extended endpoint with full ad details and province inference."""
+    # Mock page data
+    respx.get("https://graph.facebook.com/v25.0/page_edu").mock(
+        return_value=httpx.Response(
+            200,
+            json={"id": "page_edu", "name": "Rectoral Board", "category": "Education"},
+        )
+    )
+    # Mock search ads by terms (competitors found)
+    respx.get("https://graph.facebook.com/v25.0/ads_archive").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"page_id": "comp_001", "name": "UDUAL"},
+                    {"page_id": "comp_002", "name": "Tech Academy"},
+                ]
+            },
+        )
+    )
+    r = client.get("/api/v1/competitor/market-radar-extended?page_id=page_edu")
+    assert r.status_code == 200
+    body = r.json()
+    assert "client_page" in body
+    assert body["client_page"]["page_id"] == "page_edu"
+    assert body["client_page"]["name"] == "Rectoral Board"
+    assert "ecuador_top5" in body
+    assert "province_top5" in body
+    assert "metadata" in body
+    assert "total_competitors_detected" in body["metadata"]
+    assert "last_sync" in body["metadata"]
+    assert "sync_duration_seconds" in body["metadata"]
