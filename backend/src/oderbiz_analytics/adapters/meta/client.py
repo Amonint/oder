@@ -156,7 +156,7 @@ class MetaGraphClient:
         payload = r.json()
         data = payload.get("data", [])
         if not isinstance(data, list):
-            raise MetaGraphApiError(status_code=502, message="Respuesta de /ads_archive sin lista `data`")
+            raise MetaGraphApiError(status_code=502, message="Respuesta de /ad_library sin lista `data`")
         return data
 
     async def lookup_page(
@@ -298,7 +298,7 @@ class MetaGraphClient:
         payload = r.json()
         data = payload.get("data", [])
         if not isinstance(data, list):
-            raise MetaGraphApiError(status_code=502, message="Respuesta de /ads_archive sin lista `data`")
+            raise MetaGraphApiError(status_code=502, message="Respuesta de /ad_library sin lista `data`")
         seen: set[str] = set()
         pages: list[dict] = []
         for ad in data:
@@ -308,6 +308,42 @@ class MetaGraphClient:
                 seen.add(pid)
                 pages.append({"page_id": pid, "name": pname})
         return pages
+
+
+    async def search_ads_with_history(
+        self,
+        *,
+        search_terms: str,
+        countries: list[str],
+        limit: int = 100,
+    ) -> list[dict]:
+        """Busca anuncios con historial completo (fechas de creación y entrega)."""
+        fields = (
+            "id,page_id,page_name,ad_creation_time,ad_delivery_start_time,ad_delivery_stop_time,"
+            "ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,"
+            "ad_creative_link_captions,ad_snapshot_url,publisher_platforms,languages,media_type"
+        )
+        r = await self._client.get(
+            f"{self._base}/ads_archive",
+            params={
+                "search_terms": search_terms,
+                "ad_reached_countries": json.dumps(countries),
+                "ad_active_status": "ALL",
+                "fields": fields,
+                "limit": limit,
+                "access_token": self._token,
+            },
+        )
+        if r.is_error:
+            raise MetaGraphApiError(
+                status_code=r.status_code,
+                message=_meta_error_message(r),
+            )
+        payload = r.json()
+        data = payload.get("data", [])
+        if not isinstance(data, list):
+            raise MetaGraphApiError(status_code=502, message="Respuesta de /ad_library sin lista `data`")
+        return data
 
     async def get_page_location(self, page_id: str) -> dict:
         """Get page location (city, state, country, etc)."""

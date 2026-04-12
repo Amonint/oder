@@ -545,3 +545,105 @@ async def get_market_radar_extended(
 
     except MetaGraphApiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.get("/market-radar-temporal")
+async def get_market_radar_temporal(
+    page_id: str,
+    search_term: str = "psicólogo",
+    country: str = "EC",
+    client: MetaGraphClient = Depends(get_meta_graph_client),
+) -> dict:
+    """
+    Análisis temporal de competencia: cuándo y cómo frecuentemente pautan los competidores.
+    
+    Devuelve:
+    - Competidores encontrados
+    - Frecuencia de pauta (mensual, anual)
+    - Patrones estacionales
+    - Días preferidos de pauta
+    """
+    try:
+        # 1. Buscar anuncios por término
+        ads = await client.search_ads_with_history(
+            search_terms=search_term,
+            countries=[country],
+            limit=100,
+        )
+        
+        if not ads:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontraron anuncios para '{search_term}' en {country}",
+            )
+        
+        # 2. Agrupar por competidor y analizar patrones
+        competitors_temporal = {}
+        
+        for ad in ads:
+            page_id_comp = ad.get("page_id", "")
+            page_name = ad.get("page_name", "Sin nombre")
+            start_date = ad.get("ad_delivery_start_time", "")
+            end_date = ad.get("ad_delivery_stop_time", "")
+            
+            if not page_id_comp or not start_date:
+                continue
+            
+            if page_id_comp not in competitors_temporal:
+                competitors_temporal[page_id_comp] = {
+                    "page_id": page_id_comp,
+                    "page_name": page_name,
+                    "total_ads": 0,
+                    "dates": [],
+                    "months": {},
+                    "days_of_week": {},
+                }
+            
+            competitors_temporal[page_id_comp]["total_ads"] += 1
+            competitors_temporal[page_id_comp]["dates"].append(start_date)
+            
+            # Análisis por mes
+            if len(start_date) >= 7:
+                month_key = start_date[:7]  # YYYY-MM
+                competitors_temporal[page_id_comp]["months"][month_key] = \
+                    competitors_temporal[page_id_comp]["months"].get(month_key, 0) + 1
+            
+            # Análisis por día de semana
+            try:
+                from datetime import datetime as dt
+                date_obj = dt.strptime(start_date, "%Y-%m-%d")
+                day_name = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"][date_obj.weekday()]
+                competitors_temporal[page_id_comp]["days_of_week"][day_name] = \
+                    competitors_temporal[page_id_comp]["days_of_week"].get(day_name, 0) + 1
+            except Exception:
+                pass
+        
+        # 3. Ordenar por frecuencia de pauta
+        competitors_list = sorted(
+            competitors_temporal.values(),
+            key=lambda x: x["total_ads"],
+            reverse=True,
+        )
+        
+        # 4. Top 5 competidores
+        top_competitors = competitors_list[:5]
+        
+        # Limpiar datos para respuesta
+        for comp in top_competitors:
+            del comp["dates"]  # Demasiados datos
+            comp["months"] = dict(sorted(comp["months"].items()))
+            comp["days_of_week"] = dict(sorted(comp["days_of_week"].items()))
+        
+        return {
+            "search_term": search_term,
+            "country": country,
+            "total_competitors_found": len(competitors_temporal),
+            "top_competitors": top_competitors,
+            "summary": {
+                "total_unique_ads": len(ads),
+                "analysis_period": f"Basado en los últimos 100 anuncios encontrados",
+            },
+        }
+        
+    except MetaGraphApiError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
