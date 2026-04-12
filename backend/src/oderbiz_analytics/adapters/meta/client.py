@@ -308,3 +308,17 @@ class MetaGraphClient:
                 seen.add(pid)
                 pages.append({"page_id": pid, "name": pname})
         return pages
+
+    async def get_page_location(self, page_id: str) -> dict:
+        """Get page location (city, state, country, etc)."""
+        r = await self._client.get(
+            f"{self._base}/{page_id}",
+            params={"fields": "location,phone", "access_token": self._token},
+        )
+        if r.is_error:
+            raise MetaGraphApiError(
+                status_code=r.status_code,
+                message=_meta_error_message(r),
+            )
+        data = r.json()
+        return data.get("location", {})
