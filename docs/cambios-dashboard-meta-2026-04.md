@@ -16,13 +16,13 @@ Documento de referencia de lo implementado en la sesión de trabajo: exploració
 
 ### Adaptador `insights` (`backend/src/oderbiz_analytics/adapters/meta/insights.py`)
 
-- Parámetro opcional **`time_increment`** (p. ej. `1` para series diarias).
-- Nueva función **`fetch_insights_all_pages`**: recorre **`paging.next`** hasta un límite de páginas (evita perder filas en cuentas grandes).
+- Parámetro opcional `**time_increment`** (p. ej. `1` para series diarias).
+- Nueva función `**fetch_insights_all_pages**`: recorre `**paging.next**` hasta un límite de páginas (evita perder filas en cuentas grandes).
 
 ### Agregación y mensajería (`backend/src/oderbiz_analytics/services/insights_aggregate.py`)
 
-- **`aggregate_ad_rows`**: agrupa filas diarias por `ad_id` (suma métricas, fusiona `actions` y `cost_per_action_type`).
-- **`summarize_messaging_actions`**: suma valores de `actions` cuyo `action_type` indica mensajería / `total_messaging_connection`.
+- `**aggregate_ad_rows**`: agrupa filas diarias por `ad_id` (suma métricas, fusiona `actions` y `cost_per_action_type`).
+- `**summarize_messaging_actions**`: suma valores de `actions` cuyo `action_type` indica mensajería / `total_messaging_connection`.
 
 ### Entidades Graph (`backend/src/oderbiz_analytics/api/routes/entities.py`)
 
@@ -33,23 +33,23 @@ Documento de referencia de lo implementado en la sesión de trabajo: exploració
 
 ### Rendimiento por anuncio (`backend/src/oderbiz_analytics/api/routes/ads_ranking.py`)
 
-- **`GET /api/v1/accounts/{ad_account_id}/ads/performance`**
-  - Campos de Insights: métricas base + **`actions`** + **`cost_per_action_type`** + identificadores de campaña/conjunto/anuncio.
-  - Query **`campaign_id`**, **`adset_id`**, **`ad_id`** (prioridad: anuncio > conjunto > campaña).
-  - Query opcional **`time_increment`** (`1` = filas diarias; el backend devuelve ranking agregado en `data`).
+- `**GET /api/v1/accounts/{ad_account_id}/ads/performance`**
+  - Campos de Insights: métricas base + `**actions**` + `**cost_per_action_type**` + identificadores de campaña/conjunto/anuncio.
+  - Query `**campaign_id**`, `**adset_id**`, `**ad_id**` (prioridad: anuncio > conjunto > campaña).
+  - Query opcional `**time_increment**` (`1` = filas diarias; el backend devuelve ranking agregado en `data`).
   - Respuesta:
-    - **`data`**: filas listas para ranking (en modo diario, ya agregadas por anuncio con `ad_label`).
-    - **`raw_rows`**: solo si `time_increment=1` (detalle diario crudo).
-    - **`aggregated_by_ad`**: filas agregadas por anuncio cuando aplica.
-    - **`messaging_actions_summary`**: diccionario `action_type → suma`.
-    - **`time_increment`**, **`date_preset`**, **`time_range`**.
+    - `**data**`: filas listas para ranking (en modo diario, ya agregadas por anuncio con `ad_label`).
+    - `**raw_rows**`: solo si `time_increment=1` (detalle diario crudo).
+    - `**aggregated_by_ad**`: filas agregadas por anuncio cuando aplica.
+    - `**messaging_actions_summary**`: diccionario `action_type → suma`.
+    - `**time_increment**`, `**date_preset**`, `**time_range**`.
 
 ### Placements (`backend/src/oderbiz_analytics/api/routes/placement_insights.py`)
 
-- **`GET /api/v1/accounts/{ad_account_id}/insights/placements`**
+- `**GET /api/v1/accounts/{ad_account_id}/insights/placements**`
   - Mismos filtros de fecha y `campaign_id` / `adset_id` / `ad_id` que rendimiento.
-  - **`breakdowns=publisher_platform,platform_position`** (no incluir esos campos en `fields`; vienen por breakdown).
-  - Opcional **`time_increment`**.
+  - `**breakdowns=publisher_platform,platform_position**` (no incluir esos campos en `fields`; vienen por breakdown).
+  - Opcional `**time_increment**`.
 
 ### Registro de rutas (`backend/src/oderbiz_analytics/api/main.py`)
 
@@ -61,19 +61,19 @@ Documento de referencia de lo implementado en la sesión de trabajo: exploració
 
 ### Cliente API (`frontend/src/api/client.ts`)
 
-- Tipos ampliados: **`AdPerformanceRow`** (acciones, fechas, métricas flexibles string/número), **`AdsPerformanceResponse`** (`raw_rows`, `aggregated_by_ad`, `messaging_actions_summary`, `time_increment`).
-- Entidades: **`CampaignRow`**, **`AdsetRow`**, **`AdRow`** con campos alineados al backend.
-- **`fetchAdsPerformance`**: soporta **`timeIncrement`**.
-- Nuevo **`fetchPlacementInsights`** y tipo **`PlacementInsightsResponse`**.
+- Tipos ampliados: `**AdPerformanceRow`** (acciones, fechas, métricas flexibles string/número), `**AdsPerformanceResponse**` (`raw_rows`, `aggregated_by_ad`, `messaging_actions_summary`, `time_increment`).
+- Entidades: `**CampaignRow**`, `**AdsetRow**`, `**AdRow**` con campos alineados al backend.
+- `**fetchAdsPerformance**`: soporta `**timeIncrement**`.
+- Nuevo `**fetchPlacementInsights**` y tipo `**PlacementInsightsResponse**`.
 
 ### Dashboard (`frontend/src/routes/DashboardPage.tsx`)
 
 - **Explorar por estructura**: selects **Campaña → Conjunto → Anuncio** con valores “Todas/Todos”, **chips** con quitar (×) y reset en cascada.
 - **Periodo** (preset) + selector **Rendimiento anuncios**: **Periodo agregado** vs **Diario (suma por anuncio)** (mapea a `time_increment=1`).
-- **Tarjeta Mensajería / WhatsApp**: muestra **`messaging_actions_summary`** cuando hay datos.
+- **Tarjeta Mensajería / WhatsApp**: muestra `**messaging_actions_summary`** cuando hay datos.
 - **Pestaña Catálogo**: tablas/listados de campañas; conjuntos con **JSON de targeting**; anuncios con texto, CTA y **object_story_spec**.
 - **Pestaña Plataformas**: tabla por fila de placement + badges de **gasto agregado** por `plataforma · posición`.
-- **Ranking**: columna **Conjunto**; gráfico usa **`ad_label`**; queries alineadas a filtros + granularidad.
+- **Ranking**: columna **Conjunto**; gráfico usa `**ad_label`**; queries alineadas a filtros + granularidad.
 - **Tabs controlados** (`mainTab`) para cargar placements solo al abrir la pestaña correspondiente.
 
 ---
@@ -90,13 +90,15 @@ Documento de referencia de lo implementado en la sesión de trabajo: exploració
 
 ## Endpoints nuevos o relevantes
 
-| Método | Ruta | Notas |
-|--------|------|--------|
-| GET | `/api/v1/accounts/{id}/campaigns` | Catálogo campañas |
-| GET | `/api/v1/accounts/{id}/adsets?campaign_id=` | Catálogo conjuntos filtrados |
-| GET | `/api/v1/accounts/{id}/ads?campaign_id=` o `?adset_id=` | Catálogo anuncios |
-| GET | `/api/v1/accounts/{id}/ads/performance` | Métricas + filtros + `time_increment` + mensajería |
-| GET | `/api/v1/accounts/{id}/insights/placements` | Facebook / Instagram por posición |
+
+| Método | Ruta                                                    | Notas                                              |
+| ------ | ------------------------------------------------------- | -------------------------------------------------- |
+| GET    | `/api/v1/accounts/{id}/campaigns`                       | Catálogo campañas                                  |
+| GET    | `/api/v1/accounts/{id}/adsets?campaign_id=`             | Catálogo conjuntos filtrados                       |
+| GET    | `/api/v1/accounts/{id}/ads?campaign_id=` o `?adset_id=` | Catálogo anuncios                                  |
+| GET    | `/api/v1/accounts/{id}/ads/performance`                 | Métricas + filtros + `time_increment` + mensajería |
+| GET    | `/api/v1/accounts/{id}/insights/placements`             | Facebook / Instagram por posición                  |
+
 
 ---
 
@@ -105,6 +107,61 @@ Documento de referencia de lo implementado en la sesión de trabajo: exploració
 - Las URLs de paginación de Meta pueden incluir token; no registrar `paging.next` en logs.
 - Si Graph rechaza algún subcampo de `creative`, habría que acortar el `fields` en entidades (no cubierto en este documento).
 - Tests del backend pueden requerir `PYTHONPATH=src` y dependencias (p. ej. `duckdb`) según el entorno.
+
+---
+
+## Extensiones — Analytics avanzado y CRM manual (abril 2026)
+
+### Nuevos endpoints backend
+
+| Método | Ruta | Notas |
+|--------|------|-------|
+| GET | `/api/v1/accounts/{id}/insights/demographics` | Breakdown edad/género/cruce; `?breakdown=age,gender,age,gender` |
+| GET | `/api/v1/accounts/{id}/insights/attribution` | Ventanas `click_1d/7d/28d`, `view_1d/7d`; `?window=click_7d` |
+| GET | `/api/v1/accounts/{id}/insights/leads` | Lead Ads desde Insights; `?level=campaign/ad` |
+| GET | `/api/v1/accounts/{id}/insights/creative-fatigue` | Score 0-100 por anuncio; alertas cuando freq>5 y CTR<1% |
+| POST | `/api/v1/accounts/{id}/manual-data` | Guarda datos comerciales manuales en DuckDB |
+| GET | `/api/v1/accounts/{id}/manual-data` | Lee registros manuales; `?campaign_id=` opcional |
+
+### Extensiones en endpoints existentes
+
+- **`/insights/placements`**: añadidos `cpc`, `frequency`, `pct_spend`, `cpa_derived`; breakdown cambiado a `platform_position`.
+- **`/insights/geo`**: añadidos `results` (principal acción de conversión, sin acciones triviales) y `cpa`.
+
+### Nuevos componentes frontend
+
+| Componente | Propósito |
+|---|---|
+| `DemographicsPanel` | Tabla por edad/género con selector de breakdown |
+| `AttributionWindowPanel` | KPIs (gasto, conversiones, CPA) por ventana de atribución |
+| `LeadsPanel` | Tabla de leads por campaña + resumen con CPA/lead |
+| `CreativeFatigueTable` | Tabla con score 0-100, badges estado, alertas de saturación |
+| `ManualDataPanel` | Formulario para carga manual de datos comerciales |
+| `SemaphoreKpiCard` | Card KPI con indicador semáforo verde/amarillo/rojo |
+| `HealthScoreCard` | Score 0-100 con barra de progreso y desglose por componente |
+| `FunnelExtendedCard` | Embudo Meta Insights + datos manuales con tasas de avance |
+
+### Nuevas utilidades frontend (`src/lib/`)
+
+- **`manualKpis.ts`**: calcula tasa aceptación, cierre, costo/lead, costo/venta, ROAS estimado
+- **`semaphoreRules.ts`**: umbrales configurables por KPI con persistencia en localStorage
+- **`healthScore.ts`**: score ponderado de 5 componentes (CTR, frecuencia, aceptación, cierre, ROAS)
+
+### Nuevas pestañas del Dashboard
+
+| Pestaña | Contenido |
+|---|---|
+| **Demografía** | Rendimiento por edad/género con selector de cruce |
+| **Atribución** | Comparación de gasto y conversiones por ventana |
+| **Leads** | Módulo Lead Ads con KPIs y tabla por campaña |
+| **Fatiga creativa** | Diagnóstico de saturación por anuncio con alertas |
+| **Comercial** | KPIs manuales + embudo extendido + score de salud |
+
+### Mejoras a pestañas existentes
+
+- **Geografía**: selector de vista (impresiones/gasto/CPA/resultados) con orden dinámico; columnas Gasto, Resultados, CPA
+- **Plataformas**: tabla extendida a 11 columnas — añade CTR, CPM, CPC, Frecuencia, % Gasto, CPA
+- **Resumen**: KPI derivado "Costo / conversación respondida" (gasto ÷ `messaging_first_reply`)
 
 ---
 
