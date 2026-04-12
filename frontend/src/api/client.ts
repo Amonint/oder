@@ -1006,3 +1006,258 @@ export async function fetchMarketRadarExtended(pageId: string): Promise<MarketRa
   }
   return res.json();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Demographics
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DemographicsRow {
+  age?: string;
+  gender?: string;
+  impressions?: string;
+  clicks?: string;
+  spend?: string;
+  ctr?: string;
+  cpm?: string;
+  cpc?: string;
+  actions?: InsightActionItem[];
+  cost_per_action_type?: InsightActionItem[];
+}
+
+export interface DemographicsResponse {
+  data: DemographicsRow[];
+  breakdown: string;
+  date_preset: string | null;
+  time_range: { since: string; until: string } | null;
+  note: string;
+}
+
+export async function fetchDemographicsInsights(
+  adAccountId: string,
+  opts: {
+    breakdown?: "age" | "gender" | "age,gender";
+    datePreset?: string;
+    dateStart?: string;
+    dateStop?: string;
+    campaignId?: string;
+    adsetId?: string;
+    adId?: string;
+  }
+): Promise<DemographicsResponse> {
+  const q = new URLSearchParams();
+  if (opts.breakdown) q.set("breakdown", opts.breakdown);
+  if (opts.dateStart && opts.dateStop) {
+    q.set("date_start", opts.dateStart);
+    q.set("date_stop", opts.dateStop);
+  } else if (opts.datePreset) {
+    q.set("date_preset", opts.datePreset);
+  }
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.adsetId) q.set("adset_id", opts.adsetId);
+  if (opts.adId) q.set("ad_id", opts.adId);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/demographics?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Attribution Windows
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface AttributionResponse {
+  data: { spend?: string; actions?: InsightActionItem[]; cost_per_action_type?: InsightActionItem[] }[];
+  window: string;
+  window_label: string;
+  available_windows: Record<string, string>;
+  date_preset: string | null;
+  time_range: { since: string; until: string } | null;
+  note: string;
+}
+
+export async function fetchAttributionInsights(
+  adAccountId: string,
+  opts: {
+    window?: string;
+    datePreset?: string;
+    dateStart?: string;
+    dateStop?: string;
+    campaignId?: string;
+    adId?: string;
+  }
+): Promise<AttributionResponse> {
+  const q = new URLSearchParams();
+  if (opts.window) q.set("window", opts.window);
+  if (opts.dateStart && opts.dateStop) {
+    q.set("date_start", opts.dateStart);
+    q.set("date_stop", opts.dateStop);
+  } else if (opts.datePreset) {
+    q.set("date_preset", opts.datePreset);
+  }
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.adId) q.set("ad_id", opts.adId);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/attribution?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Leads
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface LeadsRow {
+  campaign_id?: string;
+  campaign_name?: string;
+  ad_id?: string;
+  ad_name?: string;
+  spend?: string;
+  leads_insights: number;
+  cpa_lead: number | null;
+  actions?: InsightActionItem[];
+}
+
+export interface LeadsResponse {
+  data: LeadsRow[];
+  summary: {
+    total_leads_insights: number;
+    total_spend: number;
+    avg_cpa_lead: number | null;
+  };
+  level: string;
+  date_preset: string | null;
+  time_range: { since: string; until: string } | null;
+  note: string;
+}
+
+export async function fetchLeadsInsights(
+  adAccountId: string,
+  opts: {
+    level?: "account" | "campaign" | "ad";
+    datePreset?: string;
+    dateStart?: string;
+    dateStop?: string;
+    campaignId?: string;
+  }
+): Promise<LeadsResponse> {
+  const q = new URLSearchParams();
+  if (opts.level) q.set("level", opts.level);
+  if (opts.dateStart && opts.dateStop) {
+    q.set("date_start", opts.dateStart);
+    q.set("date_stop", opts.dateStop);
+  } else if (opts.datePreset) {
+    q.set("date_preset", opts.datePreset);
+  }
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/leads?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Creative Fatigue
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface FatigueRow {
+  ad_id: string;
+  ad_name: string;
+  impressions: number;
+  frequency: number;
+  spend: number;
+  ctr: number;
+  results: number;
+  cpa: number | null;
+  fatigue_score: number;
+  fatigue_status: "healthy" | "watch" | "fatigued";
+}
+
+export interface FatigueAlert {
+  ad_id: string;
+  ad_name: string;
+  type: string;
+  message: string;
+}
+
+export interface CreativeFatigueResponse {
+  data: FatigueRow[];
+  alerts: FatigueAlert[];
+  date_preset: string | null;
+  time_range: { since: string; until: string } | null;
+}
+
+export async function fetchCreativeFatigue(
+  adAccountId: string,
+  opts: {
+    datePreset?: string;
+    dateStart?: string;
+    dateStop?: string;
+    campaignId?: string;
+    adsetId?: string;
+  }
+): Promise<CreativeFatigueResponse> {
+  const q = new URLSearchParams();
+  if (opts.dateStart && opts.dateStop) {
+    q.set("date_start", opts.dateStart);
+    q.set("date_stop", opts.dateStop);
+  } else if (opts.datePreset) {
+    q.set("date_preset", opts.datePreset);
+  }
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.adsetId) q.set("adset_id", opts.adsetId);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/creative-fatigue?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Manual CRM Data
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ManualDataRecord {
+  id?: string;
+  account_id: string;
+  campaign_id?: string | null;
+  ad_id?: string | null;
+  useful_messages: number;
+  accepted_leads: number;
+  quotes_sent: number;
+  sales_closed: number;
+  avg_ticket: number;
+  estimated_revenue: number;
+  notes: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ManualDataResponse {
+  data: ManualDataRecord[];
+  account_id: string;
+}
+
+export async function saveManualData(
+  adAccountId: string,
+  record: Omit<ManualDataRecord, "id" | "created_at" | "updated_at">
+): Promise<ManualDataRecord> {
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/manual-data`;
+  const r = await apiFetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(record),
+  });
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export async function fetchManualData(
+  adAccountId: string,
+  opts: { campaignId?: string } = {}
+): Promise<ManualDataResponse> {
+  const q = new URLSearchParams();
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/manual-data?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
