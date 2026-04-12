@@ -23,6 +23,14 @@ import DemographicsPanel from "@/components/DemographicsPanel";
 import AttributionWindowPanel from "@/components/AttributionWindowPanel";
 import LeadsPanel from "@/components/LeadsPanel";
 import CreativeFatigueTable from "@/components/CreativeFatigueTable";
+import ManualDataPanel from "@/components/ManualDataPanel";
+import SemaphoreKpiCard from "@/components/SemaphoreKpiCard";
+import HealthScoreCard from "@/components/HealthScoreCard";
+import FunnelExtendedCard from "@/components/FunnelExtendedCard";
+import { fetchManualData } from "@/api/client";
+import { computeManualKpis, aggregateManualRecords } from "@/lib/manualKpis";
+import { loadThresholds, evaluateSemaphore } from "@/lib/semaphoreRules";
+import { computeHealthScore } from "@/lib/healthScore";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import GeoMap from "@/components/GeoMap";
@@ -108,6 +116,7 @@ export default function DashboardPage() {
   const [customDateStop, setCustomDateStop] = useState<string | null>(null);
   const [demographicsBreakdown, setDemographicsBreakdown] = useState<"age" | "gender" | "age,gender">("age");
   const [attributionWindow, setAttributionWindow] = useState<string>("click_7d");
+  const [showManualForm, setShowManualForm] = useState(false);
   const hasToken = Boolean(getMetaAccessToken());
   const id = accountId ? decodeURIComponent(accountId) : "";
   const campaignKey = campaignSelect !== ALL ? campaignSelect : null;
@@ -262,6 +271,13 @@ export default function DashboardPage() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const manualDataQuery = useQuery({
+    queryKey: ["manual-data", id, campaignKey],
+    queryFn: () => fetchManualData(id, { campaignId: campaignKey ?? undefined }),
+    enabled: hasToken && Boolean(id) && mainTab === "comercial",
+    staleTime: 5 * 60 * 1000,
+  });
+
   const effectiveDateParams = useMemo(() => {
     if (datePreset === "today") {
       const today = new Date().toISOString().slice(0, 10);
@@ -383,6 +399,26 @@ export default function DashboardPage() {
       color: "var(--chart-1)",
     },
   } satisfies ChartConfig;
+
+  const thresholds = useMemo(() => loadThresholds(), []);
+
+  const aggregatedManual = useMemo(() => {
+    const rows = manualDataQuery.data?.data ?? [];
+    if (rows.length === 0) return null;
+    return aggregateManualRecords(rows);
+  }, [manualDataQuery.data]);
+
+  const manualKpis = useMemo(() => {
+    if (!aggregatedManual) return null;
+    const spend = Number(data?.summary?.spend ?? 0);
+    return computeManualKpis(aggregatedManual, spend);
+  }, [aggregatedManual, data?.summary]);
+
+  const healthScore = useMemo(() => {
+    const ctr = data?.summary?.ctr != null ? Number(data.summary.ctr) : null;
+    const frequency = data?.summary?.frequency != null ? Number(data.summary.frequency) : null;
+    return computeHealthScore({ ctr, frequency, manualKpis }, thresholds);
+  }, [data?.summary, manualKpis, thresholds]);
 
   if (!hasToken) {
     return <Navigate to="/" replace />;
@@ -680,6 +716,7 @@ export default function DashboardPage() {
           <TabsTrigger value="atribucion">Atribución</TabsTrigger>
           <TabsTrigger value="leads">Leads</TabsTrigger>
           <TabsTrigger value="fatiga">Fatiga creativa</TabsTrigger>
+          <TabsTrigger value="comercial">Comercial</TabsTrigger>
         </TabsList>
 
         {/* ── Tab: Resumen ── */}
@@ -1484,6 +1521,93 @@ export default function DashboardPage() {
             isError={fatigueQuery.isError}
             errorMessage={fatigueQuery.error instanceof Error ? fatigueQuery.error.message : undefined}
           />
+        </TabsContent>
+
+        {/* ── Tab: Comercial (manual CRM + health score) ── */}
+        <TabsContent value="comercial" className="space-y-6 pt-4">
+          {(() => {
+            const actions = data?.actions ?? [];
+            const conversationsStarted = actions
+              .filter((a) => String(a.action_type) === "onsite_conversion.messaging_conversation_started_7d")
+              .reduce((s, a) => s + Number(a.value ?? 0), 0);
+            const firstReplies = actions
+              .filter((a) => String(a.action_type) === "messaging_first_reply")
+              .reduce((s, a) => s + Number(a.value ?? 0), 0);
+
+            return (
+              <div className="grid gap-6 lg:grid-cols-3">
+                <div className="lg:col-span-2 space-y-6">
+                  <div>
+                    <h2 className="text-foreground text-lg font-semibold mb-3">KPIs comerciales</h2>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <SemaphoreKpiCard
+                        label="Tasa de aceptación"
+                        value={manualKpis?.acceptance_rate != null ? `${(manualKpis.acceptance_rate * 100).toFixed(1)}%` : "—"}
+                        tooltip="Leads aceptados ÷ mensajes útiles. Indica calidad de conversaciones."
+                        status={evaluateSemaphore(manualKpis?.acceptance_rate ?? null, thresholds.acceptance_rate)}
+                      />
+                      <SemaphoreKpiCard
+                        label="Tasa de cierre"
+                        value={manualKpis?.close_rate != null ? `${(manualKpis.close_rate * 100).toFixed(1)}%` : "—"}
+                        tooltip="Ventas cerradas ÷ leads aceptados. Indica efectividad de ventas."
+                        status={evaluateSemaphore(manualKpis?.close_rate ?? null, thresholds.close_rate)}
+                      />
+                      <SemaphoreKpiCard
+                        label="Costo por lead aceptado"
+                        value={manualKpis?.cost_per_accepted_lead != null ? `$${manualKpis.cost_per_accepted_lead.toFixed(2)}` : "—"}
+                        tooltip="Gasto de Meta ÷ leads aceptados. Métrica de eficiencia real."
+                        status={evaluateSemaphore(manualKpis?.cost_per_accepted_lead ?? null, thresholds.cost_per_accepted_lead)}
+                      />
+                      <SemaphoreKpiCard
+                        label="Costo por venta"
+                        value={manualKpis?.cost_per_sale != null ? `$${manualKpis.cost_per_sale.toFixed(2)}` : "—"}
+                        tooltip="Gasto de Meta ÷ ventas cerradas. Costo real de adquisición de cliente."
+                        status={evaluateSemaphore(manualKpis?.cost_per_sale ?? null, thresholds.cost_per_sale)}
+                      />
+                      <SemaphoreKpiCard
+                        label="Ingreso estimado"
+                        value={manualKpis?.estimated_revenue != null && manualKpis.estimated_revenue > 0 ? `$${manualKpis.estimated_revenue.toFixed(2)}` : "—"}
+                        tooltip="Ventas cerradas × ticket promedio, o ingreso real si fue ingresado."
+                        status="gray"
+                      />
+                      <SemaphoreKpiCard
+                        label="ROAS estimado"
+                        value={manualKpis?.estimated_roas != null ? `${manualKpis.estimated_roas.toFixed(2)}x` : "—"}
+                        tooltip="Ingreso estimado ÷ gasto. ROAS calculado desde datos manuales."
+                        status={evaluateSemaphore(manualKpis?.estimated_roas ?? null, thresholds.roas)}
+                      />
+                    </div>
+                  </div>
+
+                  <FunnelExtendedCard
+                    conversationsStarted={conversationsStarted}
+                    firstReplies={firstReplies}
+                    manualRecord={aggregatedManual}
+                  />
+                </div>
+
+                <div className="space-y-4">
+                  <HealthScoreCard result={healthScore} />
+
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setShowManualForm((v) => !v)}
+                  >
+                    {showManualForm ? "Cerrar formulario" : "Ingresar datos manuales"}
+                  </Button>
+
+                  {showManualForm && (
+                    <ManualDataPanel
+                      adAccountId={id}
+                      campaignId={campaignKey}
+                      onSaved={() => setShowManualForm(false)}
+                    />
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </TabsContent>
       </Tabs>
     </div>
