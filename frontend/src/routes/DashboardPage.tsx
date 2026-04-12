@@ -106,6 +106,25 @@ function formatNum(n: number): string {
   return n.toLocaleString("es", { maximumFractionDigits: 2 });
 }
 
+/** Computes start/end of the previous period of same length */
+function computePrevPeriod(dateStart: string, dateStop: string): { dateStart: string; dateStop: string } {
+  const start = new Date(dateStart + "T00:00:00Z");
+  const stop = new Date(dateStop + "T00:00:00Z");
+  const diffMs = stop.getTime() - start.getTime() + 86_400_000; // inclusive
+  const prevStop = new Date(start.getTime() - 86_400_000);
+  const prevStart = new Date(prevStop.getTime() - diffMs + 86_400_000);
+  return {
+    dateStart: prevStart.toISOString().slice(0, 10),
+    dateStop: prevStop.toISOString().slice(0, 10),
+  };
+}
+
+/** Returns % change, null if previous is 0 */
+function deltaPercent(current: number, previous: number): number | null {
+  if (previous === 0) return null;
+  return ((current - previous) / previous) * 100;
+}
+
 interface ActionDistributionSectionProps {
   adRows: AdPerformanceRow[];
   availableTypes: string[];
@@ -288,6 +307,23 @@ export default function DashboardPage() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const prevPeriod = useMemo(() => {
+    if (!data?.date_start || !data?.date_stop) return null;
+    return computePrevPeriod(data.date_start, data.date_stop);
+  }, [data?.date_start, data?.date_stop]);
+
+  const prevDashboardQuery = useQuery({
+    queryKey: ["dashboard-prev", id, prevPeriod?.dateStart, prevPeriod?.dateStop, campaignKey],
+    queryFn: () =>
+      fetchAccountDashboard(id, "last_30d", {
+        campaignId: campaignKey ?? undefined,
+        dateStart: prevPeriod!.dateStart,
+        dateStop: prevPeriod!.dateStop,
+      }),
+    enabled: hasToken && Boolean(id) && Boolean(prevPeriod),
+    staleTime: 5 * 60 * 1000,
+  });
+
   const accountsQuery = useQuery({
     queryKey: ["accounts"],
     queryFn: fetchAdAccounts,
@@ -361,7 +397,7 @@ export default function DashboardPage() {
       }
       return fetchPlacementInsights(id, opts);
     },
-    enabled: hasToken && Boolean(id) && mainTab === "plataformas",
+    enabled: hasToken && Boolean(id) && mainTab === "audiencia",
   });
 
   const accountLabel =
@@ -390,7 +426,7 @@ export default function DashboardPage() {
       ...effectiveDateParams,
       campaignId: campaignKey ?? undefined,
     }),
-    enabled: hasToken && Boolean(id) && mainTab === "demografia",
+    enabled: hasToken && Boolean(id) && mainTab === "audiencia",
     staleTime: 5 * 60 * 1000,
   });
 
@@ -401,7 +437,7 @@ export default function DashboardPage() {
       ...effectiveDateParams,
       campaignId: campaignKey ?? undefined,
     }),
-    enabled: hasToken && Boolean(id) && mainTab === "atribucion",
+    enabled: hasToken && Boolean(id) && mainTab === "avanzado",
     staleTime: 5 * 60 * 1000,
   });
 
@@ -412,7 +448,7 @@ export default function DashboardPage() {
       ...effectiveDateParams,
       campaignId: campaignKey ?? undefined,
     }),
-    enabled: hasToken && Boolean(id) && mainTab === "leads",
+    enabled: hasToken && Boolean(id) && mainTab === "comercial",
     staleTime: 5 * 60 * 1000,
   });
 
@@ -423,7 +459,7 @@ export default function DashboardPage() {
       campaignId: campaignKey ?? undefined,
       adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
     }),
-    enabled: hasToken && Boolean(id) && mainTab === "fatiga",
+    enabled: hasToken && Boolean(id) && mainTab === "creatividades",
     staleTime: 5 * 60 * 1000,
   });
 
@@ -863,16 +899,10 @@ export default function DashboardPage() {
       <Tabs value={mainTab} onValueChange={setMainTab}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="resumen">Resumen</TabsTrigger>
-          <TabsTrigger value="ranking">Ranking</TabsTrigger>
-          <TabsTrigger value="catalogo">Catálogo</TabsTrigger>
-          <TabsTrigger value="plataformas">Plataformas</TabsTrigger>
-          <TabsTrigger value="geografia">Geografía</TabsTrigger>
-          <TabsTrigger value="targeting">Targeting</TabsTrigger>
-          <TabsTrigger value="demografia">Demografía</TabsTrigger>
-          <TabsTrigger value="atribucion">Atribución</TabsTrigger>
-          <TabsTrigger value="leads">Leads</TabsTrigger>
-          <TabsTrigger value="fatiga">Fatiga creativa</TabsTrigger>
+          <TabsTrigger value="creatividades">Creatividades</TabsTrigger>
+          <TabsTrigger value="audiencia">Audiencia</TabsTrigger>
           <TabsTrigger value="comercial">Comercial</TabsTrigger>
+          <TabsTrigger value="avanzado">Avanzado</TabsTrigger>
         </TabsList>
 
         {/* ── Tab: Resumen ── */}
@@ -896,6 +926,63 @@ export default function DashboardPage() {
 
           {data && !isLoading ? (
             <>
+              {/* ── Banner de estado ── */}
+              {(() => {
+                const ctr = Number(data.summary.ctr ?? 0);
+                const freq = Number(data.summary.frequency ?? 0);
+                const spend = Number(data.summary.spend ?? 0);
+                if (spend === 0) return null;
+
+                type Signal = { text: string; level: "red" | "yellow" | "green" };
+                const signals: Signal[] = [];
+
+                // CTR signal
+                if (ctr < 0.5) signals.push({ text: "CTR crítico (<0.5%) — revisar creatividades", level: "red" });
+                else if (ctr < 1) signals.push({ text: "CTR bajo (<1%) — considerar nuevos creativos", level: "yellow" });
+                else signals.push({ text: `CTR en rango (${ctr.toFixed(2)}%)`, level: "green" });
+
+                // Frequency signal
+                if (freq > 5) signals.push({ text: `Frecuencia alta (${freq.toFixed(1)}) — riesgo saturación`, level: "red" });
+                else if (freq > 3) signals.push({ text: `Frecuencia elevada (${freq.toFixed(1)}) — vigilar fatiga`, level: "yellow" });
+
+                // CPA delta signal (only if prev period loaded)
+                const prevSpend = Number(prevDashboardQuery.data?.summary?.spend ?? 0);
+                if (prevSpend > 0) {
+                  const spendDelta = deltaPercent(spend, prevSpend);
+                  if (spendDelta !== null) {
+                    const positive = spendDelta >= 0;
+                    signals.push({
+                      text: `Gasto ${positive ? "▲" : "▼"} ${Math.abs(spendDelta).toFixed(0)}% vs período anterior`,
+                      level: positive ? "yellow" : "green",
+                    });
+                  }
+                }
+
+                const colorMap: Record<string, string> = {
+                  red: "bg-red-50 text-red-800 border border-red-200",
+                  yellow: "bg-yellow-50 text-yellow-800 border border-yellow-200",
+                  green: "bg-green-50 text-green-800 border border-green-200",
+                };
+                const dotMap: Record<string, string> = {
+                  red: "bg-red-500",
+                  yellow: "bg-yellow-500",
+                  green: "bg-green-500",
+                };
+
+                return (
+                  <div className="flex flex-wrap gap-2">
+                    {signals.map((s, i) => (
+                      <span
+                        key={i}
+                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${colorMap[s.level]}`}
+                      >
+                        <span className={`h-1.5 w-1.5 rounded-full ${dotMap[s.level]}`} />
+                        {s.text}
+                      </span>
+                    ))}
+                  </div>
+                );
+              })()}
               <TooltipProvider delayDuration={300}>
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                   {Object.entries(data.summary).map(([key, val]) => {
@@ -911,6 +998,22 @@ export default function DashboardPage() {
                             {tipText && <InfoTooltip text={tipText} />}
                           </CardDescription>
                           <CardTitle className="text-2xl tabular-nums">{formatNum(val)}</CardTitle>
+                          {/* Delta vs previous period */}
+                          {(() => {
+                            const prevVal = Number(prevDashboardQuery.data?.summary?.[key] ?? 0);
+                            const currVal = Number(val);
+                            if (!prevDashboardQuery.data || prevVal === 0) return null;
+                            const delta = deltaPercent(currVal, prevVal);
+                            if (delta === null) return null;
+                            const isPositiveGood = !["cpm", "cpp", "frequency"].includes(key);
+                            const positive = delta >= 0;
+                            const good = isPositiveGood ? positive : !positive;
+                            return (
+                              <p className={`text-xs font-medium tabular-nums ${good ? "text-green-600" : "text-red-600"}`}>
+                                {positive ? "▲" : "▼"} {Math.abs(delta).toFixed(1)}% vs período anterior
+                              </p>
+                            );
+                          })()}
                         </CardHeader>
                       </Card>
                     );
@@ -1168,8 +1271,10 @@ export default function DashboardPage() {
           ) : null}
         </TabsContent>
 
-        {/* ── Tab: Ranking ── */}
-        <TabsContent value="ranking" className="space-y-6 pt-4">
+        {/* ── Tab: Creatividades (ranking + catálogo + fatiga) ── */}
+        <TabsContent value="creatividades" className="space-y-6 pt-4">
+
+          <h3 className="text-foreground text-lg font-semibold">Ranking de anuncios</h3>
           <div className="flex items-center gap-3">
             <span className="text-muted-foreground text-sm">Métrica:</span>
             <Select value={rankingMetric} onValueChange={(v) => setRankingMetric(v as typeof rankingMetric)}>
@@ -1324,10 +1429,9 @@ export default function DashboardPage() {
               </Card>
             </>
           ) : null}
-        </TabsContent>
 
-        {/* ── Tab: Catálogo (estructura Meta) ── */}
-        <TabsContent value="catalogo" className="space-y-6 pt-4">
+          <Separator className="my-4" />
+          <h3 className="text-foreground text-lg font-semibold">Catálogo</h3>
           <Card>
             <CardHeader>
               <CardTitle>Campañas</CardTitle>
@@ -1461,10 +1565,21 @@ export default function DashboardPage() {
               )}
             </CardContent>
           </Card>
+
+          <Separator className="my-4" />
+          <h3 className="text-foreground text-lg font-semibold">Fatiga creativa</h3>
+          <CreativeFatigueTable
+            data={fatigueQuery.data?.data}
+            alerts={fatigueQuery.data?.alerts}
+            isLoading={fatigueQuery.isLoading}
+            isError={fatigueQuery.isError}
+            errorMessage={fatigueQuery.error instanceof Error ? fatigueQuery.error.message : undefined}
+          />
         </TabsContent>
 
-        {/* ── Tab: Plataformas / placements ── */}
-        <TabsContent value="plataformas" className="space-y-6 pt-4">
+        {/* ── Tab: Audiencia (plataformas + geografía + demografía) ── */}
+        <TabsContent value="audiencia" className="space-y-6 pt-4">
+          <h3 className="text-foreground text-lg font-semibold">Plataformas</h3>
           <Card>
             <CardHeader>
               <CardTitle>Gasto por plataforma y posición</CardTitle>
@@ -1568,10 +1683,9 @@ export default function DashboardPage() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
 
-        {/* ── Tab: Geografía ── */}
-        <TabsContent value="geografia" className="space-y-6 pt-4">
+          <Separator className="my-4" />
+          <h3 className="text-foreground text-lg font-semibold">Geografía</h3>
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-muted-foreground text-sm">Ámbito:</span>
             <Select value={geoScope} onValueChange={(v) => setGeoScope(v as "account" | "ad")}>
@@ -1601,7 +1715,7 @@ export default function DashboardPage() {
             <Alert>
               <AlertTitle>Selecciona un anuncio</AlertTitle>
               <AlertDescription>
-                Ve a la pestaña <strong>Ranking</strong>, haz clic en una fila para seleccionar un anuncio y luego vuelve aquí.
+                Ve a la pestaña <strong>Creatividades</strong>, haz clic en una fila para seleccionar un anuncio y luego vuelve aquí.
               </AlertDescription>
             </Alert>
           ) : null}
@@ -1707,10 +1821,22 @@ export default function DashboardPage() {
               </Card>
             </>
           ) : null}
+
+          <Separator className="my-4" />
+          <h3 className="text-foreground text-lg font-semibold">Demografía</h3>
+          <DemographicsPanel
+            data={demographicsQuery.data?.data}
+            isLoading={demographicsQuery.isLoading}
+            isError={demographicsQuery.isError}
+            errorMessage={demographicsQuery.error instanceof Error ? demographicsQuery.error.message : undefined}
+            breakdown={demographicsBreakdown}
+            onBreakdownChange={setDemographicsBreakdown}
+          />
         </TabsContent>
 
-        {/* ── Tab: Targeting ── */}
-        <TabsContent value="targeting" className="pt-4">
+        {/* ── Tab: Avanzado (targeting + atribución) ── */}
+        <TabsContent value="avanzado" className="space-y-6 pt-4">
+          <h3 className="text-foreground text-lg font-semibold">Targeting</h3>
           <Card>
             <CardHeader>
               <CardTitle>Targeting del anuncio seleccionado</CardTitle>
@@ -1723,7 +1849,7 @@ export default function DashboardPage() {
                 <Alert>
                   <AlertTitle>Sin anuncio seleccionado</AlertTitle>
                   <AlertDescription>
-                    Ve a la pestaña <strong>Ranking</strong>, haz clic en una fila para seleccionar un anuncio y luego vuelve aquí.
+                    Ve a la pestaña <strong>Creatividades</strong>, haz clic en una fila para seleccionar un anuncio y luego vuelve aquí.
                   </AlertDescription>
                 </Alert>
               ) : targetingQuery.isLoading ? (
@@ -1744,22 +1870,9 @@ export default function DashboardPage() {
               ) : null}
             </CardContent>
           </Card>
-        </TabsContent>
 
-        {/* ── Tab: Demografía ── */}
-        <TabsContent value="demografia" className="pt-4">
-          <DemographicsPanel
-            data={demographicsQuery.data?.data}
-            isLoading={demographicsQuery.isLoading}
-            isError={demographicsQuery.isError}
-            errorMessage={demographicsQuery.error instanceof Error ? demographicsQuery.error.message : undefined}
-            breakdown={demographicsBreakdown}
-            onBreakdownChange={setDemographicsBreakdown}
-          />
-        </TabsContent>
-
-        {/* ── Tab: Atribución ── */}
-        <TabsContent value="atribucion" className="pt-4">
+          <Separator className="my-4" />
+          <h3 className="text-foreground text-lg font-semibold">Atribución</h3>
           <AttributionWindowPanel
             data={attributionQuery.data}
             isLoading={attributionQuery.isLoading}
@@ -1770,29 +1883,18 @@ export default function DashboardPage() {
           />
         </TabsContent>
 
-        {/* ── Tab: Leads ── */}
-        <TabsContent value="leads" className="pt-4">
+        {/* ── Tab: Comercial (leads + datos comerciales) ── */}
+        <TabsContent value="comercial" className="space-y-6 pt-4">
+          <h3 className="text-foreground text-lg font-semibold">Lead Ads</h3>
           <LeadsPanel
             data={leadsQuery.data}
             isLoading={leadsQuery.isLoading}
             isError={leadsQuery.isError}
             errorMessage={leadsQuery.error instanceof Error ? leadsQuery.error.message : undefined}
           />
-        </TabsContent>
 
-        {/* ── Tab: Fatiga creativa ── */}
-        <TabsContent value="fatiga" className="pt-4">
-          <CreativeFatigueTable
-            data={fatigueQuery.data?.data}
-            alerts={fatigueQuery.data?.alerts}
-            isLoading={fatigueQuery.isLoading}
-            isError={fatigueQuery.isError}
-            errorMessage={fatigueQuery.error instanceof Error ? fatigueQuery.error.message : undefined}
-          />
-        </TabsContent>
-
-        {/* ── Tab: Comercial (manual CRM + health score) ── */}
-        <TabsContent value="comercial" className="space-y-6 pt-4">
+          <Separator className="my-4" />
+          <h3 className="text-foreground text-lg font-semibold">Datos comerciales</h3>
           {(() => {
             const actions = data?.actions ?? [];
             const conversationsStarted = actions
