@@ -61,9 +61,9 @@ function sortRows(rows: FatigueRow[], sortBy: SortBy): FatigueRow[] {
         return rateB - rateA;
       });
     case "scale":
-      // Filter healthy/watch (fatigue_score < 40) then sort by spend desc
+      // Filter non-fatigued ads (healthy or watch) then sort by spend desc
       return copy
-        .filter((r) => r.fatigue_score < 40)
+        .filter((r) => r.fatigue_status !== "fatigued")
         .sort((a, b) => b.spend - a.spend);
     default:
       return copy;
