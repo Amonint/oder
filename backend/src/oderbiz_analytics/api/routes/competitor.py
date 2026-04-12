@@ -18,6 +18,8 @@ from oderbiz_analytics.adapters.meta.client import MetaGraphApiError, MetaGraphC
 from oderbiz_analytics.api.deps import get_meta_graph_client
 from oderbiz_analytics.api.routes.url_parser import ResolveStrategy, parse_competitor_input
 from oderbiz_analytics.services.inference_service import ProvinceInferenceService
+from oderbiz_analytics.services.competitor_classifier import CompetitorClassifier
+from oderbiz_analytics.services.competitor_scoring_service import CompetitorScoringService
 
 router = APIRouter(prefix="/competitor", tags=["competitor"])
 logger = logging.getLogger(__name__)
@@ -552,18 +554,30 @@ async def get_market_radar_temporal(
     page_id: str,
     search_term: str | None = None,
     country: str = "EC",
+    custom_keywords: str = "",
+    min_relevance_score: int = 25,
     client: MetaGraphClient = Depends(get_meta_graph_client),
 ) -> dict:
     """
-    Análisis temporal de competencia con FILTRADO por relevancia.
+    Análisis temporal de competencia con CLASIFICACIÓN ML.
     
-    Si no proporciona search_term, usa la categoría de su página.
-    Filtra competidores irrelevantes (ej: DramaBox, películas).
+    Usa Machine Learning para identificar competidores relevantes:
+    - Scoring inteligente basado en contenido
+    - Palabras clave custom (opcional)
+    - Histórico de clasificaciones
+    
+    Args:
+        page_id: ID de tu página (para referencia)
+        search_term: Término de búsqueda. Si no está, usa categoría de página
+        country: País (EC, CO, etc)
+        custom_keywords: Palabras clave separadas por coma (ej: "terapia,psicoterapia")
+        min_relevance_score: Score mínimo para incluir (0-100, default 25)
     
     Devuelve:
-    - Competidores encontrados (solo relevantes)
-    - Frecuencia de pauta temporal
-    - Patrones por día de la semana
+        - Competidores clasificados por ML
+        - Score de relevancia (0-100)
+        - Patrones temporales
+        - Histórico de análisis
     """
     try:
         # 1. Si no hay search_term, intentar obtener categoría de la página del usuario
@@ -576,7 +590,6 @@ async def get_market_radar_temporal(
                     logger.info(f"Usando categoría de página: {category}")
             except Exception as e:
                 logger.warning(f"No se pudo obtener categoría de página: {e}")
-                # Si falla, avisar al usuario
                 raise HTTPException(
                     status_code=400,
                     detail="Proporcione search_term o asegúrese de que la página tiene categoría configurada",
@@ -595,37 +608,15 @@ async def get_market_radar_temporal(
                 detail=f"No se encontraron anuncios para '{search_term}' en {country}",
             )
         
-        # 3. Palabras clave irrelevantes (ruido a filtrar)
-        irrelevant_keywords = {
-            "drama", "película", "series", "film", "movie", "show", "tvshow",
-            "streaming", "netflix", "youtube", "video", "contenido",
-            "juego", "game", "gaming", "casino", "apuesta", "bet",
-            "tienda", "compra", "venta", "ecommerce", "shop",
-        }
+        # 3. Inicializar clasificador ML
+        user_keywords = [kw.strip() for kw in custom_keywords.split(",") if kw.strip()]
+        classifier = CompetitorClassifier(
+            user_category=search_term,
+            user_keywords=user_keywords or [search_term],
+        )
         
-        def is_irrelevant(page_name: str, ad_bodies: list) -> bool:
-            """Determina si una página es irrelevante para el análisis."""
-            page_name_lower = (page_name or "").lower()
-            
-            # Filtrar por nombre de página
-            for keyword in irrelevant_keywords:
-                if keyword in page_name_lower:
-                    return True
-            
-            # Filtrar por contenido de anuncios
-            for body in ad_bodies:
-                if not body:
-                    continue
-                body_lower = body.lower()
-                for keyword in irrelevant_keywords:
-                    if keyword in body_lower:
-                        return True
-            
-            return False
-        
-        # 4. Agrupar por competidor y analizar patrones (CON FILTRADO)
-        competitors_temporal = {}
-        filtered_count = 0
+        # 4. Agrupar por competidor
+        competitors_data = {}
         
         for ad in ads:
             page_id_comp = ad.get("page_id", "")
@@ -633,73 +624,84 @@ async def get_market_radar_temporal(
             start_date = ad.get("ad_delivery_start_time", "")
             ad_bodies = ad.get("ad_creative_bodies", [])
             
-            # Filtrar por relevancia
-            if is_irrelevant(page_name, ad_bodies):
-                filtered_count += 1
-                continue
-            
             if not page_id_comp or not start_date:
                 continue
             
-            if page_id_comp not in competitors_temporal:
-                competitors_temporal[page_id_comp] = {
+            if page_id_comp not in competitors_data:
+                competitors_data[page_id_comp] = {
                     "page_id": page_id_comp,
                     "page_name": page_name,
+                    "ad_creative_bodies": ad_bodies,
                     "total_ads": 0,
-                    "dates": [],
                     "months": {},
                     "days_of_week": {},
                 }
             
-            competitors_temporal[page_id_comp]["total_ads"] += 1
-            competitors_temporal[page_id_comp]["dates"].append(start_date)
+            competitors_data[page_id_comp]["total_ads"] += 1
             
-            # Análisis por mes
+            # Análisis temporal
             if len(start_date) >= 7:
-                month_key = start_date[:7]  # YYYY-MM
-                competitors_temporal[page_id_comp]["months"][month_key] =                     competitors_temporal[page_id_comp]["months"].get(month_key, 0) + 1
+                month_key = start_date[:7]
+                competitors_data[page_id_comp]["months"][month_key] = \
+                    competitors_data[page_id_comp]["months"].get(month_key, 0) + 1
             
-            # Análisis por día de semana
             try:
                 from datetime import datetime as dt
                 date_obj = dt.strptime(start_date, "%Y-%m-%d")
                 day_name = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"][date_obj.weekday()]
-                competitors_temporal[page_id_comp]["days_of_week"][day_name] =                     competitors_temporal[page_id_comp]["days_of_week"].get(day_name, 0) + 1
+                competitors_data[page_id_comp]["days_of_week"][day_name] = \
+                    competitors_data[page_id_comp]["days_of_week"].get(day_name, 0) + 1
             except Exception:
                 pass
         
-        if not competitors_temporal:
+        # 5. Clasificar con ML
+        scored_competitors = []
+        
+        for page_id_comp, comp_data in competitors_data.items():
+            classification = classifier.classify(
+                page_name=comp_data["page_name"],
+                ad_bodies=comp_data["ad_creative_bodies"],
+            )
+            
+            # Solo incluir si cumple score mínimo
+            if classification.score >= min_relevance_score:
+                scored_competitors.append({
+                    "page_id": page_id_comp,
+                    "page_name": comp_data["page_name"],
+                    "total_ads": comp_data["total_ads"],
+                    "months": dict(sorted(comp_data["months"].items())),
+                    "days_of_week": dict(sorted(comp_data["days_of_week"].items())),
+                    "relevance_score": round(classification.score, 1),
+                    "relevance_reason": classification.reason,
+                    "ml_factors": {
+                        "positive_bonus": round(classification.factors["positive_bonus"], 1),
+                        "negative_penalty": round(classification.factors["negative_penalty"], 1),
+                        "category_bonus": round(classification.factors["category_bonus"], 1),
+                    },
+                })
+        
+        if not scored_competitors:
             raise HTTPException(
                 status_code=404,
-                detail=f"No se encontraron competidores relevantes para '{search_term}'. Todos los resultados fueron filtrados.",
+                detail=f"No se encontraron competidores relevantes. Min score requerido: {min_relevance_score}",
             )
         
-        # 5. Ordenar por frecuencia de pauta
-        competitors_list = sorted(
-            competitors_temporal.values(),
-            key=lambda x: x["total_ads"],
-            reverse=True,
-        )
-        
-        # 6. Top 5 competidores
-        top_competitors = competitors_list[:5]
-        
-        # Limpiar datos para respuesta
-        for comp in top_competitors:
-            del comp["dates"]  # Demasiados datos
-            comp["months"] = dict(sorted(comp["months"].items()))
-            comp["days_of_week"] = dict(sorted(comp["days_of_week"].items()))
+        # 6. Ordenar por score
+        scored_competitors.sort(key=lambda x: x["relevance_score"], reverse=True)
         
         return {
             "search_term": search_term,
             "country": country,
-            "total_competitors_found": len(competitors_temporal),
+            "custom_keywords": user_keywords or [],
             "total_ads_analyzed": len(ads),
-            "total_ads_filtered": filtered_count,
-            "top_competitors": top_competitors,
+            "total_competitors_found": len(competitors_data),
+            "competitors_after_ml_filter": len(scored_competitors),
+            "ml_threshold": min_relevance_score,
+            "top_competitors": scored_competitors[:5],
             "summary": {
-                "analysis_period": f"Basado en {len(ads)} anuncios (filtrados: {filtered_count})",
-                "relevance_filter": "Excluye: películas, series, gaming, ecommerce",
+                "analysis_period": f"Basado en {len(ads)} anuncios",
+                "ml_classifier": "Reglas inteligentes + Scoring multi-factor",
+                "scoring_factors": "Palabras clave positivas + Penalty negativas + Bonus categoría",
             },
         }
         
@@ -707,3 +709,4 @@ async def get_market_radar_temporal(
         raise
     except MetaGraphApiError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
