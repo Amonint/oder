@@ -1,15 +1,21 @@
+import { useState } from "react";
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import InfoTooltip from "@/components/InfoTooltip";
 import type { FatigueRow, FatigueAlert } from "@/api/client";
+
+type SortBy = "fatigue" | "spend" | "cpa" | "response_rate" | "scale";
 
 interface CreativeFatigueTableProps {
   data: FatigueRow[] | undefined;
@@ -25,6 +31,45 @@ const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
   fatigued: { label: "Fatigado", className: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" },
 };
 
+const SORT_OPTIONS: { value: SortBy; label: string; description: string }[] = [
+  { value: "fatigue", label: "Top fatigados", description: "Anuncios con mayor riesgo de saturación (score alto)" },
+  { value: "spend", label: "Top por gasto", description: "Anuncios que más gastan" },
+  { value: "cpa", label: "Top por CPA", description: "Anuncios con menor costo por resultado (más eficientes)" },
+  { value: "response_rate", label: "Top por tasa de respuesta", description: "Anuncios con mayor ratio resultados/impresiones" },
+  { value: "scale", label: "Oportunidades de escala", description: "Alto gasto y baja fatiga (candidatos a aumentar presupuesto)" },
+];
+
+function sortRows(rows: FatigueRow[], sortBy: SortBy): FatigueRow[] {
+  const copy = [...rows];
+  switch (sortBy) {
+    case "fatigue":
+      return copy.sort((a, b) => b.fatigue_score - a.fatigue_score);
+    case "spend":
+      return copy.sort((a, b) => b.spend - a.spend);
+    case "cpa":
+      // null CPAs go to end
+      return copy.sort((a, b) => {
+        if (a.cpa === null && b.cpa === null) return 0;
+        if (a.cpa === null) return 1;
+        if (b.cpa === null) return -1;
+        return a.cpa - b.cpa;
+      });
+    case "response_rate":
+      return copy.sort((a, b) => {
+        const rateA = a.impressions > 0 ? a.results / a.impressions : 0;
+        const rateB = b.impressions > 0 ? b.results / b.impressions : 0;
+        return rateB - rateA;
+      });
+    case "scale":
+      // Filter healthy/watch (fatigue_score < 40) then sort by spend desc
+      return copy
+        .filter((r) => r.fatigue_score < 40)
+        .sort((a, b) => b.spend - a.spend);
+    default:
+      return copy;
+  }
+}
+
 export default function CreativeFatigueTable({
   data,
   alerts,
@@ -32,8 +77,12 @@ export default function CreativeFatigueTable({
   isError,
   errorMessage,
 }: CreativeFatigueTableProps) {
-  const rows = data ?? [];
+  const [sortBy, setSortBy] = useState<SortBy>("fatigue");
+
+  const rawRows = data ?? [];
+  const rows = sortRows(rawRows, sortBy);
   const activeAlerts = alerts ?? [];
+  const currentSort = SORT_OPTIONS.find((o) => o.value === sortBy)!;
 
   return (
     <section className="space-y-4">
@@ -62,10 +111,25 @@ export default function CreativeFatigueTable({
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Diagnóstico por anuncio</CardTitle>
-          <CardDescription>
-            Score 0-100 (saludable &lt;40, vigilar 40-69, fatigado &ge;70). Ordenado de mayor a menor fatiga.
-          </CardDescription>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <CardTitle className="text-base">Diagnóstico por anuncio</CardTitle>
+              <CardDescription className="flex items-center gap-1 mt-0.5">
+                {currentSort.description}
+                <InfoTooltip text="Score 0-100: saludable <40, vigilar 40-69, fatigado ≥70. Oportunidades de escala = baja fatiga + alto gasto." />
+              </CardDescription>
+            </div>
+            <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortBy)}>
+              <SelectTrigger className="w-[210px]">
+                <SelectValue placeholder="Ordenar por" />
+              </SelectTrigger>
+              <SelectContent>
+                {SORT_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           {isLoading ? (
@@ -78,7 +142,11 @@ export default function CreativeFatigueTable({
               <AlertDescription>{errorMessage ?? "Error desconocido"}</AlertDescription>
             </Alert>
           ) : rows.length === 0 ? (
-            <p className="text-muted-foreground p-4 text-sm">Sin datos de creatividades en este periodo.</p>
+            <p className="text-muted-foreground p-4 text-sm">
+              {sortBy === "scale"
+                ? "Sin anuncios con baja fatiga y alto gasto en este periodo."
+                : "Sin datos de creatividades en este periodo."}
+            </p>
           ) : (
             <TooltipProvider delayDuration={300}>
               <div className="overflow-x-auto">
@@ -96,12 +164,21 @@ export default function CreativeFatigueTable({
                       </TableHead>
                       <TableHead className="text-right">CTR</TableHead>
                       <TableHead className="text-right">Gasto</TableHead>
+                      <TableHead className="text-right">
+                        <span className="flex items-center justify-end gap-0.5">
+                          Tasa resp.
+                          <InfoTooltip text="Resultados ÷ Impresiones × 100. Indica efectividad del anuncio." />
+                        </span>
+                      </TableHead>
                       <TableHead className="text-right">CPA</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {rows.map((row) => {
                       const cfg = STATUS_CONFIG[row.fatigue_status] ?? STATUS_CONFIG.watch;
+                      const responseRate = row.impressions > 0
+                        ? ((row.results / row.impressions) * 100).toFixed(2)
+                        : null;
                       return (
                         <TableRow key={row.ad_id}>
                           <TableCell>
@@ -122,6 +199,9 @@ export default function CreativeFatigueTable({
                           </TableCell>
                           <TableCell className="text-right tabular-nums text-sm">
                             ${row.spend.toFixed(2)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">
+                            {responseRate !== null ? `${responseRate}%` : "—"}
                           </TableCell>
                           <TableCell className="text-right tabular-nums text-sm">
                             {row.cpa != null ? `$${row.cpa.toFixed(2)}` : "—"}
