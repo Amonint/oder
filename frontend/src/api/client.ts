@@ -965,11 +965,13 @@ export interface MarketRadarExtendedCompetitor {
   name: string;
   province: string | null;
   province_confidence: number;
+  province_source: string;
   active_ads: number;
   total_ads: number;
   platforms: string[];
   languages: string[];
   ads: CompetitorAdItem[];
+  last_detected: string;
 }
 
 export interface MarketRadarExtendedResponse {
@@ -977,10 +979,19 @@ export interface MarketRadarExtendedResponse {
     page_id: string;
     name: string;
     category: string;
+    province: string | null;
+    province_confidence: number;
+    province_source: string;
   };
-  top_advertisers: MarketRadarExtendedCompetitor[];
-  emerging_advertisers: MarketRadarExtendedCompetitor[];
-  declining_advertisers: MarketRadarExtendedCompetitor[];
+  ecuador_top5: MarketRadarExtendedCompetitor[];
+  province_top5: MarketRadarExtendedCompetitor[];
+  metadata: {
+    total_competitors_detected: number;
+    ecuador_competitors: number;
+    province_competitors: number;
+    last_sync: string;
+    sync_duration_seconds: number;
+  };
 }
 
 export async function fetchMarketRadarExtended(pageId: string): Promise<MarketRadarExtendedResponse> {

@@ -2,12 +2,8 @@
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import { useMarketRadar } from "@/hooks/useMarketRadar";
-import TopAdvertisers from "@/components/market-radar/TopAdvertisers";
-import GeoOpportunity from "@/components/market-radar/GeoOpportunity";
-import MarketSeasonality from "@/components/market-radar/MarketSeasonality";
-import MessageIntelligence from "@/components/market-radar/MessageIntelligence";
+import { useMarketRadarExtended } from "@/hooks/useMarketRadarExtended";
+import { TopAdvertisersSection } from "@/components/market-radar/TopAdvertisersSection";
 
 interface Props {
   pageId: string;
@@ -16,7 +12,7 @@ interface Props {
 }
 
 export default function MarketRadarPanel({ pageId, onClose, onSelectCompetitor }: Props) {
-  const { data, isLoading, error } = useMarketRadar(pageId);
+  const { data, isLoading, error } = useMarketRadarExtended({ pageId });
 
   return (
     <div className="space-y-5">
@@ -35,16 +31,6 @@ export default function MarketRadarPanel({ pageId, onClose, onSelectCompetitor }
         </Button>
       </div>
 
-      {/* Keywords chips */}
-      {data && (
-        <div className="flex flex-wrap gap-1">
-          {data.client_page.keywords_used.map((kw) => (
-            <Badge key={kw} variant="secondary" className="text-xs">
-              {kw}
-            </Badge>
-          ))}
-        </div>
-      )}
 
       {/* Loading */}
       {isLoading && (
@@ -67,14 +53,36 @@ export default function MarketRadarPanel({ pageId, onClose, onSelectCompetitor }
       {/* Data */}
       {data && !isLoading && (
         <div className="space-y-6">
-          <TopAdvertisers
-            competitors={data.competitors}
-            clientPageId={pageId}
+          {/* Province detection */}
+          <div className="bg-blue-50 p-3 rounded-lg space-y-1">
+            <p className="text-xs font-semibold text-blue-900">🎯 Provincia Detectada</p>
+            <p className="text-sm text-blue-800">
+              {data.client_page.province || "Ubicación desconocida"}
+              <span className="text-xs ml-2">
+                ({(data.client_page.province_confidence * 100).toFixed(0)}% • {data.client_page.province_source})
+              </span>
+            </p>
+          </div>
+
+          {/* Ecuador Top 5 */}
+          <TopAdvertisersSection
+            competitors={data.ecuador_top5}
+            title="🇪🇨 Top 5 Ecuador"
             onSelectCompetitor={onSelectCompetitor}
           />
-          <GeoOpportunity topCountries={data.market_summary.top_countries} />
-          <MarketSeasonality competitors={data.competitors} />
-          <MessageIntelligence topWords={data.market_summary.top_words} />
+
+          {/* Province Top 5 */}
+          <TopAdvertisersSection
+            competitors={data.province_top5}
+            title={`📍 Top 5 ${data.client_page.province || "Provincia"}`}
+            onSelectCompetitor={onSelectCompetitor}
+          />
+
+          {/* Metadata footer */}
+          <div className="text-xs text-muted-foreground pt-2 border-t space-y-1">
+            <p>Total detectados: {data.metadata.total_competitors_detected}</p>
+            <p>Última sincronización: {new Date(data.metadata.last_sync).toLocaleString('es-ES')}</p>
+          </div>
         </div>
       )}
     </div>
