@@ -109,6 +109,7 @@ export default function DashboardPage() {
   const [campaignSelect, setCampaignSelect] = useState<string>(ALL);
   const [adsetSelect, setAdsetSelect] = useState<string>(ALL);
   const [geoScope, setGeoScope] = useState<"account" | "ad">("account");
+  const [geoMetric, setGeoMetric] = useState<"impressions" | "spend" | "cpa" | "results">("impressions");
   const [mainTab, setMainTab] = useState<string>("resumen");
   const [perfGranularity, setPerfGranularity] = useState<"period" | "daily">("period");
   const [showDateModal, setShowDateModal] = useState(false);
@@ -1317,7 +1318,7 @@ export default function DashboardPage() {
 
         {/* ── Tab: Geografía ── */}
         <TabsContent value="geografia" className="space-y-6 pt-4">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <span className="text-muted-foreground text-sm">Ámbito:</span>
             <Select value={geoScope} onValueChange={(v) => setGeoScope(v as "account" | "ad")}>
               <SelectTrigger className="w-[200px]">
@@ -1326,6 +1327,18 @@ export default function DashboardPage() {
               <SelectContent>
                 <SelectItem value="account">Cuenta completa</SelectItem>
                 <SelectItem value="ad">Anuncio seleccionado</SelectItem>
+              </SelectContent>
+            </Select>
+            <span className="text-muted-foreground text-sm">Vista:</span>
+            <Select value={geoMetric} onValueChange={(v) => setGeoMetric(v as typeof geoMetric)}>
+              <SelectTrigger className="w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="impressions">Por impresiones</SelectItem>
+                <SelectItem value="spend">Por gasto</SelectItem>
+                <SelectItem value="cpa">Por CPA</SelectItem>
+                <SelectItem value="results">Por resultados</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1360,10 +1373,10 @@ export default function DashboardPage() {
             <>
               <Card>
                 <CardHeader>
-                  <CardTitle>Distribución geográfica</CardTitle>
+                  <CardTitle>Distribución geográfica — eficiencia</CardTitle>
                   <CardDescription>
-                    Impresiones por región —{" "}
-                    {geoScope === "account" ? "cuenta completa" : `anuncio ${selectedAdId}`}.
+                    {geoScope === "account" ? "Cuenta completa" : `Anuncio ${selectedAdId}`} — vista por{" "}
+                    {{ impressions: "impresiones", spend: "gasto", cpa: "CPA", results: "resultados" }[geoMetric]}.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -1387,28 +1400,35 @@ export default function DashboardPage() {
                             </TableCell>
                           </TableRow>
                         ) : (
-                          (geoQuery.data?.data ?? []).map((row, idx) => (
-                            <TableRow key={String(row.region ?? row.region_name ?? idx)}>
-                              <TableCell className="font-medium text-sm">
-                                {String(row.region ?? row.region_name ?? "Desconocido")}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums text-sm">
-                                {Number(row.impressions ?? 0).toLocaleString("es")}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums text-sm">
-                                {String(row.clicks ?? "—")}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums text-sm">
-                                ${String(row.spend ?? "—")}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums text-sm">
-                                {row.results != null ? row.results.toLocaleString("es") : "—"}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums text-sm">
-                                {row.cpa != null ? `$${row.cpa.toFixed(2)}` : "—"}
-                              </TableCell>
-                            </TableRow>
-                          ))
+                          [...(geoQuery.data?.data ?? [])]
+                            .sort((a, b) => {
+                              if (geoMetric === "impressions") return Number(b.impressions ?? 0) - Number(a.impressions ?? 0);
+                              if (geoMetric === "spend") return Number(b.spend ?? 0) - Number(a.spend ?? 0);
+                              if (geoMetric === "cpa") return Number(b.cpa ?? 0) - Number(a.cpa ?? 0);
+                              return Number(b.results ?? 0) - Number(a.results ?? 0);
+                            })
+                            .map((row, idx) => (
+                              <TableRow key={String(row.region ?? row.region_name ?? idx)}>
+                                <TableCell className="font-medium text-sm">
+                                  {String(row.region_name ?? row.region ?? "Desconocido")}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums text-sm">
+                                  {Number(row.impressions ?? 0).toLocaleString("es")}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums text-sm">
+                                  {String(row.clicks ?? "—")}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums text-sm">
+                                  ${Number(row.spend ?? 0).toFixed(2)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums text-sm">
+                                  {row.results != null ? row.results.toLocaleString("es") : "—"}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums text-sm">
+                                  {row.cpa != null ? `$${row.cpa.toFixed(2)}` : "—"}
+                                </TableCell>
+                              </TableRow>
+                            ))
                         )}
                       </TableBody>
                     </Table>
@@ -1419,20 +1439,14 @@ export default function DashboardPage() {
               <Card>
                 <CardHeader>
                   <CardTitle>Mapa geográfico</CardTitle>
-                  <CardDescription>Distribución geográfica interactiva.</CardDescription>
+                  <CardDescription>Distribución interactiva — métrica: {geoMetric}.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {geoQuery.isLoading ? (
-                    <Skeleton className="w-full h-96" />
-                  ) : geoQuery.isError ? (
-                    <Alert variant="destructive">
-                      <AlertDescription>Error al obtener datos geográficos.</AlertDescription>
-                    </Alert>
-                  ) : geoQuery.data ? (
+                  {geoQuery.data ? (
                     <GeoMap
                       data={geoQuery.data.data}
                       metadata={geoQuery.data.metadata}
-                      metric="impressions"
+                      metric={geoMetric === "cpa" || geoMetric === "results" ? "impressions" : geoMetric}
                     />
                   ) : null}
                 </CardContent>
