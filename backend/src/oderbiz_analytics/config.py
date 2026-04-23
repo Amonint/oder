@@ -32,15 +32,9 @@ class Settings(BaseSettings):
     api_port: int = 8000
 
     @model_validator(mode="after")
-    def _site_auth_defaults(self) -> "Settings":
-        if self.site_auth_user and (self.site_auth_password == "" or self.site_auth_secret == ""):
-            raise ValueError(
-                "Si defines SITE_AUTH_USER, debes definir SITE_AUTH_PASSWORD y SITE_AUTH_SECRET."
-            )
-        if not self.site_auth_user and (self.site_auth_password or self.site_auth_secret):
-            raise ValueError(
-                "Quita SITE_AUTH_PASSWORD y SITE_AUTH_SECRET, o define también SITE_AUTH_USER."
-            )
+    def _site_auth_cookie_combo(self) -> "Settings":
+        # No exigimos SITE_AUTH_* completos aquí: si falta alguno, el login de app queda desactivado
+        # (ver `site_auth_enabled`) y la API arranca igual — evita caídas en Render por env a medias.
         if self.site_auth_cookie_samesite.lower() == "none" and not self.site_auth_cookie_secure:
             raise ValueError("SameSite=none requiere SITE_AUTH_COOKIE_SECURE=true (HTTPS).")
         return self
