@@ -24,6 +24,7 @@ SUMMARY_KEYS = (
     "cpm",
     "cpp",
     "ctr",
+    "cost_per_result",
 )
 
 
@@ -57,6 +58,25 @@ def _build_summary_row(row: dict) -> dict[str, float]:
     return {k: _to_float(row.get(k)) for k in SUMMARY_KEYS}
 
 
+def _first_non_trivial_action_value(entries: list[dict[str, object]]) -> float:
+    trivial = {"post_engagement", "page_engagement", "photo_view", "video_view"}
+    for item in entries:
+        action_type = str(item.get("action_type") or "")
+        if action_type in trivial:
+            continue
+        return _to_float(item.get("value"))
+    return 0.0
+
+
+def _sum_purchase_action_values(entries: list[dict[str, object]]) -> float:
+    total = 0.0
+    for item in entries:
+        action_type = str(item.get("action_type") or "")
+        if "purchase" in action_type:
+            total += _to_float(item.get("value"))
+    return total
+
+
 @router.get("/{ad_account_id}/dashboard")
 async def get_account_dashboard(
     ad_account_id: str,
@@ -87,6 +107,11 @@ async def get_account_dashboard(
 
     ds = (date_start or "").strip()
     de = (date_stop or "").strip()
+    if bool(ds) != bool(de):
+        raise HTTPException(
+            status_code=422,
+            detail="Se requieren date_start y date_stop juntos para usar rango de fechas personalizado.",
+        )
     effective_time_range: dict[str, str] | None = None
     effective_date_preset: str | None = date_preset
     if ds and de:
@@ -138,22 +163,64 @@ async def get_account_dashboard(
             "scope": "campaign" if cid else "account",
             "insights_empty": True,
             "summary": empty_summary,
+            "context": {
+                "level": "campaign" if cid else "account",
+                "entity_id": cid or normalized_id,
+                "date_start": None,
+                "date_stop": None,
+                "attribution_window": None,
+            },
+            "derived": {"results": 0.0, "cpa": None, "roas": None},
+            "diagnostic_inputs": {"cpm": 0.0, "ctr": 0.0, "frequency": 0.0, "spend": 0.0},
             "actions": [],
+            "action_values": [],
             "cost_per_action_type": [],
             "date_start": None,
             "date_stop": None,
         }
 
     row = rows[0]
+    actions = _action_entries(row.get("actions"))
+    action_values = _action_entries(row.get("action_values"))
+    cost_per_action_type = _action_entries(row.get("cost_per_action_type"))
+    summary = _build_summary_row(row)
+    spend = summary.get("spend", 0.0)
+    results = _first_non_trivial_action_value(actions)
+    # Meta suele mandar 0 en `cost_per_result` en agregados largos / mezcla de objetivos; el CPA útil cae al fallback.
+    cost_per_result = summary.get("cost_per_result", 0.0)
+    cpa = cost_per_result if cost_per_result > 0 else (spend / results if results > 0 else None)
+    purchase_roas = _to_float(row.get("purchase_roas"))
+    roas_derived = (_sum_purchase_action_values(action_values) / spend) if spend > 0 else 0.0
+    roas = purchase_roas if purchase_roas > 0 else (roas_derived if roas_derived > 0 else None)
+
     return {
         "ad_account_id": normalized_id,
         "date_preset": date_preset,
         "campaign_id": cid or None,
         "scope": "campaign" if cid else "account",
         "insights_empty": False,
-        "summary": _build_summary_row(row),
-        "actions": _action_entries(row.get("actions")),
-        "cost_per_action_type": _action_entries(row.get("cost_per_action_type")),
+        "context": {
+            "level": "campaign" if cid else "account",
+            "entity_id": cid or normalized_id,
+            "date_start": row.get("date_start"),
+            "date_stop": row.get("date_stop"),
+            "attribution_window": None,
+        },
+        "summary": summary,
+        "derived": {
+            "results": results,
+            "cpa": round(cpa, 4) if cpa is not None else None,
+            "roas": round(roas, 4) if roas is not None else None,
+        },
+        "diagnostic_inputs": {
+            "cpm": summary.get("cpm", 0.0),
+            "ctr": summary.get("ctr", 0.0),
+            "frequency": summary.get("frequency", 0.0),
+            "spend": spend,
+        },
+        "actions": actions,
+        "action_values": action_values,
+        "cost_per_action_type": cost_per_action_type,
         "date_start": row.get("date_start"),
         "date_stop": row.get("date_stop"),
     }

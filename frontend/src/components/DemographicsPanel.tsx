@@ -1,3 +1,7 @@
+import { useMemo } from "react";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+} from "recharts";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -10,11 +14,26 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import InfoTooltip from "@/components/InfoTooltip";
-import type { DemographicsRow } from "@/api/client";
+import type { DemographicsRow, InsightActionItem } from "@/api/client";
+import { barColorAt, barPaletteByRowIndex } from "@/lib/dashboardColors";
 
 type Breakdown = "age" | "gender" | "age,gender";
 
+/** Alineado a `backend/.../pages.py` `_extract_cpa` (CONVERSION_TYPES). */
+const CONVERSION_ACTION_TYPES = new Set<string>([
+  "lead",
+  "purchase",
+  "onsite_conversion.messaging_conversation_started_7d",
+  "offsite_conversion.fb_pixel_lead",
+  "offsite_conversion.fb_pixel_purchase",
+]);
+
+/** Umbral de gasto (USD) por segmento: por debajo, barra atenuada + aviso en tooltip. */
+const DEMOGRAPHICS_MIN_SPEND_USD = 25;
+
 interface DemographicsPanelProps {
+  /** Si se pasa, sustituye el título de sección (p. ej. dashboard de página). */
+  sectionTitle?: string;
   data: DemographicsRow[] | undefined;
   isLoading: boolean;
   isError: boolean;
@@ -42,7 +61,197 @@ function fmtCurrency(v: string | number | undefined): string {
   return `$${Number(v).toFixed(2)}`;
 }
 
+function segmentLabel(row: DemographicsRow, bd: "age" | "gender"): string {
+  if (bd === "age") return (row.age ?? "").trim() || "—";
+  const g = (row.gender ?? "—").trim();
+  if (!g || g === "—") return "—";
+  return g.charAt(0).toUpperCase() + g.slice(1).toLowerCase();
+}
+
+function firstNumericCostPerAction(items: InsightActionItem[] | undefined): number | null {
+  if (!items?.length) return null;
+  for (const item of items) {
+    const v = Number(item.value ?? NaN);
+    if (Number.isFinite(v) && v > 0) return v;
+  }
+  return null;
+}
+
+function sumConversionActions(actions: InsightActionItem[] | undefined): number {
+  if (!actions?.length) return 0;
+  let s = 0;
+  for (const a of actions) {
+    if (CONVERSION_ACTION_TYPES.has(String(a.action_type ?? ""))) {
+      s += Number(a.value ?? 0) || 0;
+    }
+  }
+  return s;
+}
+
+function segmentCpa(row: DemographicsRow): number | null {
+  const fromMeta = firstNumericCostPerAction(row.cost_per_action_type);
+  if (fromMeta != null) return fromMeta;
+  const spend = parseFloat(String(row.spend ?? "0"));
+  const conv = sumConversionActions(row.actions);
+  if (spend > 0 && conv > 0) return spend / conv;
+  return null;
+}
+
+type DemographicsBarRow = {
+  label: string;
+  spend: number;
+  cpa: number | null;
+  /** Valor para ancho de barra (0 si no hay CPA). */
+  cpaValue: number;
+  insufficient: boolean;
+};
+
+function buildBarRows(rows: DemographicsRow[], bd: "age" | "gender"): DemographicsBarRow[] {
+  return rows
+    .map((row) => {
+      const spend = parseFloat(String(row.spend ?? "0")) || 0;
+      const cpa = segmentCpa(row);
+      return {
+        label: segmentLabel(row, bd),
+        spend,
+        cpa,
+        cpaValue: cpa != null && Number.isFinite(cpa) && cpa > 0 ? cpa : 0,
+        insufficient: spend < DEMOGRAPHICS_MIN_SPEND_USD,
+      };
+    })
+    .sort((a, b) => b.spend - a.spend)
+    .slice(0, 12);
+}
+
+function DemographicsSpendTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: { payload: DemographicsBarRow }[];
+}) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0].payload;
+  return (
+    <div className="border-border bg-background text-foreground rounded-md border px-3 py-2 text-xs shadow-md">
+      <p className="font-medium">{row.label}</p>
+      {row.insufficient && (
+        <p className="text-muted-foreground mt-1">Datos insuficientes</p>
+      )}
+      <p className="tabular-nums">Gasto: ${row.spend.toFixed(2)}</p>
+    </div>
+  );
+}
+
+function DemographicsCpaTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: { payload: DemographicsBarRow }[];
+}) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0].payload;
+  return (
+    <div className="border-border bg-background text-foreground rounded-md border px-3 py-2 text-xs shadow-md">
+      <p className="font-medium">{row.label}</p>
+      {row.insufficient && (
+        <p className="text-muted-foreground mt-1">Datos insuficientes</p>
+      )}
+      <p className="tabular-nums">
+        CPA: {row.cpa != null ? `$${row.cpa.toFixed(2)}` : "—"}
+      </p>
+      <p className="text-muted-foreground mt-0.5">
+        Primer cost_per_action_type numérico de Meta, o gasto ÷ suma de conversiones (lead, compra, mensaje iniciado, píxel).
+      </p>
+    </div>
+  );
+}
+
+function DemographicsAgeGenderHeatmap({ rows }: { rows: DemographicsRow[] }) {
+  const model = useMemo(() => {
+    const spendMap = new Map<string, number>();
+    for (const r of rows) {
+      const age = (r.age ?? "").trim();
+      const gender = (r.gender ?? "").trim();
+      if (!age || !gender) continue;
+      const k = `${age}\t${gender}`;
+      const add = parseFloat(String(r.spend ?? "0")) || 0;
+      spendMap.set(k, (spendMap.get(k) ?? 0) + add);
+    }
+    const ages = [...new Set(rows.map((row) => (row.age ?? "").trim()).filter(Boolean))];
+    const genders = [...new Set(rows.map((row) => (row.gender ?? "").trim()).filter(Boolean))];
+    ages.sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+    genders.sort((a, b) => a.localeCompare(b, "es"));
+    let maxSpend = 0;
+    for (const v of spendMap.values()) maxSpend = Math.max(maxSpend, v);
+    const max = maxSpend > 0 ? maxSpend : 1;
+    return { ages, genders, spendMap, max };
+  }, [rows]);
+
+  if (model.ages.length === 0 || model.genders.length === 0) {
+    return (
+      <p className="text-muted-foreground border-border border-t px-4 py-3 text-sm">
+        No hay celdas edad × género con gasto en este periodo.
+      </p>
+    );
+  }
+
+  return (
+    <div className="border-border space-y-2 border-t px-4 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-foreground text-sm font-semibold">Mapa de calor — gasto (edad × género)</h3>
+        <Badge variant="outline" className="text-xs font-normal text-muted-foreground">
+          Intensidad = gasto relativo al máximo de la tabla
+        </Badge>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-max min-w-full border-collapse text-xs">
+          <thead>
+            <tr>
+              <th className="border-border bg-muted/50 p-2 text-left font-medium">Edad</th>
+              {model.genders.map((g) => (
+                <th key={g} className="border-border bg-muted/50 p-2 text-center font-medium capitalize">
+                  {g}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {model.ages.map((age, ri) => (
+              <tr key={age}>
+                <th className="border-border bg-muted/30 p-2 text-left font-medium tabular-nums">{age}</th>
+                {model.genders.map((g, ci) => {
+                  const spend = model.spendMap.get(`${age}\t${g}`) ?? 0;
+                  const t = model.max > 0 ? spend / model.max : 0;
+                  const fill = barColorAt(ri + ci, `${age}-${g}`);
+                  return (
+                    <td
+                      key={`${age}-${g}`}
+                      className="border-border border p-1 text-center tabular-nums"
+                      style={{
+                        backgroundColor:
+                          spend > 0
+                            ? `color-mix(in oklab, ${fill} ${Math.round(18 + t * 72)}%, hsl(var(--muted)))`
+                            : "hsl(var(--muted) / 0.25)",
+                      }}
+                      title={`${age} · ${g}: $${spend.toFixed(2)}`}
+                    >
+                      {spend > 0 ? `$${spend.toFixed(0)}` : "—"}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function DemographicsPanel({
+  sectionTitle,
   data,
   isLoading,
   isError,
@@ -54,10 +263,22 @@ export default function DemographicsPanel({
   const showAge = breakdown.includes("age");
   const showGender = breakdown.includes("gender");
 
+  const barBreakdown: "age" | "gender" | null =
+    breakdown === "age" || breakdown === "gender" ? breakdown : null;
+
+  const barRows = useMemo(
+    () => (barBreakdown ? buildBarRows(data ?? [], barBreakdown) : []),
+    [data, barBreakdown],
+  );
+
+  const chartHeight = Math.max(barRows.length * 36, 120);
+
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-foreground text-lg font-semibold">Segmentación demográfica</h2>
+        <h2 className="text-foreground text-lg font-semibold">
+          {sectionTitle ?? "Segmentación demográfica"}
+        </h2>
         <Select value={breakdown} onValueChange={(v) => onBreakdownChange(v as Breakdown)}>
           <SelectTrigger className="w-[220px]">
             <SelectValue />
@@ -148,6 +369,66 @@ export default function DemographicsPanel({
                   </TableBody>
                 </Table>
               </div>
+
+              {breakdown === "age,gender" && rows.length > 0 ? (
+                <DemographicsAgeGenderHeatmap rows={rows} />
+              ) : null}
+
+              {barBreakdown && barRows.length > 0 && (
+                <div className="border-border space-y-6 border-t px-4 py-6">
+                  <p className="text-muted-foreground text-xs">
+                    Top 12 por gasto. Barras atenuadas si el gasto del segmento es menor a ${DEMOGRAPHICS_MIN_SPEND_USD}{" "}
+                    (umbral de volumen).
+                  </p>
+
+                  <div>
+                    <h3 className="text-foreground mb-2 text-sm font-semibold">
+                      Gasto por {barBreakdown === "age" ? "franja de edad" : "género"}
+                    </h3>
+                    <ResponsiveContainer width="100%" height={chartHeight}>
+                      <BarChart data={barRows} layout="vertical" margin={{ left: 8, right: 24, top: 4, bottom: 4 }}>
+                        <XAxis type="number" tickFormatter={(v) => `$${v.toFixed(0)}`} tick={{ fontSize: 11 }} />
+                        <YAxis type="category" dataKey="label" width={100} tick={{ fontSize: 11 }} />
+                        <Tooltip content={<DemographicsSpendTooltip />} cursor={{ fill: "hsl(var(--muted) / 0.35)" }} />
+                        <Bar dataKey="spend" radius={[0, 4, 4, 0]}>
+                          {barRows.map((r, i) => (
+                            <Cell
+                              key={`spend-${r.label}-${i}`}
+                              fill={barPaletteByRowIndex(i)}
+                              fillOpacity={r.insufficient ? 0.38 : 1}
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <div>
+                    <h3 className="text-foreground mb-2 text-sm font-semibold">CPA por segmento</h3>
+                    <ResponsiveContainer width="100%" height={chartHeight}>
+                      <BarChart data={barRows} layout="vertical" margin={{ left: 8, right: 24, top: 4, bottom: 4 }}>
+                        <XAxis
+                          type="number"
+                          tickFormatter={(v) => `$${v.toFixed(0)}`}
+                          tick={{ fontSize: 11 }}
+                          domain={[0, "dataMax"]}
+                        />
+                        <YAxis type="category" dataKey="label" width={100} tick={{ fontSize: 11 }} />
+                        <Tooltip content={<DemographicsCpaTooltip />} cursor={{ fill: "hsl(var(--muted) / 0.35)" }} />
+                        <Bar dataKey="cpaValue" radius={[0, 4, 4, 0]}>
+                          {barRows.map((r, i) => (
+                            <Cell
+                              key={`cpa-${r.label}-${i}`}
+                              fill={barPaletteByRowIndex(i)}
+                              fillOpacity={r.insufficient ? 0.38 : 1}
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
             </TooltipProvider>
           )}
         </CardContent>

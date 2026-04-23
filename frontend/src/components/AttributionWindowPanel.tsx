@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import InfoTooltip from "@/components/InfoTooltip";
 import type { AttributionResponse, InsightActionItem } from "@/api/client";
+import { ATTRIBUTION_POST_2026_TOOLTIP } from "@/lib/attributionCopy";
 
 const WINDOW_OPTIONS = [
   { value: "click_1d", label: "1 día tras clic" },
@@ -57,7 +58,10 @@ export default function AttributionWindowPanel({
     <TooltipProvider delayDuration={300}>
       <section className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
-          <h2 className="text-foreground text-lg font-semibold">Ventana de atribución</h2>
+          <h2 className="text-foreground flex items-center gap-1 text-lg font-semibold">
+            Ventana de atribución
+            <InfoTooltip text={ATTRIBUTION_POST_2026_TOOLTIP} />
+          </h2>
           <Select value={window} onValueChange={onWindowChange}>
             <SelectTrigger className="w-[240px]">
               <SelectValue />
@@ -78,6 +82,12 @@ export default function AttributionWindowPanel({
         {data?.note && (
           <p className="text-muted-foreground text-xs">{data.note}</p>
         )}
+        {data?.warning ? (
+          <Alert>
+            <AlertTitle>Advertencia de atribución</AlertTitle>
+            <AlertDescription>{data.warning}</AlertDescription>
+          </Alert>
+        ) : null}
 
         <div className="grid gap-4 sm:grid-cols-3">
           <Card>

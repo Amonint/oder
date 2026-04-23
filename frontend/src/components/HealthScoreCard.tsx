@@ -23,10 +23,10 @@ const COMPONENT_LABELS: Record<string, string> = {
 };
 
 const STATUS_BADGE_CLASS: Record<string, string> = {
-  green: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
-  yellow: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
-  red: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200",
-  gray: "bg-muted text-muted-foreground",
+  green: "border-transparent bg-[#56048C] text-white",
+  yellow: "border-transparent bg-[#F2B441] text-[#150140]",
+  red: "border-transparent bg-[#D91480] text-white",
+  gray: "border-transparent bg-[#150140] text-white",
 };
 
 const STATUS_LABEL: Record<string, string> = {

@@ -18,6 +18,15 @@ interface LeadsPanelProps {
   errorMessage?: string;
 }
 
+const EMPTY_PUBLICATION_RE = /^(?:publicaci[oó]n:\s*)?["“”'`]\s*["“”'`]$/i;
+function safeName(name: string | null | undefined, id: string | null | undefined, kind: "Campaña" | "Anuncio"): string {
+  const raw = String(name ?? "").trim();
+  const safeId = String(id ?? "").trim();
+  if (raw && !EMPTY_PUBLICATION_RE.test(raw)) return raw;
+  if (safeId) return `${kind} sin nombre (ID: ${safeId})`;
+  return `${kind} sin nombre`;
+}
+
 export default function LeadsPanel({ data, isLoading, isError, errorMessage }: LeadsPanelProps) {
   const rows = data?.data ?? [];
   const summary = data?.summary;
@@ -105,7 +114,7 @@ export default function LeadsPanel({ data, isLoading, isError, errorMessage }: L
                     {rows.map((row, idx) => (
                       <TableRow key={row.campaign_id ?? idx}>
                         <TableCell className="font-medium text-sm max-w-[240px] truncate">
-                          {row.campaign_name ?? row.campaign_id ?? "—"}
+                          {safeName(row.campaign_name ?? null, row.campaign_id ?? null, "Campaña")}
                         </TableCell>
                         <TableCell className="text-right tabular-nums text-sm font-medium">
                           {row.leads_insights.toLocaleString("es")}

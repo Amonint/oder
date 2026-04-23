@@ -21,6 +21,14 @@ VALID_WINDOWS: dict[str, str] = {
     "view_7d": "7 días tras impresión",
 }
 
+WINDOW_TO_META: dict[str, str] = {
+    "click_1d": "1d_click",
+    "click_7d": "7d_click",
+    "click_28d": "28d_click",
+    "view_1d": "1d_view",
+    "view_7d": "7d_view",
+}
+
 
 @router.get("/{ad_account_id}/insights/attribution")
 async def get_attribution_insights(
@@ -72,6 +80,9 @@ async def get_attribution_insights(
     else:
         effective_preset = date_preset if date_preset else "last_30d"
 
+    meta_window = WINDOW_TO_META.get(window, window)
+    degraded = False
+    warning: str | None = None
     try:
         rows = await fetch_insights(
             base_url=base,
@@ -81,11 +92,31 @@ async def get_attribution_insights(
             level=level,
             date_preset=effective_preset,
             time_range=use_time_range,
+            action_attribution_windows=[meta_window],
         )
     except httpx.HTTPStatusError:
-        raise HTTPException(
-            status_code=502, detail="Error al obtener datos de atribución de Meta."
-        ) from None
+        # Fallback resiliente: si Meta rechaza la ventana explícita, usamos su default
+        # para no bloquear toda la pestaña de Atribución.
+        try:
+            rows = await fetch_insights(
+                base_url=base,
+                access_token=access_token,
+                ad_account_id=object_id,
+                fields=ATTRIBUTION_FIELDS,
+                level=level,
+                date_preset=effective_preset,
+                time_range=use_time_range,
+                action_attribution_windows=None,
+            )
+            degraded = True
+            warning = (
+                "Meta no aceptó la ventana solicitada; se muestran datos con la ventana "
+                "predeterminada de Meta."
+            )
+        except httpx.HTTPStatusError:
+            raise HTTPException(
+                status_code=502, detail="Error al obtener datos de atribución de Meta."
+            ) from None
     except httpx.RequestError:
         raise HTTPException(
             status_code=502, detail="No se pudo contactar a la API de Meta."
@@ -95,8 +126,11 @@ async def get_attribution_insights(
         "data": rows,
         "window": window,
         "window_label": VALID_WINDOWS[window],
+        "window_sent_to_meta": meta_window,
         "available_windows": VALID_WINDOWS,
         "date_preset": effective_preset,
         "time_range": use_time_range,
+        "degraded": degraded,
+        "warning": warning,
         "note": "Para comparar ventanas, llama este endpoint múltiples veces con diferentes window params.",
     }

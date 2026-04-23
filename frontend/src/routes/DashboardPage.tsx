@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import DateRangePickerModal from "@/components/DateRangePickerModal";
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts";
+import AdCreatividadEfficiencyBarCharts from "@/components/AdCreatividadEfficiencyBarCharts";
 import { Link, Navigate, useParams } from "react-router-dom";
 import {
   fetchAccountDashboard,
@@ -14,16 +15,32 @@ import {
   fetchPlacementInsights,
   fetchAdTargeting,
   fetchDemographicsInsights,
+  fetchAudiencePerformance,
   fetchAttributionInsights,
   fetchLeadsInsights,
+  fetchCampaignCloseSpeed,
+  fetchBottleneckAnalysis,
+  fetchSegmentNoQuote,
+  fetchCacOutOfTarget,
+  fetchSlaLostRevenue,
+  fetchAccountStability,
   fetchCreativeFatigue,
+  fetchTimeInsights,
   getMetaAccessToken,
   type AdPerformanceRow,
 } from "@/api/client";
 import DemographicsPanel from "@/components/DemographicsPanel";
+import AudiencePerformancePanel from "@/components/AudiencePerformancePanel";
 import AttributionWindowPanel from "@/components/AttributionWindowPanel";
 import LeadsPanel from "@/components/LeadsPanel";
+import CampaignCloseTimeBoxplotCard from "@/components/CampaignCloseTimeBoxplotCard";
+import BottleneckWaterfallCard from "@/components/BottleneckWaterfallCard";
+import NonQuoteSegmentsHeatmapCard from "@/components/NonQuoteSegmentsHeatmapCard";
+import CacOutOfTargetCard from "@/components/CacOutOfTargetCard";
+import SlaLostRevenueCard from "@/components/SlaLostRevenueCard";
+import PerformanceControlChartCard from "@/components/PerformanceControlChartCard";
 import CreativeFatigueTable from "@/components/CreativeFatigueTable";
+import CreativeSaturationScatter from "@/components/CreativeSaturationScatter";
 import ManualDataPanel from "@/components/ManualDataPanel";
 import SemaphoreKpiCard from "@/components/SemaphoreKpiCard";
 import HealthScoreCard from "@/components/HealthScoreCard";
@@ -35,7 +52,8 @@ import { loadThresholds, evaluateSemaphore } from "@/lib/semaphoreRules";
 import { computeHealthScore } from "@/lib/healthScore";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import GeoMap from "@/components/GeoMap";
+import GeoMap, { compareGeoInsightRowsForMetric, type GeoMapMetric } from "@/components/GeoMap";
+import PlacementEfficiencyBarChart from "@/components/PlacementEfficiencyBarChart";
 import TargetingPanel from "@/components/TargetingPanel";
 import {
   Breadcrumb,
@@ -88,8 +106,55 @@ import {
 import { TooltipProvider } from "@/components/ui/tooltip";
 import InfoTooltip from "@/components/InfoTooltip";
 import { groupActionsByCategory } from "@/lib/actionCategories";
+import GlobalFilterBar from "@/components/dashboard-unificado/GlobalFilterBar";
+import ExecutiveSummary from "@/components/dashboard-unificado/ExecutiveSummary";
+import CampaignRankingTable from "@/components/dashboard-unificado/CampaignRankingTable";
+import AdsetDiagnosticView from "@/components/dashboard-unificado/AdsetDiagnosticView";
+import CreativePerformanceView from "@/components/dashboard-unificado/CreativePerformanceView";
+import InsightsDecisionPanel from "@/components/dashboard-unificado/InsightsDecisionPanel";
+import AccountTimeInsightsSection from "@/components/AccountTimeInsightsSection";
+import PeriodComparisonCard from "@/components/PeriodComparisonCard";
+import SpendSparkline from "@/components/SpendSparkline";
+import { buildDashboardInsights } from "@/lib/dashboardDiagnostics";
+import { parseTimeInsightRows } from "@/lib/timeSeriesFromMeta";
+import {
+  barColorAt,
+  contrastingForeground,
+  dashboardChartColor,
+  pickDashboardColor,
+} from "@/lib/dashboardColors";
+import { ctrNumber, enrichAdRankingRows, toFloat } from "@/lib/adRankingDerived";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import DashboardContextStrip from "@/components/DashboardContextStrip";
+import {
+  computePrevPeriod,
+  unionCrossesMetaAttributionChange,
+  META_ATTRIBUTION_CHANGE_ISO,
+  deltaPercent,
+} from "@/lib/periodCompare";
+import { attributionWindowLabelEs } from "@/lib/formatDashboardContext";
+import { buildLlmContextReport } from "@/lib/llmContextReport";
 
 const ALL = "__all__";
+
+type RankingMetric =
+  | "impressions"
+  | "clicks"
+  | "spend"
+  | "ctr"
+  | "results"
+  | "cpa"
+  | "roas";
+
+const GEO_METRIC_LABEL_ES: Record<GeoMapMetric, string> = {
+  impressions: "impresiones",
+  clicks: "clics",
+  spend: "gasto",
+  reach: "alcance",
+  cpa: "CPA",
+  results: "resultados",
+};
 
 const DATE_PRESETS = [
   { value: "today", label: "Hoy" },
@@ -106,23 +171,31 @@ function formatNum(n: number): string {
   return n.toLocaleString("es", { maximumFractionDigits: 2 });
 }
 
-/** Computes start/end of the previous period of same length */
-function computePrevPeriod(dateStart: string, dateStop: string): { dateStart: string; dateStop: string } {
-  const start = new Date(dateStart + "T00:00:00Z");
-  const stop = new Date(dateStop + "T00:00:00Z");
-  const diffMs = stop.getTime() - start.getTime() + 86_400_000; // inclusive
-  const prevStop = new Date(start.getTime() - 86_400_000);
-  const prevStart = new Date(prevStop.getTime() - diffMs + 86_400_000);
-  return {
-    dateStart: prevStart.toISOString().slice(0, 10),
-    dateStop: prevStop.toISOString().slice(0, 10),
-  };
+const EMPTY_PUBLICATION_RE = /^(?:publicaci[oó]n:\s*)?["“”'`]\s*["“”'`]$/i;
+
+function withEntityFallback(name: string | null | undefined, id: string | null | undefined, kind: "Campaña" | "Conjunto" | "Anuncio"): string {
+  const raw = String(name ?? "").trim();
+  const safeId = String(id ?? "").trim();
+  if (raw && !EMPTY_PUBLICATION_RE.test(raw)) return raw;
+  if (safeId) return `${kind} sin nombre (ID: ${safeId})`;
+  return `${kind} sin nombre`;
 }
 
-/** Returns % change, null if previous is 0 */
-function deltaPercent(current: number, previous: number): number | null {
-  if (previous === 0) return null;
-  return ((current - previous) / previous) * 100;
+function isInferredSource(source: string | null | undefined): boolean {
+  return Boolean(source && source !== "meta_ad_name");
+}
+
+function inferredSourceHint(source: string | null | undefined): string {
+  switch (source) {
+    case "creative_name":
+      return "Nombre inferido desde el nombre del creative (Meta no devolvió nombre de anuncio).";
+    case "story_id":
+      return "Nombre inferido desde el ID de publicación promocionada (story_id).";
+    case "ad_id_fallback":
+      return "Nombre inferido con fallback por ID del anuncio.";
+    default:
+      return "Nombre inferido por datos incompletos de Meta.";
+  }
 }
 
 interface ActionDistributionSectionProps {
@@ -137,7 +210,12 @@ function ActionDistributionSection({ adRows, availableTypes }: ActionDistributio
     ad_id: string;
     ad_name: string;
     campaign_name: string;
+    ad_inferred: boolean;
+    ad_source: string | undefined;
+    campaign_inferred: boolean;
     volume: number;
+    spend: number;
+    /** cost_per_action_type de Meta para el tipo seleccionado (referencia). */
     cost: number | null;
   };
 
@@ -148,11 +226,21 @@ function ActionDistributionSection({ adRows, availableTypes }: ActionDistributio
         .reduce((s, a) => s + Number(a.value ?? 0), 0);
       const cost = (row.cost_per_action_type ?? [])
         .find((a) => String(a.action_type) === selectedActionType);
+      const spend = parseFloat(String(row.spend ?? "0")) || 0;
+      const campaignRaw = String(row.campaign_name ?? "").trim();
       return {
         ad_id: row.ad_id,
-        ad_name: row.ad_name,
-        campaign_name: row.campaign_name,
+        ad_name: withEntityFallback(row.ad_name ?? null, String(row.ad_id ?? ""), "Anuncio"),
+        campaign_name: withEntityFallback(
+          row.campaign_name ?? null,
+          String(row.campaign_id ?? ""),
+          "Campaña",
+        ),
+        ad_inferred: isInferredSource(row.ad_label_source),
+        ad_source: row.ad_label_source,
+        campaign_inferred: !campaignRaw || EMPTY_PUBLICATION_RE.test(campaignRaw),
         volume: vol,
+        spend,
         cost: cost ? Number(cost.value) : null,
       };
     })
@@ -161,21 +249,16 @@ function ActionDistributionSection({ adRows, availableTypes }: ActionDistributio
     .slice(0, 10);
 
   const byCampaign = Object.values(
-    byAd.reduce<Record<string, { campaign_name: string; volume: number; totalCost: number; count: number }>>(
-      (acc, row) => {
-        if (!acc[row.campaign_name]) {
-          acc[row.campaign_name] = { campaign_name: row.campaign_name, volume: 0, totalCost: 0, count: 0 };
-        }
-        const entry = acc[row.campaign_name];
-        entry.volume += row.volume;
-        if (row.cost !== null) {
-          entry.totalCost += row.cost;
-          entry.count += 1;
-        }
-        return acc;
-      },
-      {}
-    )
+    byAd.reduce<Record<string, { campaign_name: string; volume: number; spend: number; inferred: boolean }>>((acc, row) => {
+      if (!acc[row.campaign_name]) {
+        acc[row.campaign_name] = { campaign_name: row.campaign_name, volume: 0, spend: 0, inferred: false };
+      }
+      const entry = acc[row.campaign_name];
+      entry.volume += row.volume;
+      entry.spend += row.spend;
+      entry.inferred = entry.inferred || row.campaign_inferred;
+      return acc;
+    }, {}),
   ).sort((a, b) => b.volume - a.volume);
 
   return (
@@ -201,6 +284,9 @@ function ActionDistributionSection({ adRows, availableTypes }: ActionDistributio
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">Por anuncio (top 10)</CardTitle>
+            <CardDescription className="text-xs">
+              Columna derecha: gasto del anuncio en el periodo ÷ volumen del tipo de acción seleccionado.
+            </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             {byAd.length === 0 ? (
@@ -212,19 +298,33 @@ function ActionDistributionSection({ adRows, availableTypes }: ActionDistributio
                     <TableRow>
                       <TableHead>Anuncio</TableHead>
                       <TableHead className="text-right">Volumen</TableHead>
-                      <TableHead className="text-right">Costo / acción</TableHead>
+                      <TableHead className="text-right">Gasto ÷ volumen</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {byAd.map((row) => (
                       <TableRow key={row.ad_id}>
                         <TableCell>
-                          <p className="truncate text-sm font-medium max-w-[180px]">{row.ad_name}</p>
+                          <p className="truncate text-sm font-medium max-w-[220px] inline-flex items-center gap-2">
+                            <span className="truncate">{row.ad_name}</span>
+                            {row.ad_inferred ? (
+                              <span
+                                className="rounded border px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground"
+                                title={inferredSourceHint(row.ad_source)}
+                              >
+                                Nombre inferido
+                              </span>
+                            ) : null}
+                          </p>
                           <p className="text-muted-foreground text-xs">{row.campaign_name}</p>
                         </TableCell>
                         <TableCell className="text-right tabular-nums text-sm">{row.volume.toLocaleString("es")}</TableCell>
                         <TableCell className="text-right tabular-nums text-sm">
-                          {row.cost !== null ? `$${row.cost.toFixed(2)}` : "—"}
+                          {row.volume > 0
+                            ? `$${(row.spend / row.volume).toFixed(2)}`
+                            : row.cost !== null
+                              ? `$${row.cost.toFixed(2)}`
+                              : "—"}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -239,6 +339,10 @@ function ActionDistributionSection({ adRows, availableTypes }: ActionDistributio
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">Por campaña</CardTitle>
+            <CardDescription className="text-xs">
+              Coste efectivo = gasto de los anuncios del top ÷ volumen del tipo de acción elegido (no es el CPA
+              agregado del resumen).
+            </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             {byCampaign.length === 0 ? (
@@ -250,16 +354,25 @@ function ActionDistributionSection({ adRows, availableTypes }: ActionDistributio
                     <TableRow>
                       <TableHead>Campaña</TableHead>
                       <TableHead className="text-right">Volumen</TableHead>
-                      <TableHead className="text-right">CPA promedio</TableHead>
+                      <TableHead className="text-right">Gasto ÷ volumen</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {byCampaign.map((row) => (
                       <TableRow key={row.campaign_name}>
-                        <TableCell className="text-sm font-medium max-w-[200px] truncate">{row.campaign_name}</TableCell>
+                        <TableCell className="text-sm font-medium max-w-[240px]">
+                          <span className="inline-flex items-center gap-2 max-w-full">
+                            <span className="truncate">{row.campaign_name}</span>
+                            {row.inferred ? (
+                              <span className="rounded border px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground">
+                                Nombre inferido
+                              </span>
+                            ) : null}
+                          </span>
+                        </TableCell>
                         <TableCell className="text-right tabular-nums text-sm">{row.volume.toLocaleString("es")}</TableCell>
                         <TableCell className="text-right tabular-nums text-sm">
-                          {row.count > 0 ? `$${(row.totalCost / row.count).toFixed(2)}` : "—"}
+                          {row.volume > 0 ? `$${(row.spend / row.volume).toFixed(2)}` : "—"}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -277,24 +390,42 @@ function ActionDistributionSection({ adRows, availableTypes }: ActionDistributio
 export default function DashboardPage() {
   const { accountId } = useParams<{ accountId: string }>();
   const [datePreset, setDatePreset] = useState<string>("last_30d");
-  const [rankingMetric, setRankingMetric] = useState<"impressions" | "clicks" | "spend" | "ctr">("impressions");
+  const [rankingMetric, setRankingMetric] = useState<RankingMetric>("impressions");
+  const [minSpendRankingUsd, setMinSpendRankingUsd] = useState(25);
   const [selectedAdId, setSelectedAdId] = useState<string | null>(null);
   const [campaignSelect, setCampaignSelect] = useState<string>(ALL);
   const [adsetSelect, setAdsetSelect] = useState<string>(ALL);
   const [geoScope, setGeoScope] = useState<"account" | "ad">("account");
   const [funnelLevel, setFunnelLevel] = useState<"account" | "campaign" | "ad">("account");
-  const [geoMetric, setGeoMetric] = useState<"impressions" | "spend" | "cpa" | "results">("impressions");
+  const [geoMetric, setGeoMetric] = useState<GeoMapMetric>("impressions");
   const [mainTab, setMainTab] = useState<string>("resumen");
   const [perfGranularity, setPerfGranularity] = useState<"period" | "daily">("period");
   const [showDateModal, setShowDateModal] = useState(false);
   const [customDateStart, setCustomDateStart] = useState<string | null>(null);
   const [customDateStop, setCustomDateStop] = useState<string | null>(null);
   const [demographicsBreakdown, setDemographicsBreakdown] = useState<"age" | "gender" | "age,gender">("age");
+  const [audienceCategory, setAudienceCategory] = useState<
+    "all" | "interests" | "behaviors" | "education_majors" | "family_statuses" | "life_events" | "work_positions"
+  >("all");
+  const [audienceMinSpend, setAudienceMinSpend] = useState<number>(10);
   const [attributionWindow, setAttributionWindow] = useState<string>("click_7d");
   const [showManualForm, setShowManualForm] = useState(false);
+  const [isExportingReport, setIsExportingReport] = useState(false);
+  const useUnifiedDashboard = String(import.meta.env.VITE_UNIFIED_DASHBOARD ?? "").toLowerCase() === "true";
   const hasToken = Boolean(getMetaAccessToken());
   const id = accountId ? decodeURIComponent(accountId) : "";
   const campaignKey = campaignSelect !== ALL ? campaignSelect : null;
+
+  const effectiveDateParams = useMemo(() => {
+    if (datePreset === "today") {
+      const today = new Date().toISOString().slice(0, 10);
+      return { dateStart: today, dateStop: today };
+    }
+    if (datePreset === "custom" && customDateStart && customDateStop) {
+      return { dateStart: customDateStart, dateStop: customDateStop };
+    }
+    return { datePreset };
+  }, [datePreset, customDateStart, customDateStop]);
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["dashboard", id, datePreset, campaignKey, customDateStart, customDateStop],
@@ -309,8 +440,11 @@ export default function DashboardPage() {
 
   const prevPeriod = useMemo(() => {
     if (!data?.date_start || !data?.date_stop) return null;
+    // Con «maximum» el rango efectivo es muy largo; el periodo simétrico anterior suele quedar sin datos en Meta
+    // (ceros / vacío) y confunde más que ayuda.
+    if (datePreset === "maximum") return null;
     return computePrevPeriod(data.date_start, data.date_stop);
-  }, [data?.date_start, data?.date_stop]);
+  }, [data?.date_start, data?.date_stop, datePreset]);
 
   const prevDashboardQuery = useQuery({
     queryKey: ["dashboard-prev", id, prevPeriod?.dateStart, prevPeriod?.dateStop, campaignKey],
@@ -323,6 +457,16 @@ export default function DashboardPage() {
     enabled: hasToken && Boolean(id) && Boolean(prevPeriod),
     staleTime: 5 * 60 * 1000,
   });
+
+  const showAttributionDiscontinuity = useMemo(() => {
+    if (!data?.date_start || !data?.date_stop || !prevPeriod) return false;
+    return unionCrossesMetaAttributionChange(
+      data.date_start,
+      data.date_stop,
+      prevPeriod.dateStart,
+      prevPeriod.dateStop,
+    );
+  }, [data?.date_start, data?.date_stop, prevPeriod]);
 
   const accountsQuery = useQuery({
     queryKey: ["accounts"],
@@ -345,11 +489,11 @@ export default function DashboardPage() {
   const adsListQuery = useQuery({
     queryKey: ["ads-list", id, campaignKey, adsetSelect],
     queryFn: () => {
-      if (!campaignKey) return Promise.resolve({ data: [] });
       if (adsetSelect !== ALL) return fetchAdsList(id, { adsetId: adsetSelect });
-      return fetchAdsList(id, { campaignId: campaignKey });
+      if (campaignKey) return fetchAdsList(id, { campaignId: campaignKey });
+      return fetchAdsList(id);
     },
-    enabled: hasToken && Boolean(id) && Boolean(campaignKey),
+    enabled: hasToken && Boolean(id),
   });
 
   const rankingQuery = useQuery({
@@ -357,13 +501,15 @@ export default function DashboardPage() {
       "ads-performance",
       id,
       datePreset,
+      customDateStart,
+      customDateStop,
       perfGranularity,
       campaignKey,
       adsetSelect,
       selectedAdId,
     ],
     queryFn: () => {
-      const opts: Parameters<typeof fetchAdsPerformance>[1] = { datePreset };
+      const opts: Parameters<typeof fetchAdsPerformance>[1] = { ...effectiveDateParams };
       if (perfGranularity === "daily") opts.timeIncrement = 1;
       if (selectedAdId) {
         opts.adId = selectedAdId;
@@ -382,12 +528,14 @@ export default function DashboardPage() {
       "placement-insights",
       id,
       datePreset,
+      customDateStart,
+      customDateStop,
       campaignKey,
       adsetSelect,
       selectedAdId,
     ],
     queryFn: () => {
-      const opts: Parameters<typeof fetchPlacementInsights>[1] = { datePreset };
+      const opts: Parameters<typeof fetchPlacementInsights>[1] = { ...effectiveDateParams };
       if (selectedAdId) {
         opts.adId = selectedAdId;
       } else if (adsetSelect !== ALL) {
@@ -404,13 +552,28 @@ export default function DashboardPage() {
     accountsQuery.data?.data.find((a) => a.id === id)?.name ?? id;
 
   const geoQuery = useQuery({
-    queryKey: ["geo-insights", id, geoScope, selectedAdId, datePreset],
-    queryFn: () => fetchGeoInsights(id, {
-      scope: geoScope,
-      adId: geoScope === "ad" ? (selectedAdId ?? undefined) : undefined,
+    queryKey: [
+      "geo-insights",
+      id,
+      geoScope,
+      selectedAdId,
       datePreset,
-    }),
-    enabled: hasToken && Boolean(id) && (geoScope === "account" || Boolean(selectedAdId)),
+      customDateStart,
+      customDateStop,
+      campaignKey,
+    ],
+    queryFn: () =>
+      fetchGeoInsights(id, {
+        scope: geoScope === "ad" && selectedAdId ? "ad" : "account",
+        adId: selectedAdId ?? undefined,
+        adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
+        campaignId: campaignKey ?? undefined,
+        ...effectiveDateParams,
+      }),
+    enabled:
+      hasToken &&
+      Boolean(id) &&
+      (geoScope === "account" || Boolean(selectedAdId) || adsetSelect !== ALL || Boolean(campaignKey)),
   });
 
   const targetingQuery = useQuery({
@@ -420,34 +583,135 @@ export default function DashboardPage() {
   });
 
   const demographicsQuery = useQuery({
-    queryKey: ["demographics", id, demographicsBreakdown, datePreset, campaignKey, customDateStart, customDateStop],
+    queryKey: [
+      "demographics",
+      id,
+      demographicsBreakdown,
+      datePreset,
+      campaignKey,
+      adsetSelect,
+      selectedAdId,
+      customDateStart,
+      customDateStop,
+    ],
     queryFn: () => fetchDemographicsInsights(id, {
       breakdown: demographicsBreakdown,
       ...effectiveDateParams,
       campaignId: campaignKey ?? undefined,
+      adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
+      adId: selectedAdId ?? undefined,
     }),
     enabled: hasToken && Boolean(id) && mainTab === "audiencia",
     staleTime: 5 * 60 * 1000,
   });
 
+  const audiencePerformanceQuery = useQuery({
+    queryKey: [
+      "audience-performance",
+      id,
+      audienceCategory,
+      audienceMinSpend,
+      datePreset,
+      campaignKey,
+      adsetSelect,
+      selectedAdId,
+      customDateStart,
+      customDateStop,
+    ],
+    queryFn: () =>
+      fetchAudiencePerformance(id, {
+        category: audienceCategory,
+        minSpend: audienceMinSpend,
+        limit: 30,
+        ...effectiveDateParams,
+        campaignId: campaignKey ?? undefined,
+        adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
+        adId: selectedAdId ?? undefined,
+      }),
+    enabled: hasToken && Boolean(id) && mainTab === "audiencia",
+    staleTime: 5 * 60 * 1000,
+  });
+
   const attributionQuery = useQuery({
-    queryKey: ["attribution", id, attributionWindow, datePreset, campaignKey, customDateStart, customDateStop],
+    queryKey: [
+      "attribution",
+      id,
+      attributionWindow,
+      datePreset,
+      campaignKey,
+      adsetSelect,
+      selectedAdId,
+      customDateStart,
+      customDateStop,
+    ],
     queryFn: () => fetchAttributionInsights(id, {
       window: attributionWindow,
       ...effectiveDateParams,
       campaignId: campaignKey ?? undefined,
+      adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
+      adId: selectedAdId ?? undefined,
     }),
     enabled: hasToken && Boolean(id) && mainTab === "avanzado",
     staleTime: 5 * 60 * 1000,
   });
 
   const leadsQuery = useQuery({
-    queryKey: ["leads", id, datePreset, campaignKey, customDateStart, customDateStop],
+    queryKey: ["leads", id, datePreset, campaignKey, adsetSelect, selectedAdId, customDateStart, customDateStop],
     queryFn: () => fetchLeadsInsights(id, {
-      level: "campaign",
+      level: selectedAdId ? "ad" : adsetSelect !== ALL ? "ad" : "campaign",
       ...effectiveDateParams,
       campaignId: campaignKey ?? undefined,
+      adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
+      adId: selectedAdId ?? undefined,
     }),
+    enabled: hasToken && Boolean(id) && mainTab === "comercial",
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const closeSpeedQuery = useQuery({
+    queryKey: ["close-speed", id, campaignKey],
+    queryFn: () => fetchCampaignCloseSpeed(id, { campaignId: campaignKey ?? undefined }),
+    enabled: hasToken && Boolean(id) && mainTab === "comercial",
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const bottleneckQuery = useQuery({
+    queryKey: ["bottleneck", id, campaignKey],
+    queryFn: () => fetchBottleneckAnalysis(id, { campaignId: campaignKey ?? undefined }),
+    enabled: hasToken && Boolean(id) && mainTab === "comercial",
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const segmentNoQuoteQuery = useQuery({
+    queryKey: ["segment-no-quote", id, campaignKey],
+    queryFn: () => fetchSegmentNoQuote(id, { campaignId: campaignKey ?? undefined }),
+    enabled: hasToken && Boolean(id) && mainTab === "comercial",
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const cacOutTargetQuery = useQuery({
+    queryKey: ["cac-out-target", id, campaignKey, datePreset, customDateStart, customDateStop],
+    queryFn: () =>
+      fetchCacOutOfTarget(id, {
+        campaignId: campaignKey ?? undefined,
+        datePreset: (effectiveDateParams as { datePreset?: string }).datePreset,
+        dateStart: (effectiveDateParams as { dateStart?: string }).dateStart,
+        dateStop: (effectiveDateParams as { dateStop?: string }).dateStop,
+      }),
+    enabled: hasToken && Boolean(id) && mainTab === "comercial",
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const slaLostRevenueQuery = useQuery({
+    queryKey: ["sla-lost-revenue", id, campaignKey],
+    queryFn: () => fetchSlaLostRevenue(id, { campaignId: campaignKey ?? undefined }),
+    enabled: hasToken && Boolean(id) && mainTab === "comercial",
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const stabilityQuery = useQuery({
+    queryKey: ["account-stability", id, campaignKey],
+    queryFn: () => fetchAccountStability(id, { campaignId: campaignKey ?? undefined, metric: "cac" }),
     enabled: hasToken && Boolean(id) && mainTab === "comercial",
     staleTime: 5 * 60 * 1000,
   });
@@ -470,16 +734,41 @@ export default function DashboardPage() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const effectiveDateParams = useMemo(() => {
-    if (datePreset === "today") {
-      const today = new Date().toISOString().slice(0, 10);
-      return { dateStart: today, dateStop: today };
-    }
-    if (datePreset === "custom" && customDateStart && customDateStop) {
-      return { dateStart: customDateStart, dateStop: customDateStop };
-    }
-    return { datePreset };
-  }, [datePreset, customDateStart, customDateStop]);
+  const timeInsightsQuery = useQuery({
+    queryKey: [
+      "time-insights",
+      id,
+      mainTab,
+      datePreset,
+      customDateStart,
+      customDateStop,
+      campaignKey,
+      adsetSelect,
+      selectedAdId,
+      attributionWindow,
+    ],
+    queryFn: () =>
+      fetchTimeInsights(id, {
+        ...effectiveDateParams,
+        campaignId: campaignKey ?? undefined,
+        adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
+        adId: selectedAdId ?? undefined,
+        timeIncrement: "1",
+        attributionWindow,
+      }),
+    enabled: hasToken && Boolean(id) && mainTab === "resumen",
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const dailyTimePoints = useMemo(
+    () => parseTimeInsightRows((timeInsightsQuery.data?.data ?? []) as Record<string, unknown>[]),
+    [timeInsightsQuery.data],
+  );
+
+  const datePresetLabelEs = useMemo(
+    () => DATE_PRESETS.find((p) => p.value === datePreset)?.label ?? datePreset,
+    [datePreset],
+  );
 
   function handleDatePresetChange(value: string) {
     if (value === "custom") {
@@ -491,23 +780,81 @@ export default function DashboardPage() {
     }
   }
 
+  function handleDownloadLlmReport() {
+    try {
+      setIsExportingReport(true);
+      const report = buildLlmContextReport({
+        accountId: id,
+        accountName: accountLabel,
+        currency: accountsQuery.data?.data.find((a) => a.id === id)?.currency ?? null,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        datePreset,
+        dateStart: data?.date_start ?? (datePreset === "custom" ? customDateStart : null),
+        dateStop: data?.date_stop ?? (datePreset === "custom" ? customDateStop : null),
+        campaignId: campaignKey,
+        adsetId: adsetSelect !== ALL ? adsetSelect : null,
+        adId: selectedAdId,
+        dashboard: data,
+        rankingRows: rankingQuery.data?.data ?? [],
+        dailyPoints: dailyTimePoints,
+        campaigns: campaignsQuery.data?.data ?? [],
+        adsets: adsetsQuery.data?.data ?? [],
+        ads: adsListQuery.data?.data ?? [],
+      });
+      const filename = `llm_context_report_${id.replace(/[^a-zA-Z0-9_-]/g, "_")}_${new Date().toISOString().slice(0, 10)}.json`;
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } finally {
+      setIsExportingReport(false);
+    }
+  }
+
   const campaignNameMap = useMemo(() => {
     const m = new Map<string, string>();
-    for (const c of campaignsQuery.data?.data ?? []) m.set(c.id, c.name);
+    for (const c of campaignsQuery.data?.data ?? []) {
+      m.set(c.id, withEntityFallback(c.name, c.id, "Campaña"));
+    }
     return m;
   }, [campaignsQuery.data]);
 
   const adsetNameMap = useMemo(() => {
     const m = new Map<string, string>();
-    for (const a of adsetsQuery.data?.data ?? []) m.set(a.id, a.name);
+    for (const a of adsetsQuery.data?.data ?? []) {
+      m.set(a.id, withEntityFallback(a.name, a.id, "Conjunto"));
+    }
     return m;
   }, [adsetsQuery.data]);
 
   const adNameMap = useMemo(() => {
     const m = new Map<string, string>();
-    for (const a of adsListQuery.data?.data ?? []) m.set(a.id, a.name);
+    for (const a of adsListQuery.data?.data ?? []) {
+      m.set(a.id, withEntityFallback(a.name, a.id, "Anuncio"));
+    }
     return m;
   }, [adsListQuery.data]);
+
+  const adNameSourceMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const a of adsListQuery.data?.data ?? []) {
+      if (a.name_source) m.set(a.id, a.name_source);
+    }
+    return m;
+  }, [adsListQuery.data]);
+
+  const selectedAdLabel = selectedAdId
+    ? (adNameMap.get(selectedAdId) ?? selectedAdId.slice(0, 12))
+    : null;
+  const selectedAdIsInferred = selectedAdId
+    ? isInferredSource(adNameSourceMap.get(selectedAdId))
+    : false;
+  const selectedAdSource = selectedAdId ? adNameSourceMap.get(selectedAdId) : undefined;
 
   const categoryChartData = useMemo(() => {
     const actions = data?.actions ?? [];
@@ -545,33 +892,74 @@ export default function DashboardPage() {
   const chartConfigCategory = {
     value: {
       label: "Eventos",
-      color: "var(--chart-1)",
+      color: dashboardChartColor(0),
     },
   } satisfies ChartConfig;
 
   const chartConfigTop = {
     value: {
       label: "Cantidad",
-      color: "var(--chart-2)",
+      color: dashboardChartColor(1),
     },
   } satisfies ChartConfig;
 
   const chartConfigCost = {
     value: {
       label: "Coste medio",
-      color: "var(--chart-3)",
+      color: dashboardChartColor(2),
     },
   } satisfies ChartConfig;
 
-  const rankingChartData = useMemo(() => {
-    return (rankingQuery.data?.data ?? [])
-      .map((row) => ({
-        label: String(row.ad_label ?? row.ad_name ?? row.ad_id ?? "").slice(0, 22),
-        value: Number(row[rankingMetric as keyof typeof row] ?? 0),
-      }))
+  const { rankingRowsEnriched, rankingChartData } = useMemo(() => {
+    const enriched = enrichAdRankingRows(rankingQuery.data?.data ?? []);
+    const minSpend = minSpendRankingUsd;
+    type Pt = { label: string; value: number; id: string };
+
+    if (rankingMetric === "cpa") {
+      const chartData: Pt[] = enriched
+        .filter((e) => e.spend >= minSpend && e.cpa != null && e.cpa > 0)
+        .sort((a, b) => (b.cpa ?? 0) - (a.cpa ?? 0))
+        .slice(0, 10)
+        .map((e) => ({
+          label: e.label,
+          value: e.cpa!,
+          id: String(e.row.ad_id ?? e.label),
+        }));
+      return { rankingRowsEnriched: enriched, rankingChartData: chartData };
+    }
+
+    if (rankingMetric === "roas") {
+      const chartData: Pt[] = enriched
+        .filter((e) => e.spend >= minSpend && e.roas != null && e.roas > 0)
+        .sort((a, b) => (b.roas ?? 0) - (a.roas ?? 0))
+        .slice(0, 10)
+        .map((e) => ({
+          label: e.label,
+          value: e.roas!,
+          id: String(e.row.ad_id ?? e.label),
+        }));
+      return { rankingRowsEnriched: enriched, rankingChartData: chartData };
+    }
+
+    const chartData: Pt[] = enriched
+      .map((e) => {
+        let value = 0;
+        if (rankingMetric === "impressions") value = toFloat(e.row.impressions);
+        else if (rankingMetric === "clicks") value = toFloat(e.row.clicks);
+        else if (rankingMetric === "spend") value = e.spend;
+        else if (rankingMetric === "ctr") value = ctrNumber(e.row);
+        else value = e.results;
+        return {
+          label: e.label,
+          value,
+          id: String(e.row.ad_id ?? e.label),
+        };
+      })
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
-  }, [rankingQuery.data, rankingMetric]);
+
+    return { rankingRowsEnriched: enriched, rankingChartData: chartData };
+  }, [rankingQuery.data, rankingMetric, minSpendRankingUsd]);
 
   const placementSpendByPlatform = useMemo(() => {
     const rows = placementQuery.data?.data ?? [];
@@ -588,7 +976,7 @@ export default function DashboardPage() {
   const rankingChartConfig = {
     value: {
       label: RANKING_METRIC_LABELS[rankingMetric] ?? rankingMetric,
-      color: "var(--chart-1)",
+      color: dashboardChartColor(3),
     },
   } satisfies ChartConfig;
 
@@ -611,6 +999,22 @@ export default function DashboardPage() {
     const frequency = data?.summary?.frequency != null ? Number(data.summary.frequency) : null;
     return computeHealthScore({ ctr, frequency, manualKpis }, thresholds);
   }, [data?.summary, manualKpis, thresholds]);
+
+  const unifiedInsights = useMemo(() => {
+    const curr = data?.summary ?? {};
+    const prev = prevDashboardQuery.data?.summary ?? {};
+    const cpmDelta = prev.cpm ? deltaPercent(Number(curr.cpm ?? 0), Number(prev.cpm)) : null;
+    const ctrDelta = prev.ctr ? deltaPercent(Number(curr.ctr ?? 0), Number(prev.ctr)) : null;
+    const currConv = Number(data?.derived?.results ?? 0);
+    const prevConv = Number(prevDashboardQuery.data?.derived?.results ?? 0);
+    const conversionDelta = prevConv > 0 ? deltaPercent(currConv, prevConv) : null;
+    return buildDashboardInsights({
+      cpmDelta,
+      ctrDelta,
+      conversionDelta,
+      frequency: Number(curr.frequency ?? 0),
+    });
+  }, [data, prevDashboardQuery.data]);
 
   if (!hasToken) {
     return <Navigate to="/" replace />;
@@ -659,7 +1063,7 @@ export default function DashboardPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-foreground text-2xl font-semibold tracking-tight">
-            Dashboard
+            Rendimiento de Ads (Cuenta)
           </h1>
           <p className="text-muted-foreground font-mono text-sm" title={id}>
             {accountLabel}
@@ -701,11 +1105,35 @@ export default function DashboardPage() {
               <SelectItem value="daily">Diario (suma por anuncio)</SelectItem>
             </SelectContent>
           </Select>
+          <div className="flex rounded-md border overflow-hidden">
+            <span className="px-3 py-1.5 text-sm font-medium bg-primary text-primary-foreground">
+              Cuenta
+            </span>
+            <Button variant="ghost" size="sm" className="rounded-none border-l h-auto px-3" asChild>
+              <Link to={`/accounts/${encodeURIComponent(id)}/pages`}>Página</Link>
+            </Button>
+          </div>
           <Button variant="outline" asChild>
             <Link to="/accounts">Volver a cuentas</Link>
           </Button>
+          <Button
+            type="button"
+            variant="default"
+            onClick={handleDownloadLlmReport}
+            disabled={isExportingReport || isLoading || rankingQuery.isLoading}
+          >
+            {isExportingReport ? "Generando..." : "Descargar reporte"}
+          </Button>
         </div>
       </div>
+
+      <Alert>
+        <AlertTitle>Estás viendo: Cuenta</AlertTitle>
+        <AlertDescription>
+          Aquí ves el rendimiento de tus anuncios de toda la cuenta.
+          Si quieres revisar una marca o fanpage puntual, cambia a <strong>Página</strong>.
+        </AlertDescription>
+      </Alert>
 
       <Card>
         <CardHeader className="pb-3">
@@ -738,7 +1166,7 @@ export default function DashboardPage() {
                   <SelectItem value={ALL}>Todas las campañas</SelectItem>
                   {(campaignsQuery.data?.data ?? []).map((c) => (
                     <SelectItem key={c.id} value={c.id}>
-                      {c.name || c.id}
+                      {withEntityFallback(c.name, c.id, "Campaña")}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -765,7 +1193,7 @@ export default function DashboardPage() {
                   <SelectItem value={ALL}>Todos los conjuntos</SelectItem>
                   {(adsetsQuery.data?.data ?? []).map((s) => (
                     <SelectItem key={s.id} value={s.id}>
-                      {s.name || s.id}
+                      {withEntityFallback(s.name, s.id, "Conjunto")}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -789,7 +1217,17 @@ export default function DashboardPage() {
                   <SelectItem value={ALL}>Todos los anuncios</SelectItem>
                   {(adsListQuery.data?.data ?? []).map((ad) => (
                     <SelectItem key={ad.id} value={ad.id}>
-                      {ad.name || ad.id}
+                      <span className="inline-flex items-center gap-2">
+                        <span>{withEntityFallback(ad.name, ad.id, "Anuncio")}</span>
+                        {isInferredSource(ad.name_source) ? (
+                          <span
+                            className="rounded border px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground"
+                            title={inferredSourceHint(ad.name_source)}
+                          >
+                            Nombre inferido
+                          </span>
+                        ) : null}
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -844,7 +1282,15 @@ export default function DashboardPage() {
             {selectedAdId ? (
               <Badge variant="secondary" className="gap-1 pr-1 font-normal">
                 Anuncio:{" "}
-                {adNameMap.get(selectedAdId) ?? selectedAdId.slice(0, 12)}
+                {selectedAdLabel}
+                {selectedAdIsInferred ? (
+                  <span
+                    className="rounded border px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground"
+                    title={inferredSourceHint(selectedAdSource)}
+                  >
+                    Nombre inferido
+                  </span>
+                ) : null}
                 <Button
                   type="button"
                   variant="ghost"
@@ -860,6 +1306,50 @@ export default function DashboardPage() {
           </div>
         </CardContent>
       </Card>
+
+      {useUnifiedDashboard ? (
+        <GlobalFilterBar
+          datePreset={datePreset}
+          onDatePresetChange={setDatePreset}
+          campaignValue={campaignSelect}
+          adsetValue={adsetSelect}
+          adValue={selectedAdId ?? ALL}
+          onCampaignChange={(v) => {
+            setCampaignSelect(v);
+            setAdsetSelect(ALL);
+            setSelectedAdId(null);
+          }}
+          onAdsetChange={(v) => {
+            setAdsetSelect(v);
+            setSelectedAdId(null);
+          }}
+          onAdChange={(v) => setSelectedAdId(v === ALL ? null : v)}
+          campaignOptions={(campaignsQuery.data?.data ?? []).map((c) => ({
+            id: c.id,
+            name: withEntityFallback(c.name, c.id, "Campaña"),
+          }))}
+          adsetOptions={(adsetsQuery.data?.data ?? []).map((s) => ({
+            id: s.id,
+            name: withEntityFallback(s.name, s.id, "Conjunto"),
+          }))}
+          adOptions={(adsListQuery.data?.data ?? []).map((a) => ({
+            id: a.id,
+            name: withEntityFallback(a.name, a.id, "Anuncio"),
+            inferred: isInferredSource(a.name_source),
+          }))}
+          onOpenCustomDate={() => setShowDateModal(true)}
+        />
+      ) : null}
+
+      <DashboardContextStrip
+        datePreset={datePreset}
+        dateStart={data?.date_start ?? (datePreset === "custom" ? customDateStart : null)}
+        dateStop={data?.date_stop ?? (datePreset === "custom" ? customDateStop : null)}
+        currencyCode={accountsQuery.data?.data.find((a) => a.id === id)?.currency ?? null}
+        attributionWindowLabel={attributionWindowLabelEs(
+          attributionQuery.data?.window ?? attributionWindow ?? data?.context?.attribution_window,
+        )}
+      />
 
       {rankingQuery.data?.messaging_actions_summary &&
       Object.keys(rankingQuery.data.messaging_actions_summary).length > 0 ? (
@@ -903,10 +1393,19 @@ export default function DashboardPage() {
           <TabsTrigger value="audiencia">Audiencia</TabsTrigger>
           <TabsTrigger value="comercial">Comercial</TabsTrigger>
           <TabsTrigger value="avanzado">Avanzado</TabsTrigger>
+          {useUnifiedDashboard ? <TabsTrigger value="decisiones">Decisiones</TabsTrigger> : null}
         </TabsList>
 
         {/* ── Tab: Resumen ── */}
         <TabsContent value="resumen" className="space-y-6 pt-4">
+          {useUnifiedDashboard && data ? (
+            <>
+              <ExecutiveSummary summary={data.summary} cpa={data.derived?.cpa ?? null} roas={data.derived?.roas ?? null} />
+              <CampaignRankingTable rows={rankingQuery.data?.data ?? []} />
+              <AdsetDiagnosticView selectedCampaign={campaignKey} selectedAdset={adsetSelect !== ALL ? adsetSelect : null} selectedAd={selectedAdId} />
+              <CreativePerformanceView totalAds={(rankingQuery.data?.data ?? []).length} />
+            </>
+          ) : null}
           {isLoading ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {Array.from({ length: 8 }).map((_, i) => (
@@ -926,6 +1425,17 @@ export default function DashboardPage() {
 
           {data && !isLoading ? (
             <>
+              {showAttributionDiscontinuity ? (
+                <Alert className="border-amber-500/40 bg-amber-500/10">
+                  <AlertTitle>Comparación y cambio Meta ({META_ATTRIBUTION_CHANGE_ISO})</AlertTitle>
+                  <AlertDescription className="text-sm">
+                    El periodo seleccionado y el periodo anterior cruzan el {META_ATTRIBUTION_CHANGE_ISO}. Meta
+                    ajustó entonces la disponibilidad de ventanas de visualización largas en Ads Insights; los deltas de
+                    CPA/ROAS entre tramos pueden no ser totalmente comparables.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
               {/* ── Banner de estado ── */}
               {(() => {
                 const ctr = Number(data.summary.ctr ?? 0);
@@ -958,28 +1468,28 @@ export default function DashboardPage() {
                   }
                 }
 
-                const colorMap: Record<string, string> = {
-                  red: "bg-red-50 text-red-800 border border-red-200",
-                  yellow: "bg-yellow-50 text-yellow-800 border border-yellow-200",
-                  green: "bg-green-50 text-green-800 border border-green-200",
-                };
-                const dotMap: Record<string, string> = {
-                  red: "bg-red-500",
-                  yellow: "bg-yellow-500",
-                  green: "bg-green-500",
-                };
-
                 return (
                   <div className="flex flex-wrap gap-2">
-                    {signals.map((s, i) => (
+                    {signals.map((s, i) => {
+                      const chipBg = pickDashboardColor(`${s.level}-${s.text}`, i);
+                      return (
                       <span
                         key={i}
-                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${colorMap[s.level]}`}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-transparent px-3 py-1 text-xs font-medium"
+                        style={{
+                          backgroundColor: chipBg,
+                          borderColor: chipBg,
+                          color: contrastingForeground(chipBg),
+                        }}
                       >
-                        <span className={`h-1.5 w-1.5 rounded-full ${dotMap[s.level]}`} />
+                        <span
+                          className="h-1.5 w-1.5 rounded-full"
+                          style={{ backgroundColor: pickDashboardColor(`${s.level}-${s.text}`, i + 1) }}
+                        />
                         {s.text}
                       </span>
-                    ))}
+                    );
+                    })}
                   </div>
                 );
               })()}
@@ -990,22 +1500,61 @@ export default function DashboardPage() {
                     const tipText = tipData
                       ? `${tipData.description} Fórmula: ${tipData.formula} Fuente: ${tipData.source} (${tipData.type})`
                       : undefined;
+                    const numVal = Number(val);
+                    const derivedCpa = data.derived?.cpa != null ? Number(data.derived.cpa) : null;
+                    const displayCostPerResult =
+                      key === "cost_per_result" &&
+                      (!Number.isFinite(numVal) || numVal <= 0) &&
+                      derivedCpa != null &&
+                      derivedCpa > 0;
+                    const displayVal = displayCostPerResult ? derivedCpa : numVal;
+                    const displayLabel =
+                      key === "cost_per_result" && displayCostPerResult
+                        ? "Costo por resultado estimado"
+                        : (DASHBOARD_KPI_LABELS[key] ?? key);
                     return (
                       <Card key={key}>
                         <CardHeader className="pb-2">
                           <CardDescription className="flex items-center gap-1">
-                            {DASHBOARD_KPI_LABELS[key] ?? key}
+                            {displayLabel}
                             {tipText && <InfoTooltip text={tipText} />}
                           </CardDescription>
-                          <CardTitle className="text-2xl tabular-nums">{formatNum(val)}</CardTitle>
+                          <CardTitle className="text-2xl tabular-nums">
+                            {key === "cost_per_result"
+                              ? `$${Number(displayVal).toLocaleString("es", { maximumFractionDigits: 2 })}`
+                              : formatNum(displayVal)}
+                          </CardTitle>
+                          {displayCostPerResult ? (
+                            <p className="text-muted-foreground text-xs mt-1">
+                              Meta devolvió 0 en agregado; mostrado: coste efectivo (gasto ÷ primer resultado no trivial).
+                            </p>
+                          ) : null}
                           {/* Delta vs previous period */}
                           {(() => {
+                            if (key === "cost_per_result" && displayCostPerResult) {
+                              const prevCpa = prevDashboardQuery.data?.derived?.cpa;
+                              const pc = prevCpa != null ? Number(prevCpa) : null;
+                              if (!prevDashboardQuery.data || pc == null || pc === 0 || derivedCpa == null)
+                                return null;
+                              const delta = deltaPercent(derivedCpa, pc);
+                              if (delta === null) return null;
+                              const positive = delta >= 0;
+                              const good = !positive;
+                              return (
+                                <p
+                                  className={`text-xs font-medium tabular-nums ${good ? "text-green-600" : "text-red-600"}`}
+                                >
+                                  {positive ? "▲" : "▼"} {Math.abs(delta).toFixed(1)}% vs período anterior (CPA
+                                  derivado)
+                                </p>
+                              );
+                            }
                             const prevVal = Number(prevDashboardQuery.data?.summary?.[key] ?? 0);
-                            const currVal = Number(val);
+                            const currVal = Number(displayVal);
                             if (!prevDashboardQuery.data || prevVal === 0) return null;
                             const delta = deltaPercent(currVal, prevVal);
                             if (delta === null) return null;
-                            const isPositiveGood = !["cpm", "cpp", "frequency"].includes(key);
+                            const isPositiveGood = !["cpm", "cpp", "frequency", "cost_per_result"].includes(key);
                             const positive = delta >= 0;
                             const good = isPositiveGood ? positive : !positive;
                             return (
@@ -1040,6 +1589,51 @@ export default function DashboardPage() {
                 </div>
               </TooltipProvider>
 
+              <div className="space-y-3">
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Gasto diario (pauta asociada a la cuenta)</CardTitle>
+                    <CardDescription>
+                      Serie diaria desde Meta para el mismo periodo y filtro de campaña. Útil para ver ritmo de inversión.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <SpendSparkline
+                      data={dailyTimePoints}
+                      legend="Gasto diario asociado a la cuenta"
+                    />
+                  </CardContent>
+                </Card>
+                <AccountTimeInsightsSection
+                  points={dailyTimePoints}
+                  isLoading={timeInsightsQuery.isLoading}
+                  isError={timeInsightsQuery.isError}
+                  timeRange={timeInsightsQuery.data?.time_range}
+                  datePresetLabel={datePresetLabelEs}
+                  attributionWindowCode={attributionWindow}
+                  metaAttributionSent={timeInsightsQuery.data?.attribution_windows_sent ?? null}
+                />
+              </div>
+
+              {datePreset === "maximum" ? (
+                <Alert>
+                  <AlertTitle>Comparación de periodos desactivada con «Máximo disponible»</AlertTitle>
+                  <AlertDescription className="text-sm">
+                    Este preset abarca todo el histórico que devuelve Meta; un periodo anterior de la misma
+                    duración suele quedar fuera de actividad o de retención útil (tabla en ceros o vacía). Para ver
+                    cambios porcentuales respecto al periodo previo, elige <strong>30 días</strong>,{" "}
+                    <strong>7 días</strong> o un <strong>rango personalizado</strong>.
+                  </AlertDescription>
+                </Alert>
+              ) : prevPeriod ? (
+                <PeriodComparisonCard
+                  data={data}
+                  prev={prevDashboardQuery.data}
+                  prevPeriod={prevPeriod}
+                  prevLoading={prevDashboardQuery.isLoading}
+                />
+              ) : null}
+
               {/* ── Card comparativa: costos de adquisición ── */}
               <TooltipProvider delayDuration={300}>
               {(() => {
@@ -1049,16 +1643,16 @@ export default function DashboardPage() {
                 const actions = data.actions ?? [];
                 const costActions = data.cost_per_action_type ?? [];
 
-                // Costo por resultado: primer cost_per_action_type disponible (excluyendo triviales)
+                // Costo por acción (Meta): primer cost_per_action_type no trivial (un solo tipo; no es “el” CPA de cuenta)
                 const TRIVIAL = new Set(["post_engagement", "page_engagement", "photo_view", "video_view"]);
                 const mainCostAction = costActions.find((a) => !TRIVIAL.has(String(a.action_type)));
                 const costPerResult = mainCostAction ? Number(mainCostAction.value) : null;
 
-                // CPA promedio = gasto / total acciones de resultado
-                const totalResults = actions
-                  .filter((a) => !TRIVIAL.has(String(a.action_type)))
-                  .reduce((s, a) => s + Number(a.value ?? 0), 0);
-                const cpaAvg = totalResults > 0 ? spend / totalResults : null;
+                // CPA alineado al backend / KPI “Resultados (derivado)”: no sumar tipos de acción distintos (eso falseaba el denominador).
+                const cpaPrincipal =
+                  data.derived?.cpa != null && Number.isFinite(Number(data.derived.cpa))
+                    ? Number(data.derived.cpa)
+                    : null;
 
                 // Costo por conversación iniciada
                 const convsStarted = actions
@@ -1073,8 +1667,16 @@ export default function DashboardPage() {
                 const costPerReplied = replies > 0 ? spend / replies : null;
 
                 const costs = [
-                  { label: "CPA promedio", value: cpaAvg, tip: "Gasto ÷ total de resultados (excluyendo interacciones triviales). Derivado." },
-                  { label: "Costo por resultado", value: costPerResult, tip: "Primer cost_per_action_type devuelto por Meta para el objetivo principal. Nativo." },
+                  {
+                    label: "CPA (resultado principal)",
+                    value: cpaPrincipal,
+                    tip: "Mismo criterio que el backend y la comparación de periodos: cost_per_result de Meta si es >0; si no, gasto ÷ volumen de la primera acción no trivial en la lista de acciones (comparable a «Resultados (derivado)»). No mezcla varios tipos de acción.",
+                  },
+                  {
+                    label: "Costo / acción (primer tipo Meta)",
+                    value: costPerResult,
+                    tip: "Primer cost_per_action_type numérico en la respuesta (excl. interacciones triviales). Suele referirse a un solo action_type; puede diferir mucho del CPA de cuenta agregado.",
+                  },
                   { label: "Costo / conv. iniciada", value: costPerConvStarted, tip: "Gasto ÷ conversaciones iniciadas (onsite_conversion.messaging_conversation_started_7d). Derivado." },
                   { label: "Costo / conv. respondida", value: costPerReplied, tip: "Gasto ÷ primeras respuestas (messaging_first_reply). Derivado. Puede no estar disponible en todas las cuentas." },
                 ];
@@ -1159,7 +1761,11 @@ export default function DashboardPage() {
                           />
                           <YAxis tickLine={false} axisLine={false} width={48} />
                           <ChartTooltip content={<ChartTooltipContent />} />
-                          <Bar dataKey="value" fill="var(--color-value)" radius={4} />
+                          <Bar dataKey="value" radius={4}>
+                            {categoryChartData.map((d, i) => (
+                              <Cell key={String(d.label)} fill={barColorAt(i, String(d.label))} />
+                            ))}
+                          </Bar>
                         </BarChart>
                       </ChartContainer>
                     )}
@@ -1198,7 +1804,11 @@ export default function DashboardPage() {
                           />
                           <YAxis tickLine={false} axisLine={false} width={48} />
                           <ChartTooltip content={<ChartTooltipContent />} />
-                          <Bar dataKey="value" fill="var(--color-value)" radius={4} />
+                          <Bar dataKey="value" radius={4}>
+                            {topActionsChartData.map((d, i) => (
+                              <Cell key={String(d.label)} fill={barColorAt(i, String(d.label))} />
+                            ))}
+                          </Bar>
                         </BarChart>
                       </ChartContainer>
                     )}
@@ -1239,7 +1849,11 @@ export default function DashboardPage() {
                         />
                         <YAxis tickLine={false} axisLine={false} width={52} />
                         <ChartTooltip content={<ChartTooltipContent />} />
-                        <Bar dataKey="value" fill="var(--color-value)" radius={4} />
+                        <Bar dataKey="value" radius={4}>
+                          {costChartData.map((d, i) => (
+                            <Cell key={String(d.label)} fill={barColorAt(i, String(d.label))} />
+                          ))}
+                        </Bar>
                       </BarChart>
                     </ChartContainer>
                   )}
@@ -1271,24 +1885,56 @@ export default function DashboardPage() {
           ) : null}
         </TabsContent>
 
+        {useUnifiedDashboard ? (
+          <TabsContent value="decisiones" className="space-y-6 pt-4">
+            <InsightsDecisionPanel insights={unifiedInsights} />
+          </TabsContent>
+        ) : null}
+
         {/* ── Tab: Creatividades (ranking + catálogo + fatiga) ── */}
         <TabsContent value="creatividades" className="space-y-6 pt-4">
 
           <h3 className="text-foreground text-lg font-semibold">Ranking de anuncios</h3>
-          <div className="flex items-center gap-3">
-            <span className="text-muted-foreground text-sm">Métrica:</span>
-            <Select value={rankingMetric} onValueChange={(v) => setRankingMetric(v as typeof rankingMetric)}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Métrica" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="impressions">Impresiones</SelectItem>
-                <SelectItem value="clicks">Clics</SelectItem>
-                <SelectItem value="spend">Gasto</SelectItem>
-                <SelectItem value="ctr">Tasa de clics (CTR)</SelectItem>
-              </SelectContent>
-            </Select>
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="flex items-center gap-3">
+              <span className="text-muted-foreground text-sm">Métrica:</span>
+              <Select value={rankingMetric} onValueChange={(v) => setRankingMetric(v as RankingMetric)}>
+                <SelectTrigger className="w-[min(100vw-2rem,220px)]">
+                  <SelectValue placeholder="Métrica" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="impressions">Impresiones</SelectItem>
+                  <SelectItem value="clicks">Clics</SelectItem>
+                  <SelectItem value="spend">Gasto</SelectItem>
+                  <SelectItem value="ctr">Tasa de clics (CTR)</SelectItem>
+                  <SelectItem value="results">Resultados</SelectItem>
+                  <SelectItem value="cpa">CPA</SelectItem>
+                  <SelectItem value="roas">ROAS</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="min-spend-ranking" className="text-muted-foreground text-xs">
+                Gasto mínimo (USD) para CPA / ROAS
+              </Label>
+              <Input
+                id="min-spend-ranking"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step={1}
+                className="w-[120px]"
+                value={minSpendRankingUsd}
+                onChange={(e) => {
+                  const n = parseFloat(e.target.value);
+                  if (Number.isFinite(n) && n >= 0) setMinSpendRankingUsd(n);
+                }}
+              />
+            </div>
           </div>
+          <p className="text-muted-foreground max-w-3xl text-xs">
+            Los gráficos por CPA y ROAS solo ordenan anuncios con gasto ≥ umbral (evita CPA engañoso con poco volumen). Todas las filas siguen en la tabla.
+          </p>
 
           {rankingQuery.isLoading ? (
             <div className="space-y-3">
@@ -1315,8 +1961,16 @@ export default function DashboardPage() {
                   <CardDescription>
                     Top anuncios por rendimiento en el periodo seleccionado.
                     {selectedAdId ? (
-                      <span className="text-primary ml-2 font-medium">
-                        Anuncio seleccionado: {selectedAdId}
+                      <span className="text-primary ml-2 inline-flex items-center gap-2 font-medium">
+                        <span>Anuncio seleccionado: {selectedAdLabel}</span>
+                        {selectedAdIsInferred ? (
+                          <span
+                            className="rounded border px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground"
+                            title={inferredSourceHint(selectedAdSource)}
+                          >
+                            Nombre inferido
+                          </span>
+                        ) : null}
                       </span>
                     ) : (
                       <span className="text-muted-foreground ml-2">
@@ -1324,6 +1978,18 @@ export default function DashboardPage() {
                       </span>
                     )}
                   </CardDescription>
+                  <div className="pt-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={selectedAdId ? "default" : "outline"}
+                      onClick={() => setMainTab("avanzado")}
+                    >
+                      {selectedAdId
+                        ? "Ver targeting del anuncio seleccionado"
+                        : "Ir a Avanzado para configurar targeting"}
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <div className="rounded-md border">
@@ -1335,6 +2001,10 @@ export default function DashboardPage() {
                           <TableHead className="text-right">Impresiones</TableHead>
                           <TableHead className="text-right">Clics</TableHead>
                           <TableHead className="text-right">Gasto</TableHead>
+                          <TableHead className="text-right">Resultados</TableHead>
+                          <TableHead className="text-right" title="Coste por resultado (Meta o derivado)">
+                            CPA
+                          </TableHead>
                           <TableHead className="text-right">CTR (%)</TableHead>
                           <TableHead className="text-right" title="Coste por mil impresiones">
                             CPM
@@ -1342,24 +2012,42 @@ export default function DashboardPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {(rankingQuery.data?.data ?? []).length === 0 ? (
+                        {rankingRowsEnriched.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={7} className="text-center">
+                            <TableCell colSpan={9} className="text-center">
                               Sin datos de anuncios para este periodo.
                             </TableCell>
                           </TableRow>
                         ) : (
-                          (rankingQuery.data?.data ?? []).map((row, idx) => (
+                          rankingRowsEnriched.map(({ row, results, cpa, spend }, idx) => (
                             <TableRow
                               key={String(row.ad_id ?? idx)}
-                              className={`cursor-pointer ${selectedAdId === String(row.ad_id) ? "bg-muted" : ""}`}
+                              className={`cursor-pointer ${selectedAdId === String(row.ad_id) ? "bg-muted" : ""} ${
+                                (rankingMetric === "cpa" || rankingMetric === "roas") && spend < minSpendRankingUsd
+                                  ? "text-muted-foreground"
+                                  : ""
+                              }`}
                               onClick={() => {
                                 const adId = row.ad_id != null ? String(row.ad_id) : null;
                                 if (adId) setSelectedAdId(adId);
                               }}
                             >
                               <TableCell className="font-medium">
-                                {row.ad_label}
+                                {withEntityFallback(row.ad_label, String(row.ad_id ?? ""), "Anuncio")}
+                                {row.ad_label_source && row.ad_label_source !== "meta_ad_name" ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="ml-2 align-middle text-[10px]"
+                                    title={inferredSourceHint(row.ad_label_source)}
+                                  >
+                                    Nombre inferido
+                                  </Badge>
+                                ) : null}
+                                {spend < minSpendRankingUsd ? (
+                                  <span className="text-muted-foreground ml-1 text-[10px] font-normal">
+                                    (gasto por debajo del mínimo)
+                                  </span>
+                                ) : null}
                               </TableCell>
                               <TableCell className="max-w-[160px] truncate text-sm text-muted-foreground">
                                 {row.adset_name ?? row.adset_id ?? "—"}
@@ -1372,6 +2060,12 @@ export default function DashboardPage() {
                               </TableCell>
                               <TableCell className="text-right tabular-nums">
                                 ${String(row.spend ?? "—")}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {results > 0 ? results.toLocaleString("es") : "—"}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {cpa != null && cpa > 0 ? `$${cpa.toFixed(2)}` : "—"}
                               </TableCell>
                               <TableCell className="text-right tabular-nums">
                                 {String(row.ctr ?? "—")}%
@@ -1392,15 +2086,55 @@ export default function DashboardPage() {
                 <CardHeader>
                   <CardTitle>Distribución por anuncio</CardTitle>
                   <CardDescription>
-                    {RANKING_METRIC_LABELS[rankingMetric] ?? rankingMetric} por anuncio
-                    (top 10).
+                    {RANKING_METRIC_LABELS[rankingMetric] ?? rankingMetric} — top 10.
+                    {rankingMetric === "cpa" || rankingMetric === "roas" ? (
+                      <span className="text-muted-foreground">
+                        {" "}
+                        Barras horizontales; solo anuncios con gasto ≥ {minSpendRankingUsd} USD.
+                      </span>
+                    ) : null}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="pl-0">
                   {rankingChartData.length === 0 ? (
                     <p className="text-muted-foreground px-6 text-sm">
-                      No hay datos para graficar.
+                      {rankingMetric === "cpa" || rankingMetric === "roas"
+                        ? "Sin anuncios que cumplan el gasto mínimo y tengan esta métrica calculable. Revisa la tabla o baja el umbral."
+                        : "No hay datos para graficar."}
                     </p>
+                  ) : rankingMetric === "cpa" || rankingMetric === "roas" ? (
+                    <ChartContainer config={rankingChartConfig} className="min-h-[300px] w-full">
+                      <BarChart
+                        accessibilityLayer
+                        layout="vertical"
+                        data={rankingChartData}
+                        margin={{ left: 4, right: 16, top: 8, bottom: 8 }}
+                      >
+                        <CartesianGrid horizontal={false} />
+                        <XAxis
+                          type="number"
+                          tickLine={false}
+                          axisLine={false}
+                          tickFormatter={(v) =>
+                            rankingMetric === "cpa" ? `$${v}` : `${Number(v).toFixed(2)}×`
+                          }
+                        />
+                        <YAxis
+                          type="category"
+                          dataKey="label"
+                          width={120}
+                          tickLine={false}
+                          axisLine={false}
+                          tick={{ fontSize: 10 }}
+                        />
+                        <ChartTooltip content={<ChartTooltipContent />} />
+                        <Bar dataKey="value" radius={4}>
+                          {rankingChartData.map((d, i) => (
+                            <Cell key={d.id} fill={barColorAt(i, d.id)} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ChartContainer>
                   ) : (
                     <ChartContainer config={rankingChartConfig} className="min-h-[280px] w-full">
                       <BarChart
@@ -1421,10 +2155,30 @@ export default function DashboardPage() {
                         />
                         <YAxis tickLine={false} axisLine={false} width={48} />
                         <ChartTooltip content={<ChartTooltipContent />} />
-                        <Bar dataKey="value" fill="var(--color-value)" radius={4} />
+                        <Bar dataKey="value" radius={4}>
+                          {rankingChartData.map((d, i) => (
+                            <Cell key={d.id} fill={barColorAt(i, d.id)} />
+                          ))}
+                        </Bar>
                       </BarChart>
                     </ChartContainer>
                   )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Vista eficiencia (CPA y ROAS)</CardTitle>
+                  <CardDescription>
+                    Comparación fija de eficiencia (misma ventana que el ranking). Umbral de gasto:{" "}
+                    {minSpendRankingUsd} USD.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <AdCreatividadEfficiencyBarCharts
+                    rows={rankingQuery.data?.data ?? []}
+                    minSpendUsd={minSpendRankingUsd}
+                  />
                 </CardContent>
               </Card>
             </>
@@ -1575,6 +2329,10 @@ export default function DashboardPage() {
             isError={fatigueQuery.isError}
             errorMessage={fatigueQuery.error instanceof Error ? fatigueQuery.error.message : undefined}
           />
+          <CreativeSaturationScatter
+            data={fatigueQuery.data?.data}
+            isLoading={fatigueQuery.isLoading}
+          />
         </TabsContent>
 
         {/* ── Tab: Audiencia (plataformas + geografía + demografía) ── */}
@@ -1679,6 +2437,11 @@ export default function DashboardPage() {
                       </div>
                     </div>
                   ) : null}
+                  <PlacementEfficiencyBarChart
+                    rows={placementQuery.data?.data ?? []}
+                    datePreset={placementQuery.data?.date_preset ?? null}
+                    timeRange={placementQuery.data?.time_range ?? null}
+                  />
                 </>
               )}
             </CardContent>
@@ -1698,7 +2461,7 @@ export default function DashboardPage() {
               </SelectContent>
             </Select>
             <span className="text-muted-foreground text-sm">Vista:</span>
-            <Select value={geoMetric} onValueChange={(v) => setGeoMetric(v as typeof geoMetric)}>
+            <Select value={geoMetric} onValueChange={(v) => setGeoMetric(v as GeoMapMetric)}>
               <SelectTrigger className="w-[200px]">
                 <SelectValue />
               </SelectTrigger>
@@ -1743,8 +2506,11 @@ export default function DashboardPage() {
                 <CardHeader>
                   <CardTitle>Distribución geográfica — eficiencia</CardTitle>
                   <CardDescription>
-                    {geoScope === "account" ? "Cuenta completa" : `Anuncio ${selectedAdId}`} — vista por{" "}
-                    {{ impressions: "impresiones", spend: "gasto", cpa: "CPA", results: "resultados" }[geoMetric]}.
+                    {geoScope === "account"
+                      ? "Cuenta completa"
+                      : `Anuncio ${selectedAdLabel ?? selectedAdId}`}{" "}
+                    — vista por{" "}
+                    {GEO_METRIC_LABEL_ES[geoMetric]}.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -1769,12 +2535,7 @@ export default function DashboardPage() {
                           </TableRow>
                         ) : (
                           [...(geoQuery.data?.data ?? [])]
-                            .sort((a, b) => {
-                              if (geoMetric === "impressions") return Number(b.impressions ?? 0) - Number(a.impressions ?? 0);
-                              if (geoMetric === "spend") return Number(b.spend ?? 0) - Number(a.spend ?? 0);
-                              if (geoMetric === "cpa") return Number(b.cpa ?? 0) - Number(a.cpa ?? 0);
-                              return Number(b.results ?? 0) - Number(a.results ?? 0);
-                            })
+                            .sort((a, b) => compareGeoInsightRowsForMetric(a, b, geoMetric))
                             .map((row, idx) => (
                               <TableRow key={String(row.region ?? row.region_name ?? idx)}>
                                 <TableCell className="font-medium text-sm">
@@ -1807,14 +2568,21 @@ export default function DashboardPage() {
               <Card>
                 <CardHeader>
                   <CardTitle>Mapa geográfico</CardTitle>
-                  <CardDescription>Distribución interactiva — métrica: {geoMetric}.</CardDescription>
+                  <CardDescription>
+                    Distribución interactiva — métrica: {geoMetric}.
+                  </CardDescription>
                 </CardHeader>
                 <CardContent>
                   {geoQuery.data ? (
                     <GeoMap
                       data={geoQuery.data.data}
                       metadata={geoQuery.data.metadata}
-                      metric={geoMetric === "cpa" || geoMetric === "results" ? "impressions" : geoMetric}
+                      metric={geoMetric}
+                      extraCaption={
+                        geoMetric === "cpa"
+                          ? `CPA por región alineado con el mismo criterio de resultados que el resumen (referencia: ${attributionWindowLabelEs(data?.context?.attribution_window) ?? "ventana predeterminada Meta"}).`
+                          : undefined
+                      }
                     />
                   ) : null}
                 </CardContent>
@@ -1831,6 +2599,67 @@ export default function DashboardPage() {
             errorMessage={demographicsQuery.error instanceof Error ? demographicsQuery.error.message : undefined}
             breakdown={demographicsBreakdown}
             onBreakdownChange={setDemographicsBreakdown}
+          />
+
+          <Separator className="my-4" />
+          <h3 className="text-foreground text-lg font-semibold">Audiencias que mejor rinden</h3>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="audience-category">Categoría</Label>
+              <Select
+                value={audienceCategory}
+                onValueChange={(v) =>
+                  setAudienceCategory(
+                    v as
+                      | "all"
+                      | "interests"
+                      | "behaviors"
+                      | "education_majors"
+                      | "family_statuses"
+                      | "life_events"
+                      | "work_positions",
+                  )
+                }
+              >
+                <SelectTrigger id="audience-category" className="w-[220px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas</SelectItem>
+                  <SelectItem value="interests">Intereses</SelectItem>
+                  <SelectItem value="behaviors">Comportamientos</SelectItem>
+                  <SelectItem value="education_majors">Carreras / educación</SelectItem>
+                  <SelectItem value="family_statuses">Estado familiar</SelectItem>
+                  <SelectItem value="life_events">Eventos de vida</SelectItem>
+                  <SelectItem value="work_positions">Cargos de trabajo</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="audience-min-spend">Gasto mínimo (USD)</Label>
+              <Input
+                id="audience-min-spend"
+                className="w-[160px]"
+                type="number"
+                min={0}
+                step="1"
+                value={String(audienceMinSpend)}
+                onChange={(e) => {
+                  const next = Number(e.target.value);
+                  setAudienceMinSpend(Number.isFinite(next) && next >= 0 ? next : 0);
+                }}
+              />
+            </div>
+          </div>
+          <AudiencePerformancePanel
+            data={audiencePerformanceQuery.data}
+            isLoading={audiencePerformanceQuery.isLoading}
+            isError={audiencePerformanceQuery.isError}
+            errorMessage={
+              audiencePerformanceQuery.error instanceof Error
+                ? audiencePerformanceQuery.error.message
+                : undefined
+            }
           />
         </TabsContent>
 
@@ -1851,6 +2680,11 @@ export default function DashboardPage() {
                   <AlertDescription>
                     Ve a la pestaña <strong>Creatividades</strong>, haz clic en una fila para seleccionar un anuncio y luego vuelve aquí.
                   </AlertDescription>
+                  <div className="pt-3">
+                    <Button type="button" size="sm" variant="outline" onClick={() => setMainTab("creatividades")}>
+                      Ir a Creatividades
+                    </Button>
+                  </div>
                 </Alert>
               ) : targetingQuery.isLoading ? (
                 <div className="space-y-3">
@@ -1881,6 +2715,19 @@ export default function DashboardPage() {
             window={attributionWindow}
             onWindowChange={setAttributionWindow}
           />
+
+          {data && prevPeriod ? (
+            <>
+              <Separator className="my-4" />
+              <h3 className="text-foreground text-lg font-semibold">Comparación de periodos (resumen)</h3>
+              <PeriodComparisonCard
+                data={data}
+                prev={prevDashboardQuery.data}
+                prevPeriod={prevPeriod}
+                prevLoading={prevDashboardQuery.isLoading}
+              />
+            </>
+          ) : null}
         </TabsContent>
 
         {/* ── Tab: Comercial (leads + datos comerciales) ── */}
@@ -1891,6 +2738,49 @@ export default function DashboardPage() {
             isLoading={leadsQuery.isLoading}
             isError={leadsQuery.isError}
             errorMessage={leadsQuery.error instanceof Error ? leadsQuery.error.message : undefined}
+          />
+          <CampaignCloseTimeBoxplotCard
+            data={closeSpeedQuery.data?.data}
+            isLoading={closeSpeedQuery.isLoading}
+            isError={closeSpeedQuery.isError}
+            errorMessage={closeSpeedQuery.error instanceof Error ? closeSpeedQuery.error.message : undefined}
+          />
+          <div className="grid gap-6 lg:grid-cols-2">
+            <BottleneckWaterfallCard
+              data={bottleneckQuery.data?.data}
+              primaryBottleneck={bottleneckQuery.data?.primary_bottleneck}
+              isLoading={bottleneckQuery.isLoading}
+              isError={bottleneckQuery.isError}
+              errorMessage={bottleneckQuery.error instanceof Error ? bottleneckQuery.error.message : undefined}
+            />
+            <NonQuoteSegmentsHeatmapCard
+              data={segmentNoQuoteQuery.data?.data}
+              threshold={segmentNoQuoteQuery.data?.threshold}
+              isLoading={segmentNoQuoteQuery.isLoading}
+              isError={segmentNoQuoteQuery.isError}
+              errorMessage={segmentNoQuoteQuery.error instanceof Error ? segmentNoQuoteQuery.error.message : undefined}
+            />
+          </div>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <CacOutOfTargetCard
+              data={cacOutTargetQuery.data}
+              isLoading={cacOutTargetQuery.isLoading}
+              isError={cacOutTargetQuery.isError}
+              errorMessage={cacOutTargetQuery.error instanceof Error ? cacOutTargetQuery.error.message : undefined}
+            />
+            <SlaLostRevenueCard
+              data={slaLostRevenueQuery.data}
+              isLoading={slaLostRevenueQuery.isLoading}
+              isError={slaLostRevenueQuery.isError}
+              errorMessage={slaLostRevenueQuery.error instanceof Error ? slaLostRevenueQuery.error.message : undefined}
+            />
+          </div>
+          <PerformanceControlChartCard
+            data={stabilityQuery.data}
+            isLoading={stabilityQuery.isLoading}
+            isError={stabilityQuery.isError}
+            errorMessage={stabilityQuery.error instanceof Error ? stabilityQuery.error.message : undefined}
+            title="Estabilidad (CAC) - cuenta"
           />
 
           <Separator className="my-4" />

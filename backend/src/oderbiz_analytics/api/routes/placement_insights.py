@@ -24,6 +24,7 @@ async def get_placement_insights(
     adset_id: str | None = Query(None),
     ad_id: str | None = Query(None),
     time_increment: int | None = Query(None),
+    include_device_breakdowns: bool = Query(False),
     settings: Settings = Depends(get_settings),
     access_token: str = Depends(get_meta_access_token),
 ):
@@ -56,6 +57,10 @@ async def get_placement_insights(
     else:
         effective_preset = date_preset if date_preset else "last_30d"
 
+    breakdowns = ["publisher_platform", "platform_position"]
+    if include_device_breakdowns:
+        breakdowns.extend(["device_platform", "impression_device"])
+
     try:
         rows = await fetch_insights(
             base_url=base,
@@ -65,7 +70,8 @@ async def get_placement_insights(
             level=level,
             date_preset=effective_preset,
             time_range=use_time_range,
-            breakdowns=["publisher_platform", "platform_position"],
+            breakdowns=breakdowns,
+            time_increment=time_increment,
         )
     except httpx.HTTPStatusError:
         raise HTTPException(status_code=502, detail="Error al obtener insights de plataforma.") from None
@@ -89,7 +95,8 @@ async def get_placement_insights(
 
     return {
         "data": enriched,
-        "breakdowns": ["publisher_platform", "platform_position"],
+        "breakdowns": breakdowns,
         "date_preset": effective_preset,
         "time_range": use_time_range,
+        "time_increment": time_increment,
     }

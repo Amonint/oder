@@ -9,7 +9,9 @@ from oderbiz_analytics.adapters.meta.insights import fetch_account_insights
 from oderbiz_analytics.config import get_settings
 
 FIELDS = (
-    "impressions,clicks,spend,reach,frequency,cpm,cpp,ctr,actions,cost_per_action_type"
+    "impressions,clicks,spend,reach,frequency,cpm,cpp,ctr,"
+    "cost_per_result,inline_link_clicks,purchase_roas,"
+    "actions,action_values,cost_per_action_type"
 )
 DATE_PRESET = "last_30d"
 

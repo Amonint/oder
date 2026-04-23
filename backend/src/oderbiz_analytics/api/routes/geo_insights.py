@@ -55,9 +55,12 @@ async def get_geo_insights(
     ad_account_id: str,
     scope: Literal["account", "ad"] = Query("account"),
     ad_id: str | None = Query(None),
+    campaign_id: str | None = Query(None),
+    adset_id: str | None = Query(None),
     date_preset: str | None = Query(None),
     date_start: str | None = Query(None),
     date_stop: str | None = Query(None),
+    geo_breakdown: Literal["region", "country"] = Query("region"),
     settings: Settings = Depends(get_settings),
     access_token: str = Depends(get_meta_access_token),
 ):
@@ -83,12 +86,18 @@ async def get_geo_insights(
             detail="Se requieren date_start y date_stop juntos para usar rango de fechas personalizado.",
         )
 
-    if scope == "account":
-        object_id = normalize_ad_account_id(ad_account_id)
-        level = "account"
-    else:
-        object_id = ad_id  # type: ignore[assignment]
-        level = "ad"
+    object_id = normalize_ad_account_id(ad_account_id)
+    level = "account"
+    filtering: list[dict] | None = None
+    aid = (ad_id or "").strip()
+    sid = (adset_id or "").strip()
+    cid = (campaign_id or "").strip()
+    if aid:
+        filtering = [{"field": "ad.id", "operator": "IN", "value": [aid]}]
+    elif sid:
+        filtering = [{"field": "adset.id", "operator": "IN", "value": [sid]}]
+    elif cid:
+        filtering = [{"field": "campaign.id", "operator": "IN", "value": [cid]}]
 
     base = f"https://graph.facebook.com/{settings.meta_graph_version}".rstrip("/")
 
@@ -109,7 +118,8 @@ async def get_geo_insights(
             level=level,
             date_preset=effective_preset,
             time_range=use_time_range,
-            breakdowns=["region"],
+            breakdowns=[geo_breakdown],
+            filtering=filtering,
         )
     except httpx.HTTPStatusError:
         raise HTTPException(
@@ -125,21 +135,22 @@ async def get_geo_insights(
     # Enriquecer cada row con nombre de región y métricas de eficiencia
     enriched_rows = []
     for row in rows:
-        enriched = enrich_geo_row(row)
+        enriched = enrich_geo_row(row) if geo_breakdown == "region" else row
         enriched.update(_extract_results_and_cpa(row))
         enriched_rows.append(enriched)
 
     # Metadata de cobertura completa y alcance
     metadata = get_geo_metadata(
-        scope=scope,
-        ad_id=ad_id if scope == "ad" else None,
+        scope="ad" if aid else "account",
+        ad_id=aid if aid else None,
         total_rows=len(enriched_rows),
     )
 
     return {
         "data": enriched_rows,
         "metadata": metadata,
-        "scope": scope,
+        "scope": "ad" if aid else "account",
+        "geo_breakdown": geo_breakdown,
         "date_preset": effective_preset,
         "time_range": use_time_range,
     }

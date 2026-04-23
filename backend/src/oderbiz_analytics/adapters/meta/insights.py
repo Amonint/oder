@@ -17,7 +17,10 @@ def _insights_params(
     time_range: dict[str, str] | None,
     breakdowns: list[str] | None,
     filtering: list[dict] | None,
-    time_increment: int | None,
+    time_increment: int | str | None,
+    action_attribution_windows: list[str] | None,
+    action_report_time: str | None,
+    limit: int | None = None,
 ) -> dict:
     params: dict = {
         "fields": fields,
@@ -35,6 +38,12 @@ def _insights_params(
         params["filtering"] = json.dumps(filtering)
     if time_increment is not None:
         params["time_increment"] = str(time_increment)
+    if action_attribution_windows:
+        params["action_attribution_windows"] = json.dumps(action_attribution_windows)
+    if action_report_time:
+        params["action_report_time"] = action_report_time
+    if limit is not None:
+        params["limit"] = str(limit)
     return params
 
 
@@ -49,7 +58,10 @@ async def fetch_insights(
     level: str = "account",
     breakdowns: list[str] | None = None,
     filtering: list[dict] | None = None,
-    time_increment: int | None = None,
+    time_increment: int | str | None = None,
+    action_attribution_windows: list[str] | None = None,
+    action_report_time: str | None = None,
+    limit: int | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> list[dict]:
     own = client is None
@@ -65,6 +77,9 @@ async def fetch_insights(
             breakdowns=breakdowns,
             filtering=filtering,
             time_increment=time_increment,
+            action_attribution_windows=action_attribution_windows,
+            action_report_time=action_report_time,
+            limit=limit,
         )
         r = await client.get(
             f"{base_url.rstrip('/')}/{ad_account_id}/insights",
@@ -90,7 +105,10 @@ async def fetch_insights_all_pages(
     level: str = "account",
     breakdowns: list[str] | None = None,
     filtering: list[dict] | None = None,
-    time_increment: int | None = None,
+    time_increment: int | str | None = None,
+    action_attribution_windows: list[str] | None = None,
+    action_report_time: str | None = None,
+    limit: int | None = None,
     max_pages: int = 200,
 ) -> list[dict]:
     """Sigue `paging.next` hasta `max_pages` (URLs `next` pueden incluir token)."""
@@ -112,6 +130,9 @@ async def fetch_insights_all_pages(
                     breakdowns=breakdowns,
                     filtering=filtering,
                     time_increment=time_increment,
+                    action_attribution_windows=action_attribution_windows,
+                    action_report_time=action_report_time,
+                    limit=limit,
                 )
                 r = await client.get(url, params=params)
                 first = False

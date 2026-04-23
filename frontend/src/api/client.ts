@@ -48,8 +48,22 @@ export interface DashboardResponse {
   scope?: "account" | "campaign";
   campaign_id?: string | null;
   insights_empty: boolean;
+  context?: {
+    level: "account" | "campaign";
+    entity_id: string;
+    date_start: string | null;
+    date_stop: string | null;
+    attribution_window: string | null;
+  };
   summary: Record<string, number>;
+  derived?: {
+    results: number;
+    cpa: number | null;
+    roas: number | null;
+  };
+  diagnostic_inputs?: Record<string, number | null>;
   actions: { action_type: unknown; value: number }[];
+  action_values?: { action_type: unknown; value: number }[];
   cost_per_action_type: { action_type: unknown; value: number }[];
   date_start: string | null;
   date_stop: string | null;
@@ -128,6 +142,7 @@ export interface AdPerformanceRow {
   ad_id: string;
   ad_name: string;
   ad_label: string;
+  ad_label_source?: "meta_ad_name" | "creative_name" | "story_id" | "ad_id_fallback";
   campaign_id?: string;
   campaign_name: string;
   adset_id?: string;
@@ -142,7 +157,15 @@ export interface AdPerformanceRow {
   ctr?: string;
   cpc?: string;
   actions?: InsightActionItem[];
+  action_values?: InsightActionItem[];
   cost_per_action_type?: InsightActionItem[];
+  /** Meta: costo por resultado principal (si existe). */
+  cost_per_result?: string | number;
+  purchase_roas?: string | number;
+  /** Derivados en backend (`ads_ranking.py`): primer resultado no trivial, CPA y ROAS. */
+  results?: number;
+  cpa?: number | null;
+  roas?: number | null;
   date_start?: string;
   date_stop?: string;
 }
@@ -274,6 +297,7 @@ export async function fetchAdsets(
 export interface AdRow {
   id: string;
   name: string;
+  name_source?: "meta_ad_name" | "creative_name" | "story_id" | "ad_id_fallback";
   adset_id: string;
   campaign_id: string;
   status?: string;
@@ -378,6 +402,8 @@ export async function fetchAdsPerformance(
 export interface PlacementInsightRow extends AdPerformanceRow {
   publisher_platform?: string;
   platform_position?: string;
+  device_platform?: string;
+  impression_device?: string;
   pct_spend?: number;
   cpa_derived?: number | null;
 }
@@ -400,6 +426,7 @@ export async function fetchPlacementInsights(
     adsetId?: string;
     adId?: string;
     timeIncrement?: number;
+    includeDeviceBreakdowns?: boolean;
   }
 ): Promise<PlacementInsightsResponse> {
   const q = new URLSearchParams();
@@ -410,6 +437,7 @@ export async function fetchPlacementInsights(
   if (opts.adsetId) q.set("adset_id", opts.adsetId);
   if (opts.adId) q.set("ad_id", opts.adId);
   if (opts.timeIncrement != null) q.set("time_increment", String(opts.timeIncrement));
+  if (opts.includeDeviceBreakdowns) q.set("include_device_breakdowns", "true");
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/placements?${q}`;
   const r = await apiFetch(path);
   if (!r.ok) throw new Error(await readErrorMessage(r));
@@ -421,17 +449,63 @@ export async function fetchGeoInsights(
   opts: {
     scope: "account" | "ad";
     adId?: string;
+    campaignId?: string;
+    adsetId?: string;
     datePreset?: string;
     dateStart?: string;
     dateStop?: string;
+    geoBreakdown?: "region" | "country";
   }
 ): Promise<GeoInsightsResponse> {
   const q = new URLSearchParams({ scope: opts.scope });
   if (opts.adId) q.set("ad_id", opts.adId);
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.adsetId) q.set("adset_id", opts.adsetId);
   if (opts.datePreset) q.set("date_preset", opts.datePreset);
   if (opts.dateStart) q.set("date_start", opts.dateStart);
   if (opts.dateStop) q.set("date_stop", opts.dateStop);
+  if (opts.geoBreakdown) q.set("geo_breakdown", opts.geoBreakdown);
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/geo?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export interface TimeInsightsResponse {
+  data: Record<string, unknown>[];
+  time_increment: string;
+  breakdowns: string[];
+  date_preset: string | null;
+  time_range: { since: string; until: string } | null;
+  attribution_window_requested?: string | null;
+  /** Ventanas enviadas a Meta (`7d_click`, …); null = default de la API. */
+  attribution_windows_sent?: string[] | null;
+}
+
+export async function fetchTimeInsights(
+  adAccountId: string,
+  opts: {
+    datePreset?: string;
+    dateStart?: string;
+    dateStop?: string;
+    campaignId?: string;
+    adsetId?: string;
+    adId?: string;
+    timeIncrement?: "1" | "7" | "monthly" | "hourly";
+    /** Alineado con panel de atribución (`click_7d`, …); el backend lo traduce a `7d_click` para Graph v25. */
+    attributionWindow?: string | null;
+  }
+): Promise<TimeInsightsResponse> {
+  const q = new URLSearchParams();
+  if (opts.datePreset) q.set("date_preset", opts.datePreset);
+  if (opts.dateStart) q.set("date_start", opts.dateStart);
+  if (opts.dateStop) q.set("date_stop", opts.dateStop);
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.adsetId) q.set("adset_id", opts.adsetId);
+  if (opts.adId) q.set("ad_id", opts.adId);
+  if (opts.timeIncrement) q.set("time_increment", opts.timeIncrement);
+  if (opts.attributionWindow) q.set("attribution_window", opts.attributionWindow);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/time?${q}`;
   const r = await apiFetch(path);
   if (!r.ok) throw new Error(await readErrorMessage(r));
   return r.json();
@@ -502,8 +576,11 @@ export interface PageGeoRow {
   spend?: string;
   impressions?: string;
   reach?: string;
+  clicks?: string | number;
   region?: string;
   region_name?: string;
+  results?: number;
+  cpa?: number | null;
 }
 
 export interface PageGeoResponse {
@@ -780,11 +857,13 @@ export async function fetchPageTrafficQuality(
 export interface AdDiagnosticsRow {
   ad_id: string;
   ad_name: string;
+  ad_name_source?: "meta_ad_name" | "creative_name" | "story_id" | "ad_id_fallback";
   impressions: number;
   spend: number;
   ctr: number;
   cpm: number;
   engagement_rate: number;
+  cpa?: number | null;
 }
 
 export interface AdDiagnosticsResponse {
@@ -1066,6 +1145,26 @@ export async function fetchDemographicsInsights(
   return r.json();
 }
 
+export interface PageDemographicsResponse extends DemographicsResponse {
+  page_id: string;
+  campaign_id?: string | null;
+  adset_id?: string | null;
+  ad_id?: string | null;
+}
+
+export async function fetchPageDemographics(
+  adAccountId: string,
+  pageId: string,
+  opts: PageFilterOpts & { breakdown?: "age" | "gender" | "age,gender" } = {}
+): Promise<PageDemographicsResponse> {
+  const q = buildPageQuery(opts);
+  if (opts.breakdown) q.set("breakdown", opts.breakdown);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages/${encodeURIComponent(pageId)}/demographics?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Attribution Windows
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1074,9 +1173,12 @@ export interface AttributionResponse {
   data: { spend?: string; actions?: InsightActionItem[]; cost_per_action_type?: InsightActionItem[] }[];
   window: string;
   window_label: string;
+  window_sent_to_meta?: string;
   available_windows: Record<string, string>;
   date_preset: string | null;
   time_range: { since: string; until: string } | null;
+  degraded?: boolean;
+  warning?: string | null;
   note: string;
 }
 
@@ -1088,6 +1190,7 @@ export async function fetchAttributionInsights(
     dateStart?: string;
     dateStop?: string;
     campaignId?: string;
+    adsetId?: string;
     adId?: string;
   }
 ): Promise<AttributionResponse> {
@@ -1100,6 +1203,7 @@ export async function fetchAttributionInsights(
     q.set("date_preset", opts.datePreset);
   }
   if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.adsetId) q.set("adset_id", opts.adsetId);
   if (opts.adId) q.set("ad_id", opts.adId);
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/attribution?${q}`;
   const r = await apiFetch(path);
@@ -1135,6 +1239,43 @@ export interface LeadsResponse {
   note: string;
 }
 
+export interface AudiencePerformanceRow {
+  category: string;
+  audience_id: string | null;
+  audience_name: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  results: number;
+  leads_insights: number;
+  conversations_started: number;
+  cpa_like: number | null;
+  ads_count: number;
+  campaigns_count: number;
+}
+
+export interface AudiencePerformanceResponse {
+  data: AudiencePerformanceRow[];
+  summary: {
+    rows_considered: number;
+    rows_with_targeting: number;
+    distinct_audiences: number;
+    total_spend: number;
+  };
+  filters: {
+    category: string;
+    min_spend: number;
+    limit: number;
+    date_preset: string | null;
+    time_range: { since: string; until: string } | null;
+    campaign_id?: string | null;
+    adset_id?: string | null;
+    ad_id?: string | null;
+  };
+  note: string;
+}
+
 export async function fetchLeadsInsights(
   adAccountId: string,
   opts: {
@@ -1143,6 +1284,8 @@ export async function fetchLeadsInsights(
     dateStart?: string;
     dateStop?: string;
     campaignId?: string;
+    adsetId?: string;
+    adId?: string;
   }
 ): Promise<LeadsResponse> {
   const q = new URLSearchParams();
@@ -1154,7 +1297,42 @@ export async function fetchLeadsInsights(
     q.set("date_preset", opts.datePreset);
   }
   if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.adsetId) q.set("adset_id", opts.adsetId);
+  if (opts.adId) q.set("ad_id", opts.adId);
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/leads?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export async function fetchAudiencePerformance(
+  adAccountId: string,
+  opts: {
+    category?: "all" | "interests" | "behaviors" | "education_majors" | "family_statuses" | "life_events" | "work_positions";
+    minSpend?: number;
+    limit?: number;
+    datePreset?: string;
+    dateStart?: string;
+    dateStop?: string;
+    campaignId?: string;
+    adsetId?: string;
+    adId?: string;
+  }
+): Promise<AudiencePerformanceResponse> {
+  const q = new URLSearchParams();
+  if (opts.category) q.set("category", opts.category);
+  if (opts.minSpend != null) q.set("min_spend", String(opts.minSpend));
+  if (opts.limit != null) q.set("limit", String(opts.limit));
+  if (opts.dateStart && opts.dateStop) {
+    q.set("date_start", opts.dateStart);
+    q.set("date_stop", opts.dateStop);
+  } else if (opts.datePreset) {
+    q.set("date_preset", opts.datePreset);
+  }
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.adsetId) q.set("adset_id", opts.adsetId);
+  if (opts.adId) q.set("ad_id", opts.adId);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/audiences?${q}`;
   const r = await apiFetch(path);
   if (!r.ok) throw new Error(await readErrorMessage(r));
   return r.json();
@@ -1225,10 +1403,17 @@ export interface ManualDataRecord {
   account_id: string;
   campaign_id?: string | null;
   ad_id?: string | null;
+  page_id?: string | null;
+  snapshot_date?: string | null;
+  segment_key?: string | null;
   useful_messages: number;
   accepted_leads: number;
   quotes_sent: number;
   sales_closed: number;
+  avg_days_to_close?: number;
+  sla_target_hours?: number;
+  avg_first_response_hours?: number;
+  cac_target?: number;
   avg_ticket: number;
   estimated_revenue: number;
   notes: string;
@@ -1257,11 +1442,221 @@ export async function saveManualData(
 
 export async function fetchManualData(
   adAccountId: string,
-  opts: { campaignId?: string } = {}
+  opts: {
+    campaignId?: string;
+    pageId?: string;
+    segmentKey?: string;
+    snapshotDateFrom?: string;
+    snapshotDateTo?: string;
+  } = {}
 ): Promise<ManualDataResponse> {
   const q = new URLSearchParams();
   if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.pageId) q.set("page_id", opts.pageId);
+  if (opts.segmentKey) q.set("segment_key", opts.segmentKey);
+  if (opts.snapshotDateFrom) q.set("snapshot_date_from", opts.snapshotDateFrom);
+  if (opts.snapshotDateTo) q.set("snapshot_date_to", opts.snapshotDateTo);
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/manual-data?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export interface CampaignCloseSpeedRow {
+  campaign_id: string;
+  campaign_name: string;
+  sales_closed: number;
+  avg_days_to_close: number;
+  close_days_p25: number;
+  close_days_p50: number;
+  close_days_p75: number;
+}
+
+export interface CampaignCloseSpeedResponse {
+  data: CampaignCloseSpeedRow[];
+}
+
+export async function fetchCampaignCloseSpeed(
+  adAccountId: string,
+  opts: { campaignId?: string } = {}
+): Promise<CampaignCloseSpeedResponse> {
+  const q = new URLSearchParams();
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/business-questions/close-speed?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export interface BottleneckRow {
+  stage: string;
+  from_volume: number;
+  to_volume: number;
+  drop_abs: number;
+  drop_pct: number;
+  conversion_rate: number;
+}
+
+export interface BottleneckResponse {
+  data: BottleneckRow[];
+  primary_bottleneck: string | null;
+}
+
+export async function fetchBottleneckAnalysis(
+  adAccountId: string,
+  opts: { campaignId?: string } = {}
+): Promise<BottleneckResponse> {
+  const q = new URLSearchParams();
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/business-questions/bottleneck?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export interface SegmentNoQuoteRow {
+  segment_key: string;
+  accepted_leads: number;
+  quotes_sent: number;
+  quote_rate: number;
+  no_quote_rate: number;
+  is_misaligned: boolean;
+}
+
+export interface SegmentNoQuoteResponse {
+  data: SegmentNoQuoteRow[];
+  threshold: number;
+}
+
+export async function fetchSegmentNoQuote(
+  adAccountId: string,
+  opts: { campaignId?: string; threshold?: number } = {}
+): Promise<SegmentNoQuoteResponse> {
+  const q = new URLSearchParams();
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.threshold != null) q.set("threshold", String(opts.threshold));
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/business-questions/segment-no-quote?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export interface CacOutTargetRow {
+  campaign_id: string;
+  campaign_name: string;
+  spend: number;
+  sales_closed: number;
+  cac_actual: number | null;
+  cac_target: number | null;
+  is_outside_target: boolean;
+  outside_spend: number;
+}
+
+export interface CacOutTargetResponse {
+  data: CacOutTargetRow[];
+  summary: {
+    total_spend: number;
+    outside_spend: number;
+    outside_spend_pct: number;
+  };
+}
+
+export async function fetchCacOutOfTarget(
+  adAccountId: string,
+  opts: { campaignId?: string; datePreset?: string; dateStart?: string; dateStop?: string } = {}
+): Promise<CacOutTargetResponse> {
+  const q = new URLSearchParams();
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.dateStart && opts.dateStop) {
+    q.set("date_start", opts.dateStart);
+    q.set("date_stop", opts.dateStop);
+  } else if (opts.datePreset) {
+    q.set("date_preset", opts.datePreset);
+  }
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/business-questions/cac-out-of-target?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export interface SlaLostRevenueRow {
+  campaign_id: string;
+  campaign_name: string;
+  estimated_revenue: number;
+  avg_first_response_hours: number;
+  sla_target_hours: number;
+  delay_hours: number;
+  lost_revenue_est: number;
+  lost_ratio: number;
+}
+
+export interface SlaLostRevenueResponse {
+  data: SlaLostRevenueRow[];
+  summary: {
+    total_lost_revenue_est: number;
+    alpha: number;
+  };
+}
+
+export async function fetchSlaLostRevenue(
+  adAccountId: string,
+  opts: { campaignId?: string; alpha?: number } = {}
+): Promise<SlaLostRevenueResponse> {
+  const q = new URLSearchParams();
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.alpha != null) q.set("alpha", String(opts.alpha));
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/business-questions/sla-lost-revenue?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export interface StabilityPoint {
+  date: string;
+  cac: number;
+  close_rate: number;
+  roas: number;
+  metric_value: number;
+  mean: number;
+  ucl: number;
+  lcl: number;
+  is_outlier: boolean;
+}
+
+export interface StabilityResponse {
+  metric: "cac" | "close_rate" | "roas";
+  page_id?: string;
+  data: StabilityPoint[];
+  summary: {
+    mean: number;
+    std: number;
+    cv: number;
+    stability_score: number;
+  };
+}
+
+export async function fetchAccountStability(
+  adAccountId: string,
+  opts: { campaignId?: string; metric?: "cac" | "close_rate" | "roas" } = {}
+): Promise<StabilityResponse> {
+  const q = new URLSearchParams();
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.metric) q.set("metric", opts.metric);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/business-questions/stability?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export async function fetchPageStability(
+  adAccountId: string,
+  pageId: string,
+  opts: { campaignId?: string; metric?: "cac" | "close_rate" | "roas" } = {}
+): Promise<StabilityResponse> {
+  const q = new URLSearchParams();
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.metric) q.set("metric", opts.metric);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages/${encodeURIComponent(pageId)}/business-questions/stability?${q}`;
   const r = await apiFetch(path);
   if (!r.ok) throw new Error(await readErrorMessage(r));
   return r.json();

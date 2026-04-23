@@ -13,6 +13,7 @@ export const DASHBOARD_KPI_LABELS: Record<string, string> = {
   cpm: "Coste por 1.000 impresiones",
   cpp: "Coste por 1.000 personas alcanzadas",
   ctr: "Tasa de clics (CTR)",
+  cost_per_result: "Coste por resultado (Meta)",
 };
 
 /** Tooltips descriptivos para KPIs del resumen */
@@ -65,6 +66,14 @@ export const DASHBOARD_KPI_TOOLTIPS: Record<string, { description: string; formu
     source: "Meta Ads Insights",
     type: "derivado",
   },
+  cost_per_result: {
+    description:
+      "Coste medio por el resultado que Meta considera principal en el agregado. En rangos muy amplios o cuentas con varios objetivos, el campo nativo a veces llega en 0.",
+    formula:
+      "Nativo: campo cost_per_result de Insights. Si es 0, mostramos el coste efectivo del backend (mismo criterio que CPA derivado: gasto ÷ primer volumen de acción no trivial).",
+    source: "Meta Ads Insights + derivación interna",
+    type: "nativo",
+  },
 };
 
 /** Selector y leyendas del ranking por anuncio */
@@ -73,6 +82,9 @@ export const RANKING_METRIC_LABELS: Record<string, string> = {
   clicks: "Clics",
   spend: "Gasto",
   ctr: "Tasa de clics (CTR)",
+  results: "Resultados (primer tipo no trivial)",
+  cpa: "CPA (coste por resultado)",
+  roas: "ROAS (compras / gasto)",
 };
 
 /**

@@ -12,8 +12,11 @@ from oderbiz_analytics.adapters.duckdb.client import get_cache, set_cache
 from oderbiz_analytics.adapters.meta.graph_edges import fetch_graph_edge_all_pages
 from oderbiz_analytics.adapters.meta.insights import fetch_insights, fetch_insights_all_pages
 from oderbiz_analytics.api.deps import get_meta_access_token
+from oderbiz_analytics.api.routes.demographics import DEMO_FIELDS, VALID_BREAKDOWNS
+from oderbiz_analytics.api.routes.geo_insights import GEO_FIELDS, _extract_results_and_cpa
 from oderbiz_analytics.api.utils import normalize_ad_account_id
 from oderbiz_analytics.config import Settings, get_settings
+from oderbiz_analytics.services.ad_label import format_ad_label, infer_ad_label_source
 from oderbiz_analytics.services.geo_formatter import enrich_geo_row
 
 router = APIRouter(prefix="/accounts", tags=["pages"])
@@ -27,9 +30,20 @@ def _make_cache_key(
     campaign_id: str = "",
     adset_id: str = "",
     ad_id: str = "",
+    breakdown: str = "",
 ) -> str:
-    raw = f"{account_id}|{page_id}|{endpoint}|{date_preset}|{campaign_id}|{adset_id}|{ad_id}"
+    raw = (
+        f"{account_id}|{page_id}|{endpoint}|{date_preset}|{campaign_id}|{adset_id}|{ad_id}|{breakdown}"
+    )
     return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _validate_custom_range(date_start: str, date_stop: str) -> None:
+    if bool(date_start) != bool(date_stop):
+        raise HTTPException(
+            status_code=422,
+            detail="Se requieren date_start y date_stop juntos para usar rango de fechas personalizado.",
+        )
 
 
 @router.get("/{account_id}/pages")
@@ -57,6 +71,7 @@ async def get_pages_list(
 
     ds = (date_start or "").strip()
     de = (date_stop or "").strip()
+    _validate_custom_range(ds, de)
     effective_time_range: dict[str, str] | None = None
     if ds and de:
         effective_time_range = {"since": ds, "until": de}
@@ -339,6 +354,7 @@ async def get_page_insights(
 
     ds = (date_start or "").strip()
     de = (date_stop or "").strip()
+    _validate_custom_range(ds, de)
     effective_time_range: dict[str, str] | None = None
     if ds and de:
         effective_time_range = {"since": ds, "until": de}
@@ -400,6 +416,7 @@ async def get_page_placements(
 
     ds = (date_start or "").strip()
     de = (date_stop or "").strip()
+    _validate_custom_range(ds, de)
     effective_time_range: dict[str, str] | None = None
     if ds and de:
         effective_time_range = {"since": ds, "until": de}
@@ -462,6 +479,7 @@ async def get_page_geo(
 
     ds = (date_start or "").strip()
     de = (date_stop or "").strip()
+    _validate_custom_range(ds, de)
     effective_time_range: dict[str, str] | None = None
     if ds and de:
         effective_time_range = {"since": ds, "until": de}
@@ -482,7 +500,7 @@ async def get_page_geo(
     try:
         rows = await fetch_insights_all_pages(
             base_url=base, access_token=access_token, ad_account_id=normalized_id,
-            fields="spend,impressions,reach",
+            fields=GEO_FIELDS,
             date_preset=effective_preset if not effective_time_range else None,
             time_range=effective_time_range,
             level="account", filtering=filtering, breakdowns=["region"],
@@ -492,8 +510,114 @@ async def get_page_geo(
     except httpx.RequestError:
         raise HTTPException(status_code=502, detail="No se pudo contactar a Meta.") from None
 
-    enriched_rows = [enrich_geo_row(row) for row in rows]
+    enriched_rows = []
+    for row in rows:
+        enriched = enrich_geo_row(row)
+        enriched.update(_extract_results_and_cpa(row))
+        enriched_rows.append(enriched)
     result = {"data": enriched_rows, "page_id": page_id, "date_preset": effective_preset, "breakdowns": ["region"]}
+    set_cache(settings.duckdb_path, cache_key, result)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# GET /accounts/{id}/pages/{page_id}/demographics (paid reach by page adsets)
+# ---------------------------------------------------------------------------
+
+@router.get("/{ad_account_id}/pages/{page_id}/demographics")
+async def get_page_demographics(
+    ad_account_id: str,
+    page_id: str,
+    breakdown: str = Query("age"),
+    date_preset: str | None = Query(None),
+    date_start: str | None = Query(None),
+    date_stop: str | None = Query(None),
+    campaign_id: str | None = Query(None),
+    adset_id: str | None = Query(None),
+    ad_id: str | None = Query(None),
+    settings: Settings = Depends(get_settings),
+    access_token: str = Depends(get_meta_access_token),
+):
+    """Insights demográficos de la pauta asociada a la página (filtro `_page_filtering`)."""
+    if breakdown not in VALID_BREAKDOWNS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"breakdown debe ser uno de: {', '.join(sorted(VALID_BREAKDOWNS))}",
+        )
+
+    normalized_id = normalize_ad_account_id(ad_account_id)
+    effective_preset = date_preset if date_preset else "last_30d"
+    base = f"https://graph.facebook.com/{settings.meta_graph_version}"
+    cid, sid, aid = (campaign_id or "").strip(), (adset_id or "").strip(), (ad_id or "").strip()
+
+    ds = (date_start or "").strip()
+    de = (date_stop or "").strip()
+    _validate_custom_range(ds, de)
+    effective_time_range: dict[str, str] | None = None
+    if ds and de:
+        effective_time_range = {"since": ds, "until": de}
+
+    cache_key = _make_cache_key(
+        normalized_id,
+        "page_demographics",
+        page_id=page_id,
+        date_preset=effective_preset,
+        campaign_id=cid,
+        adset_id=sid,
+        ad_id=aid,
+        breakdown=breakdown,
+    )
+    cached = get_cache(settings.duckdb_path, cache_key)
+    if cached is not None:
+        return cached
+
+    adset_ids = await _get_adset_ids_for_page(base, access_token, normalized_id, page_id, settings)
+    filtering = _page_filtering(adset_ids, campaign_id=cid, adset_id=sid, ad_id=aid)
+    if not filtering:
+        result = {
+            "data": [],
+            "breakdown": breakdown,
+            "date_preset": effective_preset if not effective_time_range else None,
+            "time_range": effective_time_range,
+            "note": "Sin ad sets que promuevan esta página o sin filtro aplicable.",
+            "page_id": page_id,
+            "campaign_id": cid or None,
+            "adset_id": sid or None,
+            "ad_id": aid or None,
+        }
+        set_cache(settings.duckdb_path, cache_key, result)
+        return result
+
+    breakdowns_list = [b.strip() for b in breakdown.split(",")]
+
+    try:
+        rows = await fetch_insights_all_pages(
+            base_url=base,
+            access_token=access_token,
+            ad_account_id=normalized_id,
+            fields=DEMO_FIELDS,
+            date_preset=effective_preset if not effective_time_range else None,
+            time_range=effective_time_range,
+            level="account",
+            filtering=filtering,
+            breakdowns=breakdowns_list,
+        )
+    except httpx.HTTPStatusError:
+        raise HTTPException(status_code=502, detail="Error al obtener demografía de Meta.") from None
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="No se pudo contactar a Meta.") from None
+
+    result = {
+        "data": rows,
+        "breakdown": breakdown,
+        "date_preset": effective_preset if not effective_time_range else None,
+        "time_range": effective_time_range,
+        "note": "reach excluido de este breakdown para respetar limitaciones históricas de Meta.",
+        "page_id": page_id,
+        "campaign_id": cid or None,
+        "adset_id": sid or None,
+        "ad_id": aid or None,
+    }
     set_cache(settings.duckdb_path, cache_key, result)
     return result
 
@@ -522,6 +646,7 @@ async def get_page_actions(
 
     ds = (date_start or "").strip()
     de = (date_stop or "").strip()
+    _validate_custom_range(ds, de)
     effective_time_range: dict[str, str] | None = None
     if ds and de:
         effective_time_range = {"since": ds, "until": de}
@@ -586,6 +711,7 @@ async def get_page_timeseries(
 
     ds = (date_start or "").strip()
     de = (date_stop or "").strip()
+    _validate_custom_range(ds, de)
     effective_time_range: dict[str, str] | None = None
     if ds and de:
         effective_time_range = {"since": ds, "until": de}
@@ -640,6 +766,7 @@ async def get_page_conversion_timeseries(
 
     ds = (date_start or "").strip()
     de = (date_stop or "").strip()
+    _validate_custom_range(ds, de)
     effective_time_range: dict[str, str] | None = None
     if ds and de:
         effective_time_range = {"since": ds, "until": de}
@@ -695,6 +822,7 @@ async def get_page_traffic_quality(
 
     ds = (date_start or "").strip()
     de = (date_stop or "").strip()
+    _validate_custom_range(ds, de)
     effective_time_range: dict[str, str] | None = None
     if ds and de:
         effective_time_range = {"since": ds, "until": de}
@@ -779,6 +907,7 @@ async def get_page_ad_diagnostics(
 
     ds = (date_start or "").strip()
     de = (date_stop or "").strip()
+    _validate_custom_range(ds, de)
     effective_time_range: dict[str, str] | None = None
     if ds and de:
         effective_time_range = {"since": ds, "until": de}
@@ -799,7 +928,7 @@ async def get_page_ad_diagnostics(
     try:
         rows = await fetch_insights_all_pages(
             base_url=base, access_token=access_token, ad_account_id=normalized_id,
-            fields="ad_id,ad_name,impressions,spend,ctr,cpm,actions",
+            fields="ad_id,ad_name,impressions,spend,ctr,cpm,actions,cost_per_action_type",
             date_preset=effective_preset if not effective_time_range else None,
             time_range=effective_time_range,
             level="ad", filtering=filtering,
@@ -813,6 +942,30 @@ async def get_page_ad_diagnostics(
     sorted_rows = sorted(rows, key=lambda r: float(r.get("spend", 0) or 0), reverse=True)
     top5 = sorted_rows[:5]
 
+    def _cpa_from_row(row: dict) -> float | None:
+        spend = float(row.get("spend", 0) or 0)
+        for item in row.get("cost_per_action_type") or []:
+            try:
+                v = float(item.get("value", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if v > 0:
+                return round(v, 2)
+        trivial = {"post_engagement", "page_engagement", "photo_view", "video_view"}
+        conv = 0.0
+        for a in row.get("actions") or []:
+            at = str(a.get("action_type", "") or "")
+            if at in trivial:
+                continue
+            try:
+                conv = float(a.get("value", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            break
+        if conv > 0 and spend > 0:
+            return round(spend / conv, 2)
+        return None
+
     enriched = []
     for r in top5:
         impressions = int(float(r.get("impressions", 0) or 0))
@@ -824,12 +977,23 @@ async def get_page_ad_diagnostics(
         engagement_rate = round((post_engagement / impressions) * 100, 2) if impressions > 0 else 0.0
         enriched.append({
             "ad_id": r.get("ad_id", ""),
-            "ad_name": r.get("ad_name", r.get("ad_id", "")),
+            "ad_name": format_ad_label(
+                ad_id=r.get("ad_id", ""),
+                ad_name=r.get("ad_name"),
+                creative_name=None,
+                story_id=None,
+            ),
+            "ad_name_source": infer_ad_label_source(
+                ad_name=r.get("ad_name"),
+                creative_name=None,
+                story_id=None,
+            ),
             "impressions": impressions,
             "spend": round(float(r.get("spend", 0) or 0), 2),
             "ctr": round(float(r.get("ctr", 0) or 0), 2),
             "cpm": round(float(r.get("cpm", 0) or 0), 2),
             "engagement_rate": engagement_rate,
+            "cpa": _cpa_from_row(r),
         })
 
     result = {"data": enriched, "page_id": page_id, "date_preset": effective_preset}
@@ -856,6 +1020,7 @@ async def get_page_funnel(
 
     ds = (date_start or "").strip()
     de = (date_stop or "").strip()
+    _validate_custom_range(ds, de)
     effective_time_range: dict[str, str] | None = None
     if ds and de:
         effective_time_range = {"since": ds, "until": de}

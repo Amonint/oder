@@ -10,6 +10,7 @@ from oderbiz_analytics.adapters.meta.insights import fetch_insights
 from oderbiz_analytics.api.deps import get_meta_access_token
 from oderbiz_analytics.api.utils import normalize_ad_account_id
 from oderbiz_analytics.config import Settings, get_settings
+from oderbiz_analytics.services.ad_label import format_entity_name
 
 router = APIRouter(prefix="/accounts", tags=["leads"])
 
@@ -50,6 +51,8 @@ async def get_leads_insights(
     date_start: str | None = Query(None),
     date_stop: str | None = Query(None),
     campaign_id: str | None = Query(None),
+    adset_id: str | None = Query(None),
+    ad_id: str | None = Query(None),
     settings: Settings = Depends(get_settings),
     access_token: str = Depends(get_meta_access_token),
 ):
@@ -74,8 +77,15 @@ async def get_leads_insights(
         effective_preset = date_preset if date_preset else "last_30d"
 
     filtering = None
-    if campaign_id:
-        filtering = [{"field": "campaign_id", "operator": "EQUAL", "value": campaign_id}]
+    aid = (ad_id or "").strip()
+    sid = (adset_id or "").strip()
+    cid = (campaign_id or "").strip()
+    if aid:
+        filtering = [{"field": "ad.id", "operator": "IN", "value": [aid]}]
+    elif sid:
+        filtering = [{"field": "adset.id", "operator": "IN", "value": [sid]}]
+    elif cid:
+        filtering = [{"field": "campaign.id", "operator": "IN", "value": [cid]}]
 
     try:
         rows = await fetch_insights(
@@ -111,6 +121,16 @@ async def get_leads_insights(
         total_spend += spend
         enriched.append({
             **row,
+            "campaign_name": format_entity_name(
+                kind="Campaña",
+                entity_id=row.get("campaign_id"),
+                name=row.get("campaign_name"),
+            ),
+            "ad_name": format_entity_name(
+                kind="Anuncio",
+                entity_id=row.get("ad_id"),
+                name=row.get("ad_name"),
+            ),
             "leads_insights": leads,
             "cpa_lead": cpa if cpa is not None else (round(spend / leads, 2) if leads > 0 else None),
         })

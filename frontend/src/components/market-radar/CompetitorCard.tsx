@@ -14,12 +14,12 @@ interface Props {
 export function CompetitorCard({ competitor, onSelectCompetitor }: Props) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const confidenceColor =
+  const confidenceChipClass =
     competitor.province_confidence >= 0.8
-      ? "bg-green-50"
+      ? "border-transparent bg-[#56048C] text-white"
       : competitor.province_confidence >= 0.5
-        ? "bg-yellow-50"
-        : "bg-gray-50";
+        ? "border-transparent bg-[#E86E53] text-white"
+        : "border-transparent bg-[#F2B441] text-[#150140]";
 
   return (
     <div className="border rounded-lg p-3 space-y-2">
@@ -32,11 +32,16 @@ export function CompetitorCard({ competitor, onSelectCompetitor }: Props) {
           </div>
           <div className="flex items-center gap-2 text-xs">
             {competitor.province ? (
-              <Badge variant="outline" className={confidenceColor}>
+              <Badge variant="default" className={confidenceChipClass}>
                 {competitor.province} • {(competitor.province_confidence * 100).toFixed(0)}%
               </Badge>
             ) : (
-              <Badge variant="outline">Ubicación desconocida</Badge>
+              <Badge
+                variant="default"
+                className="border-transparent bg-[#150140] text-white"
+              >
+                Ubicación desconocida
+              </Badge>
             )}
           </div>
         </div>

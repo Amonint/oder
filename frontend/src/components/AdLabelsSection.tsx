@@ -1,5 +1,5 @@
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { AdLabelRow } from "@/api/client";
+import { barColorAt } from "@/lib/dashboardColors";
 
 interface AdLabelsSectionProps {
   data: AdLabelRow[] | undefined;
@@ -58,7 +59,11 @@ export default function AdLabelsSection({
                 <XAxis type="number" tick={{ fontSize: 11 }} />
                 <YAxis type="category" dataKey="label" width={130} tick={{ fontSize: 11 }} />
                 <Tooltip formatter={(value) => [`${Number(value).toFixed(2)}`, yLabel]} />
-                <Bar dataKey="value" fill="#8b5cf6" radius={[0, 3, 3, 0]} />
+                <Bar dataKey="value" radius={[0, 3, 3, 0]}>
+                  {chartData.map((d, i) => (
+                    <Cell key={String(d.label)} fill={barColorAt(i, String(d.label))} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           )}

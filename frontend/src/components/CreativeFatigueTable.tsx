@@ -25,10 +25,17 @@ interface CreativeFatigueTableProps {
   errorMessage?: string;
 }
 
+const EMPTY_PUBLICATION_RE = /^(?:publicaci[oó]n:\s*)?["“”'`]\s*["“”'`]$/i;
+function safeAdName(name: string | null | undefined, id: string): string {
+  const raw = String(name ?? "").trim();
+  if (raw && !EMPTY_PUBLICATION_RE.test(raw)) return raw;
+  return id ? `Anuncio sin nombre (ID: ${id})` : "Anuncio sin nombre";
+}
+
 const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
-  healthy: { label: "Saludable", className: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" },
-  watch: { label: "Vigilar", className: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200" },
-  fatigued: { label: "Fatigado", className: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200" },
+  healthy: { label: "Saludable", className: "border-transparent bg-[#56048C] text-white" },
+  watch: { label: "Vigilar", className: "border-transparent bg-[#F2B441] text-[#150140]" },
+  fatigued: { label: "Fatigado", className: "border-transparent bg-[#D91480] text-white" },
 };
 
 const SORT_OPTIONS: { value: SortBy; label: string; description: string }[] = [
@@ -101,7 +108,7 @@ export default function CreativeFatigueTable({
             <ul className="mt-1 space-y-1 text-sm">
               {activeAlerts.map((a, i) => (
                 <li key={i} className="flex items-start gap-1">
-                  <span className="font-medium">{a.ad_name}:</span>
+                  <span className="font-medium">{safeAdName(a.ad_name, a.ad_id)}:</span>
                   <span className="text-muted-foreground">{a.message}</span>
                 </li>
               ))}
@@ -182,7 +189,7 @@ export default function CreativeFatigueTable({
                       return (
                         <TableRow key={row.ad_id}>
                           <TableCell>
-                            <p className="truncate text-sm font-medium max-w-[200px]">{row.ad_name}</p>
+                            <p className="truncate text-sm font-medium max-w-[200px]">{safeAdName(row.ad_name, row.ad_id)}</p>
                             <p className="text-muted-foreground font-mono text-xs">{row.ad_id}</p>
                           </TableCell>
                           <TableCell className="text-right">

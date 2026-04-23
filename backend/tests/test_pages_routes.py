@@ -4,6 +4,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from oderbiz_analytics.api.main import app
+from oderbiz_analytics.api.routes.geo_insights import GEO_FIELDS
 
 
 @pytest.fixture
@@ -252,8 +253,24 @@ class TestGetPageGeo:
         respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             return_value=httpx.Response(200, json={"data": [
-                {"spend": "60.00", "impressions": "3000", "reach": "2500", "region": "Pichincha"},
-                {"spend": "40.00", "impressions": "2000", "reach": "1800", "region": "Guayas"},
+                {
+                    "spend": "60.00",
+                    "impressions": "3000",
+                    "clicks": "120",
+                    "reach": "2500",
+                    "region": "Pichincha",
+                    "actions": [{"action_type": "link_click", "value": "90"}],
+                    "cost_per_action_type": [{"action_type": "link_click", "value": "0.67"}],
+                },
+                {
+                    "spend": "40.00",
+                    "impressions": "2000",
+                    "clicks": "80",
+                    "reach": "1800",
+                    "region": "Guayas",
+                    "actions": [{"action_type": "link_click", "value": "40"}],
+                    "cost_per_action_type": [{"action_type": "link_click", "value": "1.00"}],
+                },
             ]})
         )
         r = client.get("/api/v1/accounts/act_123/pages/page_456/geo",
@@ -263,6 +280,14 @@ class TestGetPageGeo:
         assert len(body["data"]) == 2
         assert body["data"][0]["region"] == "Pichincha"
         assert "region" in body["breakdowns"]
+        assert body["data"][0]["cpa"] == 0.67
+        assert body["data"][0]["results"] == 90
+        insights_reqs = [
+            c.request for c in respx.calls
+            if c.request.method == "GET" and str(c.request.url.path).endswith("/insights")
+        ]
+        assert insights_reqs
+        assert insights_reqs[0].url.params.get("fields") == GEO_FIELDS
 
     @respx.mock
     def test_page_geo_uses_cache(self, client):
@@ -371,3 +396,83 @@ class TestGetPageTimeseries:
         client.get("/api/v1/accounts/act_123/pages/page_456/timeseries",
                    params={"date_preset": "last_30d"}, headers={"Authorization": "Bearer test_tok"})
         assert respx.calls.call_count == 2  # adsets + insights (cache hits on 2nd call)
+
+
+class TestGetPageDemographics:
+    def test_page_demographics_invalid_breakdown_422(self, client):
+        r = client.get(
+            "/api/v1/accounts/act_123/pages/page_456/demographics",
+            params={"breakdown": "country"},
+            headers={"Authorization": "Bearer test_tok"},
+        )
+        assert r.status_code == 422
+
+    @respx.mock
+    def test_page_demographics_empty_when_no_adsets_for_page(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(
+            return_value=httpx.Response(
+                200,
+                json={"data": [{"id": "adset_x", "promoted_object": {"page_id": "other_page"}}]},
+            )
+        )
+        r = client.get(
+            "/api/v1/accounts/act_123/pages/page_456/demographics",
+            params={"date_preset": "last_30d", "breakdown": "age"},
+            headers={"Authorization": "Bearer test_tok"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["data"] == []
+        assert body["breakdown"] == "age"
+        assert body["page_id"] == "page_456"
+        assert "Sin ad sets" in body["note"]
+
+    @respx.mock
+    def test_page_demographics_returns_rows(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
+        respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "gender": "female",
+                            "spend": "42.50",
+                            "impressions": "5000",
+                            "clicks": "120",
+                            "reach": "4000",
+                        }
+                    ]
+                },
+            )
+        )
+        r = client.get(
+            "/api/v1/accounts/act_123/pages/page_456/demographics",
+            params={"date_preset": "last_30d", "breakdown": "gender"},
+            headers={"Authorization": "Bearer test_tok"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["data"]) == 1
+        assert body["data"][0]["gender"] == "female"
+        assert body["breakdown"] == "gender"
+        assert body["page_id"] == "page_456"
+        assert body["campaign_id"] is None
+
+    @respx.mock
+    def test_page_demographics_uses_cache(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
+        respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
+            return_value=httpx.Response(200, json={"data": []})
+        )
+        client.get(
+            "/api/v1/accounts/act_123/pages/page_456/demographics",
+            params={"date_preset": "last_30d", "breakdown": "age"},
+            headers={"Authorization": "Bearer test_tok"},
+        )
+        client.get(
+            "/api/v1/accounts/act_123/pages/page_456/demographics",
+            params={"date_preset": "last_30d", "breakdown": "age"},
+            headers={"Authorization": "Bearer test_tok"},
+        )
+        assert respx.calls.call_count == 2

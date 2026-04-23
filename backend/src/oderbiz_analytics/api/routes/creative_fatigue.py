@@ -8,6 +8,7 @@ from oderbiz_analytics.adapters.meta.insights import fetch_insights
 from oderbiz_analytics.api.deps import get_meta_access_token
 from oderbiz_analytics.api.utils import normalize_ad_account_id
 from oderbiz_analytics.config import Settings, get_settings
+from oderbiz_analytics.services.ad_label import format_entity_name
 
 router = APIRouter(prefix="/accounts", tags=["creative_fatigue"])
 
@@ -127,7 +128,11 @@ async def get_creative_fatigue(
         cpa = _extract_cpa(cost_per_action)
         score, status = _compute_fatigue_score(frequency, ctr)
         ad_id = row.get("ad_id", "")
-        ad_name = row.get("ad_name", "")
+        ad_name = format_entity_name(
+            kind="Anuncio",
+            entity_id=ad_id,
+            name=row.get("ad_name"),
+        )
 
         if frequency > 5 and ctr < 1.0:
             alerts.append({

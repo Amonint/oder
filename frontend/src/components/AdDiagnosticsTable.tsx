@@ -6,6 +6,7 @@ import {
 import { TooltipProvider } from "@/components/ui/tooltip";
 import InfoTooltip from "@/components/InfoTooltip";
 import type { AdDiagnosticsRow } from "@/api/client";
+import { barPaletteByRowIndex } from "@/lib/dashboardColors";
 
 interface AdDiagnosticsTableProps {
   data: AdDiagnosticsRow[] | undefined;
@@ -40,6 +41,12 @@ export default function AdDiagnosticsTable({ data, isLoading }: AdDiagnosticsTab
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-[240px]">Anuncio</TableHead>
+                  <TableHead className="w-[88px]">
+                    <span className="flex items-center gap-0.5">
+                      % gasto
+                      <InfoTooltip text="Participación del gasto de este anuncio respecto al mayor gasto del top 5 (barra relativa)." />
+                    </span>
+                  </TableHead>
                   <TableHead className="text-right">Gasto</TableHead>
                   <TableHead className="text-right">Impresiones</TableHead>
                   <TableHead className="text-right">
@@ -56,6 +63,12 @@ export default function AdDiagnosticsTable({ data, isLoading }: AdDiagnosticsTab
                   </TableHead>
                   <TableHead className="text-right">
                     <span className="flex items-center justify-end gap-0.5">
+                      CPA
+                      <InfoTooltip text="Costo por acción principal (primer cost_per_action_type numérico de Meta) o gasto ÷ primer resultado no trivial en acciones." />
+                    </span>
+                  </TableHead>
+                  <TableHead className="text-right">
+                    <span className="flex items-center justify-end gap-0.5">
                       Engagement
                       <InfoTooltip text="Tasa de engagement: porcentaje de impresiones que generaron alguna interacción (reacción, comentario, guardado, clic). Se calcula: post_engagement ÷ Impresiones × 100." />
                     </span>
@@ -63,19 +76,50 @@ export default function AdDiagnosticsTable({ data, isLoading }: AdDiagnosticsTab
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.map((row) => (
+                {(() => {
+                  const maxSpend = Math.max(...data.map((r) => r.spend), 1e-9);
+                  return data.map((row, idx) => {
+                    const pct = Math.min(100, (row.spend / maxSpend) * 100);
+                    const cpa = row.cpa;
+                    return (
                   <TableRow key={row.ad_id}>
                     <TableCell className="max-w-[240px]">
-                      <p className="truncate text-sm font-medium">{row.ad_name}</p>
+                      <p className="truncate text-sm font-medium inline-flex items-center gap-2">
+                        <span className="truncate">{row.ad_name}</span>
+                        {row.ad_name_source && row.ad_name_source !== "meta_ad_name" ? (
+                          <span className="rounded border px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground">
+                            Nombre inferido
+                          </span>
+                        ) : null}
+                      </p>
                       <p className="text-muted-foreground font-mono text-xs">{row.ad_id}</p>
+                    </TableCell>
+                    <TableCell className="align-middle">
+                      <div
+                        className="h-2 w-full max-w-[72px] rounded-full bg-muted"
+                        title={`${pct.toFixed(0)}% del máximo del top 5`}
+                      >
+                        <div
+                          className="h-2 rounded-full"
+                          style={{
+                            width: `${pct}%`,
+                            backgroundColor: barPaletteByRowIndex(idx),
+                          }}
+                        />
+                      </div>
                     </TableCell>
                     <TableCell className="text-right text-sm">${row.spend.toFixed(2)}</TableCell>
                     <TableCell className="text-right text-sm">{row.impressions.toLocaleString("es")}</TableCell>
                     <TableCell className="text-right text-sm">{(row.ctr ?? 0).toFixed(2)}%</TableCell>
                     <TableCell className="text-right text-sm">${(row.cpm ?? 0).toFixed(2)}</TableCell>
+                    <TableCell className="text-right text-sm">
+                      {cpa != null && Number.isFinite(Number(cpa)) ? `$${Number(cpa).toFixed(2)}` : "—"}
+                    </TableCell>
                     <TableCell className="text-right text-sm">{(row.engagement_rate ?? 0).toFixed(2)}%</TableCell>
                   </TableRow>
-                ))}
+                    );
+                  });
+                })()}
               </TableBody>
             </Table>
             </TooltipProvider>

@@ -4,19 +4,12 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { PageActionRow } from "@/api/client";
+import { barColorAt } from "@/lib/dashboardColors";
 
 interface ActionsChartProps {
   data: PageActionRow[] | undefined;
   isLoading: boolean;
 }
-
-const CATEGORY_COLORS: Record<string, string> = {
-  mensajeria: "#10b981",
-  engagement: "#3b82f6",
-  trafico: "#f59e0b",
-  video: "#8b5cf6",
-  guardados: "#ef4444",
-};
 
 const CATEGORY_LABELS: Record<string, string> = {
   mensajeria: "Mensajería",
@@ -54,7 +47,7 @@ export default function ActionsChart({ data, isLoading }: ActionsChartProps) {
               <Tooltip formatter={(value) => [Number(value).toFixed(0), "Acciones"]} />
               <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                 {rows.map((r, i) => (
-                  <Cell key={i} fill={CATEGORY_COLORS[r.category] ?? "#6b7280"} />
+                  <Cell key={i} fill={barColorAt(i, String(r.label))} />
                 ))}
               </Bar>
             </BarChart>

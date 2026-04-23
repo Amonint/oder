@@ -1,148 +1,274 @@
-# Oderbiz Analytics — Meta Ads
+# Oderbiz Analytics
 
-Documento de proyecto actualizado al **5 de abril de 2026**.
+Plataforma de analitica para Meta Ads (Facebook/Instagram) con:
+- **Backend** en FastAPI (integracion con Graph/Marketing API + persistencia local en DuckDB).
+- **Frontend** en React + Vite para exploracion de cuentas, dashboards y modulos de diagnostico.
 
----
-
-## En pocas palabras
-
-Es una aplicación para **ver el rendimiento de la publicidad en Meta** (Facebook / Instagram Ads) usando **solo los datos que Meta permite por su API**. Sirve sobre todo a **agencias o equipos** que gestionan **una o varias cuentas publicitarias** y quieren tableros claros, sin depender de un CRM propio para empezar.
+El flujo principal funciona con token Bearer de Meta desde la UI, sin OAuth embebido en esta version.
 
 ---
 
-## Propósito de la aplicación
+## Que resuelve
 
-- **Centralizar la lectura** de cuentas publicitarias y métricas básicas (gasto, impresiones, alcance, acciones, etc.) en un solo lugar.
-- **Reducir fricción** frente a la interfaz nativa de Meta cuando se necesita un flujo propio (por ejemplo, clientes de agencia que solo deben ver ciertas vistas).
-- **Apoyar decisiones humanas**: la herramienta muestra **números y desgloses que ya vienen de Meta**; las conclusiones de negocio las saca la persona que usa el panel (no el sistema calculando indicadores complejos por defecto).
-- **Evolución prevista** (diseño acordado, en implementación progresiva): pestañas para **ranking de anuncios**, **vista geográfica agregada** y **configuración de targeting** leída desde Meta, siempre respetando límites de privacidad y agregación de la plataforma.
-
----
-
-## Alcance
-
-### Lo que sí entra (visión y límites reales)
-
-| Área | Incluido |
-|------|----------|
-| Fuente de datos | **Únicamente Meta** (Marketing / Graph API). Sin sincronizar CRM, llamadas ni otras fuentes en la visión actual. |
-| Autenticación hoy | Token de acceso que el usuario **pega o guarda en el navegador** (sesión); no hay login Meta OAuth embebido en esta versión del código. |
-| Lectura | Cuentas publicitarias accesibles con ese token, insights agregados, listados de campañas/anuncios según lo implementado y documentado. |
-| Agencia | Modelo mental: **varias cuentas** por cliente; el detalle de “quién ve qué” a nivel producto multi-tenant puede ampliarse después. |
-
-### Lo que no promete la API de Meta (importante)
-
-- **No** se obtiene una lista de “Juan Pérez, 34 años, compró ayer” desde Ads Insights: los informes son **agregados** (por anuncio, región, rango de edad, etc.).
-- **No** sustituye a un CRM ni a la atribución avanzada configurada dentro de Ads Manager sin alinear parámetros y ventanas en la API.
-
-### Documentación de apoyo en el repo
-
-- `docs/meta-permisos-v25-campos-y-breakdowns.md` — permisos, campos y breakdowns (referencia técnica).
-- `docs/meta-ads-api-inventario-prueba.md` — pruebas reales y comportamiento observado en cuentas concretas.
-- `docs/superpowers/specs/2026-04-05-agency-insights-panel-design.md` — especificación del panel tipo agencia (tabs, caché, mapa simple).
-- `docs/superpowers/plans/2026-04-05-agency-panel-tabs-ranking-geo-targeting.md` — plan de implementación (backend + frontend, gráficos vía shadcn/MCP).
+- Centraliza metricas de rendimiento publicitario por cuenta de anuncios.
+- Expone dashboards por cuenta y por pagina para analizar embudo, creatividades, audiencias y tiempos.
+- Permite enriquecer analisis con datos manuales (CRM/operacion) para responder preguntas de negocio.
+- Incluye modulos de inteligencia competitiva (radar de mercado y ads de competidores).
 
 ---
 
-## Estado actual (5 de abril de 2026)
+## Stack tecnico
 
-| Componente | Estado |
-|--------------|--------|
-| **Backend (FastAPI)** | Operativo en Docker (`docker-compose`): salud, listado de cuentas (`/api/v1/accounts`), dashboard de cuenta con insights agregados (`/api/v1/accounts/{id}/dashboard`), resumen DuckDB según rutas existentes. Manejo de errores de Graph en cuentas (p. ej. mensajes de Meta en listados). |
-| **Ingesta** | Job opcional (`ingest` profile) hacia DuckDB para datos crudos / agregados diarios. |
-| **Frontend (Vite + React)** | Flujo: token → lista de cuentas → dashboard con KPIs, tabla de acciones y gráficos; proxy de `/api` al backend en desarrollo. |
-| **Panel agencia (tabs Ranking / Geografía / Targeting)** | **Especificado y planificado**; **pendiente de implementación completa** según el plan enlazado arriba. |
-| **Caché servidor** para reducir llamadas repetidas a Meta | Diseñada en spec; **no** como requisito cerrado en código al corte de esta fecha. |
-| **Mapa geográfico fino** | No es objetivo inmediato; la primera entrega prevista es **tabla + gráficos** a partir de breakdowns que devuelva Meta. |
+### Backend (`backend/`)
 
-En resumen: **hay una base usable hoy** (cuentas + dashboard por cuenta); la **siguiente ola de trabajo** es el panel ampliado con pestañas, más endpoints y UI alineada a shadcn/MCP para gráficos.
+- Python 3.12+
+- FastAPI + Uvicorn
+- httpx
+- Pydantic / pydantic-settings
+- DuckDB
+- Pytest + Respx + Ruff (dev)
 
----
+### Frontend (`frontend/`)
 
-## Por qué está pensado así
-
-1. **Solo Meta** — Evita depender de integraciones que la agencia aún no tiene (CRM, telefonía) y acota el problema a un contrato claro: lo que la API expone.
-2. **Backend intermedio** — El navegador no llama directo a `graph.facebook.com`; pasa por la API propia para **centralizar token, errores, límites y futura caché**.
-3. **Sin “magia” de métricas al inicio** — Mostrar datos crudos y dejar la interpretación al usuario respeta el enfoque de negocio pedido y reduce discusiones sobre fórmulas internas.
-4. **Incremental** — Se extiende el código existente (FastAPI, DuckDB, React) en lugar de reemplazar el stack; los documentos de spec/plan fijan el rumbo sin tirar lo ya hecho.
-5. **Gráficos con shadcn** — Los informes visuales deben seguir patrones del ecosistema shadcn (y, en implementación, el MCP de shadcn) para mantener consistencia y mantenibilidad.
+- React 19 + TypeScript
+- Vite
+- React Router
+- TanStack Query
+- Tailwind + componentes estilo shadcn
+- Recharts / MapLibre
 
 ---
 
-## Público objetivo
+## Estructura del repositorio
 
-| Perfil | Uso típico |
-|--------|------------|
-| **Dueño o account en una agencia de marketing** | Ofrecer a clientes una vista clara de sus cuentas Meta sin montar un data warehouse desde cero. |
-| **Cliente final de la agencia (no técnico)** | Ver gasto, anuncios y desgloses en lenguaje de tablero; no necesita saber qué es una API. |
-| **Persona técnica (dev / data)** | Desplegar el stack, revisar permisos de Meta, ampliar endpoints, conectar caché o nuevas vistas usando los docs del repo. |
-
----
-
-## Parte técnica (resumen)
-
-### Estructura del repositorio
-
-```
-backend/          # Python, FastAPI, cliente httpx a Meta, DuckDB
-frontend/         # React, TypeScript, Vite, UI shadcn, TanStack Query
-docker-compose.yml
-docs/             # Meta API, specs, planes
-scripts/          # p. ej. arranque local backend + frontend
+```text
+backend/                  API FastAPI, servicios de dominio, adapters Meta/DuckDB, tests
+frontend/                 SPA React (token, cuentas, dashboard cuenta y dashboard pagina)
+docs/                     especificaciones funcionales, contratos y runbooks
+scripts/                  utilidades locales y scripts Docker
+docker-compose.yml        entorno con web + api + job opcional de ingesta
 ```
 
-### Requisitos típicos
+---
 
-- Docker (para API en contenedor) **o** Python 3.12+ para correr el backend local.
-- Node.js para el frontend.
-- **Token de Meta:** en el flujo web se pega en la pantalla inicial y se envía como **`Authorization: Bearer …`**; **no hace falta** `META_ACCESS_TOKEN` en `.env` para arrancar el backend. Opcional en servidor para Docker, ingesta programada o llamadas sin cabecera Bearer (ver `backend/.env.example`).
+## Arquitectura funcional
 
-### Arranque rápido
+1. El usuario pega un token de Meta en la pantalla inicial.
+2. El frontend guarda el token en `sessionStorage` (`meta_access_token`).
+3. Cada request al backend incluye `Authorization: Bearer <token>`.
+4. El backend consulta Meta API, normaliza datos y retorna payloads para visualizacion.
+5. Para ciertos modulos, se complementa con datos en DuckDB (cache/insumos manuales/competidores).
 
-- **Todo en uno (recomendado):** desde la raíz, `./scripts/dev-local.sh` (si existe en tu clon) — backend `:8000`, frontend `:5173` con proxy.
-- **Docker:** `docker compose up` para la API; en otra terminal `cd frontend && npm install && npm run dev`.
+---
 
-Detalle de rutas del frontend: ver `frontend/README.md`.
+## Endpoints principales (API ` /api/v1 `)
 
-### Tests (backend)
+### Base y cuenta
+
+- `GET /accounts`
+- `GET /accounts/{ad_account_id}/dashboard`
+- `GET /accounts/{ad_account_id}/summary`
+- `GET /businesses/portfolio`
+- `GET /me`
+
+### Entidades publicitarias
+
+- `GET /accounts/{account_id}/campaigns`
+- `GET /accounts/{account_id}/adsets`
+- `GET /accounts/{account_id}/ads`
+- `GET /accounts/{ad_account_id}/ads/performance`
+- `GET /accounts/{ad_account_id}/ads/labels/performance`
+- `GET /accounts/{ad_account_id}/ads/{ad_id}/targeting`
+
+### Insights avanzados de cuenta
+
+- `GET /accounts/{ad_account_id}/insights/placements`
+- `GET /accounts/{ad_account_id}/insights/geo`
+- `GET /accounts/{ad_account_id}/insights/demographics`
+- `GET /accounts/{ad_account_id}/insights/attribution`
+- `GET /accounts/{ad_account_id}/insights/leads`
+- `GET /accounts/{ad_account_id}/insights/creative-fatigue`
+- `GET /accounts/{ad_account_id}/insights/time`
+- `GET /accounts/{ad_account_id}/insights/audiences`
+
+### Vista "Pagina primero"
+
+- `GET /accounts/{account_id}/pages`
+- `GET /accounts/{ad_account_id}/pages/{page_id}/insights`
+- `GET /accounts/{ad_account_id}/pages/{page_id}/placements`
+- `GET /accounts/{ad_account_id}/pages/{page_id}/geo`
+- `GET /accounts/{ad_account_id}/pages/{page_id}/demographics`
+- `GET /accounts/{ad_account_id}/pages/{page_id}/actions`
+- `GET /accounts/{ad_account_id}/pages/{page_id}/timeseries`
+- `GET /accounts/{ad_account_id}/pages/{page_id}/conversion-timeseries`
+- `GET /accounts/{ad_account_id}/pages/{page_id}/traffic-quality`
+- `GET /accounts/{ad_account_id}/pages/{page_id}/ad-diagnostics`
+- `GET /accounts/{ad_account_id}/pages/{page_id}/funnel`
+- `GET /pages/{page_id}/organic-insights`
+
+### Datos manuales y preguntas de negocio
+
+- `POST /accounts/{ad_account_id}/manual-data`
+- `GET /accounts/{ad_account_id}/manual-data`
+- `GET /accounts/{ad_account_id}/business-questions/close-speed`
+- `GET /accounts/{ad_account_id}/business-questions/bottleneck`
+- `GET /accounts/{ad_account_id}/business-questions/segment-no-quote`
+- `GET /accounts/{ad_account_id}/business-questions/cac-out-of-target`
+- `GET /accounts/{ad_account_id}/business-questions/sla-lost-revenue`
+- `GET /accounts/{ad_account_id}/business-questions/stability`
+- `GET /accounts/{ad_account_id}/pages/{page_id}/business-questions/stability`
+
+### Competencia
+
+- `POST /competitor/resolve`
+- `GET /competitor/{page_id}/ads`
+- `GET /competitor/market-radar`
+- `GET /competitor/market-radar-extended`
+- `GET /competitor/market-radar-temporal`
+
+### Salud
+
+- `GET /health`
+
+---
+
+## Frontend: rutas principales
+
+- `/` ingreso de token
+- `/accounts` listado de cuentas
+- `/accounts/:accountId/dashboard` dashboard de cuenta
+- `/accounts/:accountId/pages` listado de paginas asociadas
+- `/accounts/:accountId/pages/:pageId/dashboard` dashboard de pagina
+
+---
+
+## Requisitos
+
+- Python `3.12`
+- Node.js `>=20` recomendado
+- npm
+- Docker + Docker Compose (opcional, pero recomendado para entorno reproducible)
+
+---
+
+## Configuracion de entorno
+
+### Backend (`backend/.env`)
+
+Variables base (ver `backend/.env.example`):
+
+```env
+META_ACCESS_TOKEN=
+DUCKDB_PATH=/data/analytics.duckdb
+META_GRAPH_VERSION=v25.0
+API_HOST=0.0.0.0
+API_PORT=8000
+```
+
+> `META_ACCESS_TOKEN` es opcional para la API HTTP si el frontend envia Bearer por cabecera.
+> Para jobs o ejecucion no interactiva, normalmente si conviene definirlo.
+
+### Frontend (`frontend/.env`)
+
+```env
+# Opcional. En desarrollo se recomienda dejar vacio para usar proxy de Vite.
+# VITE_API_BASE_URL=http://127.0.0.1:8000
+```
+
+---
+
+## Ejecucion local (sin Docker)
+
+### Opcion rapida (script unico)
+
+Desde la raiz:
 
 ```bash
-cd backend && python3 -m pytest -q
+./scripts/dev-local.sh
 ```
 
-(En entornos sin dependencias instaladas, usar el contenedor o un venv con `pyproject.toml`.)
+Este script:
+- instala backend editable si falta (`pip install -e ".[dev]"`)
+- levanta API en `http://127.0.0.1:8000`
+- levanta frontend en `http://localhost:5173`
 
-### Seguridad
+### Opcion manual
 
-- No commitear tokens ni `.env` con secretos.
-- Rotar tokens que hayan aparecido en logs o chats.
+Backend:
 
-### Consola del navegador: avisos que **no** son de esta app
+```bash
+cd backend
+python3.12 -m pip install -e ".[dev]"
+python3.12 -m uvicorn oderbiz_analytics.api.main:app --reload --host 127.0.0.1 --port 8000
+```
 
-Si ves mensajes como:
+Frontend (otra terminal):
 
-- `Unchecked runtime.lastError: The message port closed before a response was received`
-- `The page keeping the extension port is moved into back/forward cache...`
-
-proceden casi siempre de **extensiones de Chrome** (Cursor, React DevTools, bloqueadores, etc.) al hablar con la página; **no** indican un fallo del token ni del código Oderbiz. Para comprobar la app, usá la pestaña **Red (Network)** y filtrá por `accounts`, o una ventana de incógnito **sin extensiones**.
-
-### Si “Conectar” no muestra cuentas
-
-1. **Network:** la petición a `/api/v1/accounts` debe ser **200** (origen `localhost:5173` en dev; el proxy reenvía a `:8000`).  
-2. Si es **200** con cuerpo `{"data":[]}`, **Meta no devolvió cuentas para ese token** (permisos, tipo de token o usuario sin cuentas). La UI muestra un aviso con causas habituales y, si el token es válido, quién es el usuario según `GET /api/v1/me`.  
-3. **Terminal:** `curl -s http://127.0.0.1:8000/health` → `{"status":"ok"}`.  
-4. **Token:** en **Aplicación → Almacenamiento de sesión** debe existir `meta_access_token` tras pulsar Conectar.
-
-### Si Graph API Explorer funciona pero esta app “no conecta” o ves código viejo
-
-1. **Misma URL siempre:** `http://localhost:5173` y `http://127.0.0.1:5173` son **orígenes distintos**. El token vive en `sessionStorage` por origen; si abrís la app en uno y antes usaste el otro, parece que “no hay token” o que falla el flujo. Elegí uno y quedate ahí.
-2. **Variables `VITE_*`:** si tenés `VITE_API_BASE_URL` en `.env` / `.env.local`, los cambios **solo aplican después de reiniciar** `npm run dev` (Vite las inyecta al arrancar). Si apunta a un backend viejo (otro puerto o contenedor sin rebuild), verás rutas 404 o respuestas antiguas.
-3. **Consola en desarrollo:** al cargar la app debería aparecer una línea `[oderbiz api]` indicando si usás **proxy** (vacío = mismo origen → `:8000`) o **origen directo**. Si no coincide con dónde corre tu uvicorn, ajustá env o el proxy.
-4. **Un solo backend en :8000:** si Docker y uvicorn local compiten por el puerto, solo uno sirve; el otro falla o queda un proceso viejo. Comprobá con `curl -s http://127.0.0.1:8000/health` y, si usás Docker, **`docker compose build api && docker compose up -d api`** tras cambios en Python.
-5. **Pestaña Red:** la petición a `/api/v1/accounts` debe ir al mismo host que la página (p. ej. `localhost:5173/api/...` en dev con proxy), no directo a Meta.
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
 ---
 
-## Licencia y contacto
+## Ejecucion con Docker
 
-Ajustar según política del equipo Oderbiz (si aplica).
+Desde la raiz:
+
+```bash
+docker compose up --build
+```
+
+Servicios:
+- `web` en `http://localhost:5173`
+- `api` en `http://localhost:8000`
+
+Job opcional de ingesta diaria:
+
+```bash
+docker compose --profile ingest up ingest
+```
+
+---
+
+## Tests
+
+Backend:
+
+```bash
+cd backend
+python3 -m pytest -q
+```
+
+---
+
+## Comandos utiles
+
+- Salud API: `curl -s http://127.0.0.1:8000/health`
+- Rebuild API Docker: `docker compose build api && docker compose up -d api`
+
+---
+
+## Troubleshooting rapido
+
+- Si no aparecen cuentas y `/api/v1/accounts` responde `200` con `data: []`, el token no tiene acceso real a cuentas publicitarias.
+- Si hay `404` desde frontend, revisar `VITE_API_BASE_URL`: debe ser solo el origen, sin `/api` ni `/api/v1`.
+- `localhost` y `127.0.0.1` son origenes distintos para `sessionStorage`; usa siempre uno para evitar "token perdido".
+- Mensajes de consola tipo `runtime.lastError` suelen venir de extensiones del navegador, no necesariamente de la app.
+
+---
+
+## Documentacion recomendada del repo
+
+- `frontend/README.md` (detalle de flujo frontend)
+- `docs/specs/` (briefs, contrato API, KPIs, QA y runbooks)
+- `docs/superpowers/plans/` (planes de implementacion por fecha)
+
+---
+
+## Seguridad
+
+- Nunca commitear tokens, `.env` ni credenciales.
+- Rotar cualquier token que se haya expuesto en logs, screenshots o chats.
+

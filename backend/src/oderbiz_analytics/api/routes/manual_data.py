@@ -26,6 +26,13 @@ class ManualDataIn(BaseModel):
     sales_closed: int = 0
     avg_ticket: float = 0.0
     estimated_revenue: float = 0.0
+    snapshot_date: str | None = None
+    page_id: Optional[str] = None
+    segment_key: str = "general"
+    avg_days_to_close: float = 0.0
+    sla_target_hours: float = 0.0
+    avg_first_response_hours: float = 0.0
+    cac_target: float = 0.0
     notes: str = ""
 
 
@@ -50,9 +57,21 @@ async def save_manual_data(
 async def get_manual_data_route(
     ad_account_id: str,
     campaign_id: str | None = Query(None),
+    page_id: str | None = Query(None),
+    segment_key: str | None = Query(None),
+    snapshot_date_from: str | None = Query(None),
+    snapshot_date_to: str | None = Query(None),
     settings: Settings = Depends(get_settings),
     _token: str = Depends(get_meta_access_token),
 ):
     init_manual_data_table(settings.duckdb_path)
-    rows = get_manual_data(settings.duckdb_path, ad_account_id, campaign_id=campaign_id)
+    rows = get_manual_data(
+        settings.duckdb_path,
+        ad_account_id,
+        campaign_id=campaign_id,
+        page_id=page_id,
+        segment_key=segment_key,
+        snapshot_date_from=snapshot_date_from,
+        snapshot_date_to=snapshot_date_to,
+    )
     return {"data": rows, "account_id": ad_account_id}

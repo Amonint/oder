@@ -5,6 +5,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { PageTimeseriesRow } from "@/api/client";
+import { dashboardChartColor } from "@/lib/dashboardColors";
 
 interface TimeseriesChartProps {
   data: PageTimeseriesRow[] | undefined;
@@ -12,11 +13,11 @@ interface TimeseriesChartProps {
 }
 
 const SERIES = [
-  { key: "spend", label: "Gasto ($)", yAxis: "money", stroke: "#3b82f6", format: (v: number) => `$${v.toFixed(2)}` },
-  { key: "impressions", label: "Impresiones", yAxis: "count", stroke: "#8b5cf6", format: (v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v) },
-  { key: "cpm", label: "CPM", yAxis: "money", stroke: "#f59e0b", format: (v: number) => `$${v.toFixed(2)}` },
-  { key: "ctr", label: "CTR (%)", yAxis: "pct", stroke: "#10b981", format: (v: number) => `${v.toFixed(2)}%` },
-  { key: "cpc", label: "CPC ($)", yAxis: "money", stroke: "#ef4444", format: (v: number) => `$${v.toFixed(2)}` },
+  { key: "spend", label: "Gasto ($)", yAxis: "money", stroke: dashboardChartColor(0), format: (v: number) => `$${v.toFixed(2)}` },
+  { key: "impressions", label: "Impresiones", yAxis: "count", stroke: dashboardChartColor(1), format: (v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v) },
+  { key: "cpm", label: "CPM", yAxis: "money", stroke: dashboardChartColor(2), format: (v: number) => `$${v.toFixed(2)}` },
+  { key: "ctr", label: "CTR (%)", yAxis: "pct", stroke: dashboardChartColor(3), format: (v: number) => `${v.toFixed(2)}%` },
+  { key: "cpc", label: "CPC ($)", yAxis: "money", stroke: dashboardChartColor(4), format: (v: number) => `$${v.toFixed(2)}` },
 ] as const;
 
 export default function TimeseriesChart({ data, isLoading }: TimeseriesChartProps) {
@@ -52,8 +53,8 @@ export default function TimeseriesChart({ data, isLoading }: TimeseriesChartProp
               onClick={() => toggleSerie(s.key)}
               className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${
                 active.has(s.key)
-                  ? "border-transparent text-white"
-                  : "border-border text-muted-foreground bg-background"
+                  ? "border-transparent text-black"
+                  : "border-border text-black bg-background"
               }`}
               style={active.has(s.key) ? { backgroundColor: s.stroke, borderColor: s.stroke } : {}}
             >

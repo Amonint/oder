@@ -4,13 +4,12 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { PagePlacementRow } from "@/api/client";
+import { barColorAt } from "@/lib/dashboardColors";
 
 interface PlacementChartProps {
   data: PagePlacementRow[] | undefined;
   isLoading: boolean;
 }
-
-const COLORS = ["#3b82f6", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#06b6d4"];
 
 export default function PlacementChart({ data, isLoading }: PlacementChartProps) {
   const rows = (data ?? [])
@@ -39,8 +38,8 @@ export default function PlacementChart({ data, isLoading }: PlacementChartProps)
               <YAxis type="category" dataKey="label" width={160} tick={{ fontSize: 11 }} />
               <Tooltip formatter={(value) => [`$${Number(value).toFixed(2)}`, "Gasto"]} />
               <Bar dataKey="spend" radius={[0, 4, 4, 0]}>
-                {rows.map((_, i) => (
-                  <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                {rows.map((r, i) => (
+                  <Cell key={r.label} fill={barColorAt(i, r.label)} />
                 ))}
               </Bar>
             </BarChart>
