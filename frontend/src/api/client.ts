@@ -21,6 +21,11 @@ function resolveApiBase(): string {
   return origin || fallback;
 }
 
+/** Origen de la API (mismo criterio que las llamadas a Meta en esta app). */
+export function getApiBase(): string {
+  return resolveApiBase();
+}
+
 const base = resolveApiBase();
 
 if (import.meta.env.DEV) {
@@ -94,7 +99,11 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   headers.set("Authorization", `Bearer ${token}`);
   const url = `${base}${path}`;
   try {
-    return await fetch(url, { ...init, headers });
+    return await fetch(url, {
+      ...init,
+      headers,
+      credentials: "include",
+    });
   } catch (e) {
     // Red/proxy/backend caído: el navegador lanza TypeError, no hay Response.
     if (e instanceof TypeError) {
@@ -1032,7 +1041,10 @@ export async function fetchMarketRadar(pageId: string): Promise<MarketRadarRespo
   const token = getMetaAccessToken();
   const res = await fetch(
     `${base}/api/v1/competitor/market-radar?page_id=${encodeURIComponent(pageId)}`,
-    { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+    {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: "include",
+    }
   );
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -1082,7 +1094,10 @@ export async function fetchMarketRadarExtended(pageId: string): Promise<MarketRa
   const token = getMetaAccessToken();
   const res = await fetch(
     `${base}/api/v1/competitor/market-radar-extended?page_id=${encodeURIComponent(pageId)}`,
-    { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+    {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      credentials: "include",
+    }
   );
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));

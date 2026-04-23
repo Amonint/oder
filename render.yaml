@@ -15,6 +15,12 @@ services:
         value: /tmp/analytics.duckdb
       - key: DATABASE_URL
         sync: false
+      - key: SITE_AUTH_USER
+        sync: false
+      - key: SITE_AUTH_PASSWORD
+        sync: false
+      - key: SITE_AUTH_SECRET
+        sync: false
 
   - type: web
     name: oderbiz-frontend

@@ -1,10 +1,11 @@
 import { Link, Outlet } from "react-router-dom";
+import SiteAuthMenu from "./SiteAuthMenu";
 
 export default function AppLayout() {
   return (
     <div className="flex min-h-screen flex-col">
       <header
-        className="sticky top-0 z-50 flex shrink-0 items-center border-b border-border bg-background/95 px-4 py-2.5 backdrop-blur supports-[backdrop-filter]:bg-background/80"
+        className="sticky top-0 z-50 flex w-full shrink-0 items-center border-b border-border bg-background/95 px-4 py-2.5 backdrop-blur supports-[backdrop-filter]:bg-background/80"
         role="banner"
       >
         <Link
@@ -18,6 +19,7 @@ export default function AppLayout() {
             decoding="async"
           />
         </Link>
+        <SiteAuthMenu />
       </header>
       <main className="flex-1">
         <Outlet />

@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from oderbiz_analytics.api.middleware_site_auth import SiteAuthMiddleware
 from oderbiz_analytics.adapters.duckdb.client import init_db
 from oderbiz_analytics.utils.db import init_competitors_tables
 from oderbiz_analytics.api.routes.accounts import router as accounts_router
@@ -28,6 +29,7 @@ from oderbiz_analytics.api.routes.creative_fatigue import router as creative_fat
 from oderbiz_analytics.api.routes.manual_data import router as manual_data_router
 from oderbiz_analytics.api.routes.time_insights import router as time_insights_router
 from oderbiz_analytics.api.routes.business_questions import router as business_questions_router
+from oderbiz_analytics.api.routes.auth_site import router as auth_site_router
 from oderbiz_analytics.config import get_settings
 
 
@@ -45,6 +47,8 @@ def _cors_allow_origins() -> list[str]:
 
 
 app = FastAPI(title="Oderbiz Meta Ads Analytics API", version="0.1.0", lifespan=lifespan)
+# Primero el interno: CORS queda como capa exterior (recibe OPTIONS y añade cabeceras a 401, etc.)
+app.add_middleware(SiteAuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_allow_origins(),
@@ -52,6 +56,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(auth_site_router, prefix="/api/v1")
 app.include_router(accounts_router, prefix="/api/v1")
 app.include_router(business_portfolio_router, prefix="/api/v1")
 app.include_router(entities_router, prefix="/api/v1")
