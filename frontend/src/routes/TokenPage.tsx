@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -38,15 +37,10 @@ export default function TokenPage() {
   }
 
   return (
-    <div className="flex w-full flex-col gap-6 py-6">
-      <Card>
+    <div className="flex min-h-[60vh] w-full items-center justify-center px-4 py-6">
+      <Card className="w-full max-w-lg">
         <CardHeader>
           <CardTitle>Meta Ads — Conectar</CardTitle>
-          <CardDescription>
-            Introduce un token de usuario de la Marketing API (p. ej. long-lived).
-            No se guarda en el servidor: solo en{" "}
-            <code className="text-xs">sessionStorage</code> de este navegador.
-          </CardDescription>
         </CardHeader>
         <form onSubmit={onConnect}>
           <CardContent className="space-y-4">
@@ -74,17 +68,6 @@ export default function TokenPage() {
           </CardFooter>
         </form>
       </Card>
-      <p className="text-muted-foreground text-pretty text-xs">
-        Usá siempre la misma URL del navegador para esta app (solo{" "}
-        <code className="text-xs">localhost</code> o solo{" "}
-        <code className="text-xs">127.0.0.1</code>): si mezclás, el token en{" "}
-        <code className="text-xs">sessionStorage</code> no se comparte entre
-        orígenes.
-      </p>
-      <p className="text-muted-foreground text-pretty text-xs">
-        Si compartiste este token, revócalo en Meta for Developers y genera uno
-        nuevo.
-      </p>
     </div>
   );
 }
