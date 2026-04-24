@@ -1,11 +1,18 @@
 # backend/src/oderbiz_analytics/api/middleware_site_auth.py
 from __future__ import annotations
 
+import logging
+
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from oderbiz_analytics.api.site_session import SESSION_COOKIE, site_auth_enabled, verify_session_jwt
+from oderbiz_analytics.api.site_session import (
+    SESSION_COOKIE,
+    explain_session_jwt_failure,
+    site_auth_enabled,
+    verify_session_jwt,
+)
 from oderbiz_analytics.config import get_settings
 
 # Rutas accesibles sin cookie de app (el resto de /api pide login si SITE_AUTH_* está definido).
@@ -43,6 +50,13 @@ class SiteAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         raw = request.cookies.get(SESSION_COOKIE)
         if not verify_session_jwt(s, raw):
+            logging.getLogger("oderbiz.site_auth").warning(
+                "site_auth_blocked path=%s reason=%s origin=%s has_cookie=%s",
+                request.url.path,
+                explain_session_jwt_failure(s, raw),
+                request.headers.get("origin", ""),
+                bool(raw),
+            )
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Inicia sesión en la app."},

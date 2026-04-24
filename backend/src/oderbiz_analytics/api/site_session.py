@@ -45,6 +45,28 @@ def verify_session_jwt(s: "Settings", token: str | None) -> str | None:
     return None
 
 
+def explain_session_jwt_failure(s: "Settings", token: str | None) -> str:
+    if not token:
+        return "missing_cookie"
+    try:
+        p = jwt.decode(
+            token,
+            s.site_auth_secret,
+            algorithms=["HS256"],
+            leeway=10,
+        )
+        sub = p.get("sub")
+        if isinstance(sub, str) and sub:
+            return "ok"
+        return "missing_sub"
+    except jwt.ExpiredSignatureError:
+        return "expired"
+    except jwt.InvalidTokenError:
+        return "invalid_signature_or_format"
+    except (TypeError, ValueError):
+        return "decode_error"
+
+
 def credentials_match(s: "Settings", username: str, password: str) -> bool:
     try:
         u_ok = secrets.compare_digest(
