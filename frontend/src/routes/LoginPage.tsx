@@ -49,11 +49,8 @@ export default function LoginPage() {
       <div className="border-border bg-card w-full max-w-sm space-y-6 rounded-lg border p-6 shadow-sm">
         <div className="space-y-1 text-center">
           <h1 className="text-foreground text-lg font-semibold tracking-tight">
-            Acceso a Oderbiz
+            Oderbiz Analitics
           </h1>
-          <p className="text-muted-foreground text-sm">
-            Ingresa el usuario y contraseña de la app (no es el token de Meta).
-          </p>
         </div>
         <form
           className="space-y-4"
