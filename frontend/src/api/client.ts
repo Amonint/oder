@@ -1,3 +1,5 @@
+import { SITE_SESSION_HEADER, getSiteSessionToken } from "./siteSession";
+
 /**
  * Base para `fetch`: cadena vacía = mismo origen (solo en dev con proxy en `vite.config`).
  * Si defines `VITE_API_BASE_URL`, debe ser el origen del API sin `/api/v1` (se normaliza si lo incluyes).
@@ -97,6 +99,10 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   }
   const headers = new Headers(init?.headers);
   headers.set("Authorization", `Bearer ${token}`);
+  const appSessionToken = getSiteSessionToken();
+  if (appSessionToken) {
+    headers.set(SITE_SESSION_HEADER, appSessionToken);
+  }
   const url = `${base}${path}`;
   try {
     return await fetch(url, {

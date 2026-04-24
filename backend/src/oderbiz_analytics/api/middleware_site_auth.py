@@ -10,6 +10,7 @@ from starlette.responses import JSONResponse, Response
 from oderbiz_analytics.api.site_session import (
     SESSION_COOKIE,
     explain_session_jwt_failure,
+    get_session_token_from_request_headers,
     site_auth_enabled,
     verify_session_jwt,
 )
@@ -48,14 +49,17 @@ class SiteAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if _is_public_path(request.url.path):
             return await call_next(request)
-        raw = request.cookies.get(SESSION_COOKIE)
+        raw_cookie = request.cookies.get(SESSION_COOKIE)
+        raw_header = get_session_token_from_request_headers(request.headers)
+        raw = raw_header or raw_cookie
         if not verify_session_jwt(s, raw):
             logging.getLogger("oderbiz.site_auth").warning(
-                "site_auth_blocked path=%s reason=%s origin=%s has_cookie=%s",
+                "site_auth_blocked path=%s reason=%s origin=%s has_cookie=%s has_header=%s",
                 request.url.path,
                 explain_session_jwt_failure(s, raw),
                 request.headers.get("origin", ""),
-                bool(raw),
+                bool(raw_cookie),
+                bool(raw_header),
             )
             return JSONResponse(
                 status_code=401,

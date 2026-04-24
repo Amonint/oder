@@ -1,4 +1,10 @@
 import { getApiBase } from "./client";
+import {
+  SITE_SESSION_HEADER,
+  clearSiteSessionToken,
+  getSiteSessionToken,
+  setSiteSessionToken,
+} from "./siteSession";
 
 /** Estado de login de aplicación (no es el token de Meta). */
 export type SiteAuthState =
@@ -7,10 +13,17 @@ export type SiteAuthState =
   | { kind: "out" }; // login obligatorio, sin cookie
 
 export async function fetchSiteAuthMe(): Promise<SiteAuthState> {
+  const token = getSiteSessionToken();
+  const headers = new Headers();
+  if (token) {
+    headers.set(SITE_SESSION_HEADER, token);
+  }
   const r = await fetch(`${getApiBase()}/api/v1/auth/me`, {
     credentials: "include",
+    headers,
   });
   if (r.status === 401) {
+    clearSiteSessionToken();
     return { kind: "out" };
   }
   if (!r.ok) {
@@ -43,11 +56,22 @@ export async function siteLogin(username: string, password: string): Promise<voi
     }
     throw new Error(msg);
   }
+  const j = (await r.json()) as { session_token?: unknown };
+  if (typeof j.session_token === "string" && j.session_token.trim()) {
+    setSiteSessionToken(j.session_token);
+  }
 }
 
 export async function siteLogout(): Promise<void> {
+  const token = getSiteSessionToken();
+  const headers = new Headers();
+  if (token) {
+    headers.set(SITE_SESSION_HEADER, token);
+  }
   await fetch(`${getApiBase()}/api/v1/auth/logout`, {
     method: "POST",
     credentials: "include",
+    headers,
   });
+  clearSiteSessionToken();
 }

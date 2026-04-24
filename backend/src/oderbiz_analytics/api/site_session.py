@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from oderbiz_analytics.config import Settings
 
 SESSION_COOKIE = "oderbiz_session"
+SESSION_HEADER = "x-oderbiz-session"
 
 
 def site_auth_enabled(s: "Settings") -> bool:
@@ -45,9 +46,21 @@ def verify_session_jwt(s: "Settings", token: str | None) -> str | None:
     return None
 
 
+def get_session_token_from_request_headers(headers: dict[str, str] | object) -> str | None:
+    try:
+        if hasattr(headers, "get"):
+            raw = headers.get(SESSION_HEADER)  # type: ignore[attr-defined]
+            if isinstance(raw, str):
+                token = raw.strip()
+                return token or None
+    except Exception:
+        return None
+    return None
+
+
 def explain_session_jwt_failure(s: "Settings", token: str | None) -> str:
     if not token:
-        return "missing_cookie"
+        return "missing_token"
     try:
         p = jwt.decode(
             token,

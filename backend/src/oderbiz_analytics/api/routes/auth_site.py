@@ -11,6 +11,7 @@ from oderbiz_analytics.api.site_session import (
     create_session_jwt,
     credentials_match,
     explain_session_jwt_failure,
+    get_session_token_from_request_headers,
     site_auth_enabled,
     verify_session_jwt,
 )
@@ -32,14 +33,17 @@ def site_auth_me(
 ):
     if not site_auth_enabled(settings):
         return {"site_auth": False, "user": None}
-    raw = request.cookies.get(SESSION_COOKIE)
+    raw_cookie = request.cookies.get(SESSION_COOKIE)
+    raw_header = get_session_token_from_request_headers(request.headers)
+    raw = raw_header or raw_cookie
     user = verify_session_jwt(settings, raw)
     if not user:
         logger.warning(
-            "auth_me_unauthorized reason=%s origin=%s has_cookie=%s",
+            "auth_me_unauthorized reason=%s origin=%s has_cookie=%s has_header=%s",
             explain_session_jwt_failure(settings, raw),
             request.headers.get("origin", ""),
-            bool(raw),
+            bool(raw_cookie),
+            bool(raw_header),
         )
         raise HTTPException(status_code=401, detail="Inicia sesión en la app.")
     return {"site_auth": True, "user": user}
@@ -81,7 +85,7 @@ def site_auth_login(
         settings.site_auth_cookie_secure,
         request.headers.get("origin", ""),
     )
-    return {"ok": True}
+    return {"ok": True, "session_token": token}
 
 
 @router.post("/logout")
