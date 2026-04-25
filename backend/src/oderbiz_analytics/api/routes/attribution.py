@@ -8,26 +8,11 @@ from oderbiz_analytics.adapters.meta.insights import fetch_insights
 from oderbiz_analytics.api.deps import get_meta_access_token
 from oderbiz_analytics.api.utils import normalize_ad_account_id
 from oderbiz_analytics.config import Settings, get_settings
+from oderbiz_analytics.services.attribution_windows import VALID_UI_WINDOWS, meta_window_list
 
 router = APIRouter(prefix="/accounts", tags=["attribution"])
 
 ATTRIBUTION_FIELDS = "spend,actions,cost_per_action_type,impressions,clicks,reach"
-
-VALID_WINDOWS: dict[str, str] = {
-    "click_1d": "1 día tras clic",
-    "click_7d": "7 días tras clic",
-    "click_28d": "28 días tras clic",
-    "view_1d": "1 día tras impresión",
-    "view_7d": "7 días tras impresión",
-}
-
-WINDOW_TO_META: dict[str, str] = {
-    "click_1d": "1d_click",
-    "click_7d": "7d_click",
-    "click_28d": "28d_click",
-    "view_1d": "1d_view",
-    "view_7d": "7d_view",
-}
 
 
 @router.get("/{ad_account_id}/insights/attribution")
@@ -49,10 +34,10 @@ async def get_attribution_insights(
     Para comparar ventanas, llama este endpoint múltiples veces con diferentes window params.
     Meta soporta action_attribution_windows via parámetro en la request de Insights.
     """
-    if window not in VALID_WINDOWS:
+    if window not in VALID_UI_WINDOWS:
         raise HTTPException(
             status_code=422,
-            detail=f"window debe ser uno de: {', '.join(VALID_WINDOWS.keys())}",
+            detail=f"window debe ser uno de: {', '.join(VALID_UI_WINDOWS.keys())}",
         )
 
     if bool(date_start) != bool(date_stop):
@@ -80,7 +65,7 @@ async def get_attribution_insights(
     else:
         effective_preset = date_preset if date_preset else "last_30d"
 
-    meta_window = WINDOW_TO_META.get(window, window)
+    meta_window = meta_window_list(window)[0]
     degraded = False
     warning: str | None = None
     try:
@@ -92,7 +77,7 @@ async def get_attribution_insights(
             level=level,
             date_preset=effective_preset,
             time_range=use_time_range,
-            action_attribution_windows=[meta_window],
+            action_attribution_windows=meta_window_list(window),
         )
     except httpx.HTTPStatusError:
         # Fallback resiliente: si Meta rechaza la ventana explícita, usamos su default
@@ -125,9 +110,9 @@ async def get_attribution_insights(
     return {
         "data": rows,
         "window": window,
-        "window_label": VALID_WINDOWS[window],
+        "window_label": VALID_UI_WINDOWS[window],
         "window_sent_to_meta": meta_window,
-        "available_windows": VALID_WINDOWS,
+        "available_windows": VALID_UI_WINDOWS,
         "date_preset": effective_preset,
         "time_range": use_time_range,
         "degraded": degraded,

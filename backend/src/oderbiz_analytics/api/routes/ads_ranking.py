@@ -15,6 +15,7 @@ from oderbiz_analytics.services.ad_label import (
     infer_ad_label_source,
     is_missing_meta_name,
 )
+from oderbiz_analytics.services.attribution_windows import VALID_UI_WINDOWS, meta_window_list
 from oderbiz_analytics.services.insights_aggregate import (
     aggregate_ad_rows,
     summarize_messaging_actions,
@@ -24,10 +25,18 @@ router = APIRouter(prefix="/accounts", tags=["ads_ranking"])
 
 PERF_FIELDS = (
     "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,"
-    "impressions,clicks,spend,reach,frequency,cpm,cpp,ctr,"
+    "impressions,clicks,unique_clicks,spend,reach,frequency,cpm,cpp,ctr,"
     "cost_per_result,purchase_roas,inline_link_clicks,"
     "actions,action_values,cost_per_action_type,date_start,date_stop"
 )
+
+OBJECTIVE_METRIC_TO_ACTION_TYPES = {
+    "messaging_conversation_started": [
+        "onsite_conversion.messaging_conversation_started_7d"
+    ],
+    "messaging_first_reply": ["messaging_first_reply"],
+    "lead": ["lead", "onsite_conversion.lead_grouped", "leadgen_other"],
+}
 
 
 def _to_float(value: object) -> float:
@@ -56,18 +65,18 @@ def _sum_purchase_values(action_values: object) -> float:
     return total
 
 
-def _derive_result_value(actions: object) -> float:
-    trivial = {"post_engagement", "page_engagement", "photo_view", "video_view"}
+def _sum_actions_by_types(actions: object, action_types: list[str]) -> float:
     if not isinstance(actions, list):
         return 0.0
+    accepted = set(action_types)
+    total = 0.0
     for item in actions:
         if not isinstance(item, dict):
             continue
         action_type = str(item.get("action_type") or "")
-        if action_type in trivial:
-            continue
-        return _to_float(item.get("value"))
-    return 0.0
+        if action_type in accepted:
+            total += _to_float(item.get("value"))
+    return total
 
 
 @router.get("/{ad_account_id}/ads/performance")
@@ -88,6 +97,17 @@ async def get_ads_performance(
     time_increment: int | None = Query(
         None,
         description="1 = una fila por día y anuncio; omitir = periodo agregado por anuncio.",
+    ),
+    objective_metric: str = Query(
+        "messaging_conversation_started",
+        description="Metrica objetivo homogenea para resultados/CPA derivado.",
+    ),
+    attribution_window: str | None = Query(
+        None,
+        description=(
+            "Ventana de atribución para conteos en actions/cost_per_result; "
+            "misma semántica que GET .../insights/attribution?window="
+        ),
     ),
     settings: Settings = Depends(get_settings),
     access_token: str = Depends(get_meta_access_token),
@@ -127,6 +147,19 @@ async def get_ads_performance(
     elif cid:
         filtering = [{"field": "campaign.id", "operator": "IN", "value": [cid]}]
 
+    attrib_param = (attribution_window or "").strip()
+    action_windows: list[str] | None = None
+    if attrib_param:
+        if attrib_param not in VALID_UI_WINDOWS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "attribution_window debe ser uno de: "
+                    + ", ".join(sorted(VALID_UI_WINDOWS.keys()))
+                ),
+            )
+        action_windows = meta_window_list(attrib_param)
+
     try:
         rows = await fetch_insights_all_pages(
             base_url=base,
@@ -138,6 +171,7 @@ async def get_ads_performance(
             time_range=use_time_range,
             filtering=filtering,
             time_increment=time_increment,
+            action_attribution_windows=action_windows,
         )
     except httpx.HTTPStatusError:
         raise HTTPException(
@@ -174,6 +208,11 @@ async def get_ads_performance(
 
     source_for_labels = aggregated_by_ad if aggregated_by_ad is not None else rows
 
+    objective_key = objective_metric.strip().lower()
+    if objective_key not in OBJECTIVE_METRIC_TO_ACTION_TYPES:
+        objective_key = "messaging_conversation_started"
+    objective_action_types = OBJECTIVE_METRIC_TO_ACTION_TYPES[objective_key]
+
     enriched_rows = []
     for row in source_for_labels:
         ad_id = str(row.get("ad_id", ""))
@@ -190,12 +229,16 @@ async def get_ads_performance(
         )
 
         spend = _to_float(row.get("spend"))
-        results = _derive_result_value(row.get("actions"))
+        results = _sum_actions_by_types(row.get("actions"), objective_action_types)
         cost_per_result = _to_float(row.get("cost_per_result"))
         cpa = cost_per_result if cost_per_result > 0 else (spend / results if results > 0 else None)
         purchase_roas = _to_float(row.get("purchase_roas"))
         roas_derived = (_sum_purchase_values(row.get("action_values")) / spend) if spend > 0 else 0.0
-        roas = purchase_roas if purchase_roas > 0 else (roas_derived if roas_derived > 0 else None)
+        roas: float | None = None
+        if purchase_roas > 0:
+            roas = purchase_roas
+        elif roas_derived > 0:
+            roas = roas_derived
         ad_label_source = infer_ad_label_source(
             ad_name=ad_name,
             creative_name=creative_name,
@@ -228,4 +271,8 @@ async def get_ads_performance(
         "time_range": use_time_range,
         "time_increment": time_increment,
         "messaging_actions_summary": messaging_actions_summary,
+        "objective_metric": objective_key,
+        "objective_action_types": objective_action_types,
+        "attribution_window": attrib_param or None,
+        "attribution_windows_sent": action_windows,
     }

@@ -142,3 +142,55 @@ def test_ads_performance_enriches_ad_label_with_missing_name(client):
     body = r.json()
     assert len(body["data"]) == 1
     assert "Anuncio sin nombre" in body["data"][0]["ad_label"]
+
+
+@respx.mock
+def test_ads_performance_passes_attribution_window_to_graph(client):
+    route = respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
+        return_value=httpx.Response(200, json={"data": []})
+    )
+    r = client.get(
+        "/api/v1/accounts/act_123/ads/performance",
+        params={"date_preset": "last_7d", "attribution_window": "click_1d"},
+        headers={"Authorization": "Bearer test_tok"},
+    )
+    assert r.status_code == 200
+    assert route.calls.last.request.url.params.get("action_attribution_windows") == '["1d_click"]'
+
+
+def test_ads_performance_invalid_attribution_window_returns_422(client):
+    r = client.get(
+        "/api/v1/accounts/act_123/ads/performance",
+        params={"date_preset": "last_7d", "attribution_window": "not_a_window"},
+        headers={"Authorization": "Bearer test_tok"},
+    )
+    assert r.status_code == 422
+
+
+@respx.mock
+def test_ads_performance_roas_null_without_purchase_signal(client):
+    respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "ad_id": "a1",
+                        "ad_name": "Ad",
+                        "spend": "10",
+                        "impressions": "1000",
+                        "actions": [],
+                        "action_values": [],
+                    }
+                ]
+            },
+        )
+    )
+    r = client.get(
+        "/api/v1/accounts/act_123/ads/performance",
+        params={"date_preset": "last_7d", "objective_metric": "lead"},
+        headers={"Authorization": "Bearer test_tok"},
+    )
+    assert r.status_code == 200
+    row = r.json()["data"][0]
+    assert row.get("roas") is None

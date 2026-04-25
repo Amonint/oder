@@ -67,6 +67,8 @@ export interface DashboardResponse {
     results: number;
     cpa: number | null;
     roas: number | null;
+    objective_metric?: string;
+    objective_action_types?: string[];
   };
   diagnostic_inputs?: Record<string, number | null>;
   actions: { action_type: unknown; value: number }[];
@@ -164,6 +166,7 @@ export interface AdPerformanceRow {
   adset_name?: string;
   impressions?: number | string;
   clicks?: number | string;
+  unique_clicks?: number | string;
   spend?: string;
   reach?: number | string;
   frequency?: number | string;
@@ -193,6 +196,10 @@ export interface AdsPerformanceResponse {
   time_range: { since: string; until: string } | null;
   time_increment?: number | null;
   messaging_actions_summary?: Record<string, number>;
+  objective_metric?: string;
+  objective_action_types?: string[];
+  attribution_window?: string | null;
+  attribution_windows_sent?: string[] | null;
 }
 
 export interface GeoMetadata {
@@ -356,6 +363,7 @@ export async function fetchAccountDashboard(
     campaignId?: string | null;
     dateStart?: string;
     dateStop?: string;
+    objectiveMetric?: "messaging_conversation_started" | "messaging_first_reply" | "lead";
   }
 ): Promise<DashboardResponse> {
   const q = new URLSearchParams();
@@ -366,6 +374,7 @@ export async function fetchAccountDashboard(
     q.set("date_preset", datePreset);
   }
   if (opts?.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts?.objectiveMetric) q.set("objective_metric", opts.objectiveMetric);
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/dashboard?${q}`;
   const r = await apiFetch(path);
   if (!r.ok) throw new Error(await readErrorMessage(r));
@@ -398,6 +407,13 @@ export async function fetchAdsPerformance(
     adId?: string;
     /** 1 = filas diarias por anuncio; el backend devuelve ranking agregado en `data`. */
     timeIncrement?: number;
+    objectiveMetric?: "messaging_conversation_started" | "messaging_first_reply" | "lead";
+    attributionWindow?:
+      | "click_1d"
+      | "click_7d"
+      | "click_28d"
+      | "view_1d"
+      | "view_7d";
   }
 ): Promise<AdsPerformanceResponse> {
   const q = new URLSearchParams();
@@ -408,6 +424,8 @@ export async function fetchAdsPerformance(
   if (opts.adsetId) q.set("adset_id", opts.adsetId);
   if (opts.adId) q.set("ad_id", opts.adId);
   if (opts.timeIncrement != null) q.set("time_increment", String(opts.timeIncrement));
+  if (opts.objectiveMetric) q.set("objective_metric", opts.objectiveMetric);
+  if (opts.attributionWindow) q.set("attribution_window", opts.attributionWindow);
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/ads/performance?${q}`;
   const r = await apiFetch(path);
   if (!r.ok) throw new Error(await readErrorMessage(r));
@@ -561,6 +579,8 @@ export interface PageKpiRow {
   frequency?: string;
   cpm?: string;
   ctr?: string;
+  inline_link_click_ctr?: string;
+  inline_link_clicks?: string;
 }
 
 export interface PageInsightsResponse {
@@ -1260,6 +1280,37 @@ export interface LeadsResponse {
   note: string;
 }
 
+export interface MessagingRow {
+  campaign_id?: string;
+  campaign_name?: string;
+  ad_id?: string;
+  ad_name?: string;
+  spend?: string;
+  conversations_started: number;
+  first_replies: number;
+  sent_messages: number;
+  cost_per_conversation_started: number | null;
+  cost_per_first_reply: number | null;
+  actions?: InsightActionItem[];
+}
+
+export interface MessagingResponse {
+  data: MessagingRow[];
+  summary: {
+    total_conversations_started: number;
+    total_first_replies: number;
+    total_sent_messages: number;
+    total_spend: number;
+    avg_cost_per_conversation_started: number | null;
+    avg_cost_per_first_reply: number | null;
+    first_reply_rate: number | null;
+  };
+  level: string;
+  date_preset: string | null;
+  time_range: { since: string; until: string } | null;
+  note: string;
+}
+
 export interface AudiencePerformanceRow {
   category: string;
   audience_id: string | null;
@@ -1271,6 +1322,7 @@ export interface AudiencePerformanceRow {
   results: number;
   leads_insights: number;
   conversations_started: number;
+  first_replies: number;
   cpa_like: number | null;
   ads_count: number;
   campaigns_count: number;
@@ -1321,6 +1373,35 @@ export async function fetchLeadsInsights(
   if (opts.adsetId) q.set("adset_id", opts.adsetId);
   if (opts.adId) q.set("ad_id", opts.adId);
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/leads?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export async function fetchMessagingInsights(
+  adAccountId: string,
+  opts: {
+    level?: "account" | "campaign" | "ad";
+    datePreset?: string;
+    dateStart?: string;
+    dateStop?: string;
+    campaignId?: string;
+    adsetId?: string;
+    adId?: string;
+  }
+): Promise<MessagingResponse> {
+  const q = new URLSearchParams();
+  if (opts.level) q.set("level", opts.level);
+  if (opts.dateStart && opts.dateStop) {
+    q.set("date_start", opts.dateStart);
+    q.set("date_stop", opts.dateStop);
+  } else if (opts.datePreset) {
+    q.set("date_preset", opts.datePreset);
+  }
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.adsetId) q.set("adset_id", opts.adsetId);
+  if (opts.adId) q.set("ad_id", opts.adId);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/messaging?${q}`;
   const r = await apiFetch(path);
   if (!r.ok) throw new Error(await readErrorMessage(r));
   return r.json();

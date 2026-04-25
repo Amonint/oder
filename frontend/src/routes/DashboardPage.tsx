@@ -17,13 +17,7 @@ import {
   fetchDemographicsInsights,
   fetchAudiencePerformance,
   fetchAttributionInsights,
-  fetchLeadsInsights,
-  fetchCampaignCloseSpeed,
-  fetchBottleneckAnalysis,
-  fetchSegmentNoQuote,
-  fetchCacOutOfTarget,
-  fetchSlaLostRevenue,
-  fetchAccountStability,
+  fetchMessagingInsights,
   fetchCreativeFatigue,
   fetchTimeInsights,
   getMetaAccessToken,
@@ -33,23 +27,9 @@ import DemographicsPanel from "@/components/DemographicsPanel";
 import AudiencePerformancePanel from "@/components/AudiencePerformancePanel";
 import AttributionWindowPanel from "@/components/AttributionWindowPanel";
 import LeadsPanel from "@/components/LeadsPanel";
-import CampaignCloseTimeBoxplotCard from "@/components/CampaignCloseTimeBoxplotCard";
-import BottleneckWaterfallCard from "@/components/BottleneckWaterfallCard";
-import NonQuoteSegmentsHeatmapCard from "@/components/NonQuoteSegmentsHeatmapCard";
-import CacOutOfTargetCard from "@/components/CacOutOfTargetCard";
-import SlaLostRevenueCard from "@/components/SlaLostRevenueCard";
-import PerformanceControlChartCard from "@/components/PerformanceControlChartCard";
 import CreativeFatigueTable from "@/components/CreativeFatigueTable";
 import CreativeSaturationScatter from "@/components/CreativeSaturationScatter";
-import ManualDataPanel from "@/components/ManualDataPanel";
-import SemaphoreKpiCard from "@/components/SemaphoreKpiCard";
-import HealthScoreCard from "@/components/HealthScoreCard";
-import FunnelExtendedCard from "@/components/FunnelExtendedCard";
 import FunnelLevelTable, { type FunnelLevelRow } from "@/components/FunnelLevelTable";
-import { fetchManualData } from "@/api/client";
-import { computeManualKpis, aggregateManualRecords } from "@/lib/manualKpis";
-import { loadThresholds, evaluateSemaphore } from "@/lib/semaphoreRules";
-import { computeHealthScore } from "@/lib/healthScore";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import GeoMap, { compareGeoInsightRowsForMetric, type GeoMapMetric } from "@/components/GeoMap";
@@ -138,6 +118,10 @@ import { buildLlmContextReport } from "@/lib/llmContextReport";
 
 const ALL = "__all__";
 
+type AdsAttributionWindow = NonNullable<
+  Parameters<typeof fetchAdsPerformance>[1]["attributionWindow"]
+>;
+
 type RankingMetric =
   | "impressions"
   | "clicks"
@@ -164,6 +148,19 @@ const DATE_PRESETS = [
   { value: "custom", label: "Personalizado" },
   { value: "maximum", label: "Máximo disponible" },
 ] as const;
+const OBJECTIVE_METRIC = "messaging_conversation_started" as const;
+
+function objectiveMetricLabel(metric: string | null | undefined): string {
+  switch (metric) {
+    case "messaging_first_reply":
+      return "Primeras respuestas";
+    case "lead":
+      return "Leads";
+    case "messaging_conversation_started":
+    default:
+      return "Conversaciones iniciadas";
+  }
+}
 
 function formatNum(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
@@ -408,8 +405,7 @@ export default function DashboardPage() {
     "all" | "interests" | "behaviors" | "education_majors" | "family_statuses" | "life_events" | "work_positions"
   >("all");
   const [audienceMinSpend, setAudienceMinSpend] = useState<number>(10);
-  const [attributionWindow, setAttributionWindow] = useState<string>("click_7d");
-  const [showManualForm, setShowManualForm] = useState(false);
+  const [attributionWindow, setAttributionWindow] = useState<AdsAttributionWindow>("click_7d");
   const [isExportingReport, setIsExportingReport] = useState(false);
   const useUnifiedDashboard = String(import.meta.env.VITE_UNIFIED_DASHBOARD ?? "").toLowerCase() === "true";
   const hasToken = Boolean(getMetaAccessToken());
@@ -432,6 +428,7 @@ export default function DashboardPage() {
     queryFn: () =>
       fetchAccountDashboard(id, datePreset, {
         campaignId: campaignKey ?? undefined,
+        objectiveMetric: OBJECTIVE_METRIC,
         ...effectiveDateParams,
       }),
     enabled: hasToken && Boolean(id),
@@ -451,6 +448,7 @@ export default function DashboardPage() {
     queryFn: () =>
       fetchAccountDashboard(id, "last_30d", {
         campaignId: campaignKey ?? undefined,
+        objectiveMetric: OBJECTIVE_METRIC,
         dateStart: prevPeriod!.dateStart,
         dateStop: prevPeriod!.dateStop,
       }),
@@ -507,9 +505,12 @@ export default function DashboardPage() {
       campaignKey,
       adsetSelect,
       selectedAdId,
+      attributionWindow,
     ],
     queryFn: () => {
       const opts: Parameters<typeof fetchAdsPerformance>[1] = { ...effectiveDateParams };
+      opts.objectiveMetric = OBJECTIVE_METRIC;
+      opts.attributionWindow = attributionWindow;
       if (perfGranularity === "daily") opts.timeIncrement = 1;
       if (selectedAdId) {
         opts.adId = selectedAdId;
@@ -656,8 +657,8 @@ export default function DashboardPage() {
   });
 
   const leadsQuery = useQuery({
-    queryKey: ["leads", id, datePreset, campaignKey, adsetSelect, selectedAdId, customDateStart, customDateStop],
-    queryFn: () => fetchLeadsInsights(id, {
+    queryKey: ["messaging", id, datePreset, campaignKey, adsetSelect, selectedAdId, customDateStart, customDateStop],
+    queryFn: () => fetchMessagingInsights(id, {
       level: selectedAdId ? "ad" : adsetSelect !== ALL ? "ad" : "campaign",
       ...effectiveDateParams,
       campaignId: campaignKey ?? undefined,
@@ -668,53 +669,28 @@ export default function DashboardPage() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const closeSpeedQuery = useQuery({
-    queryKey: ["close-speed", id, campaignKey],
-    queryFn: () => fetchCampaignCloseSpeed(id, { campaignId: campaignKey ?? undefined }),
-    enabled: hasToken && Boolean(id) && mainTab === "comercial",
+  const leadsPrevQuery = useQuery({
+    queryKey: [
+      "messaging-prev",
+      id,
+      prevPeriod?.dateStart,
+      prevPeriod?.dateStop,
+      campaignKey,
+      adsetSelect,
+      selectedAdId,
+    ],
+    queryFn: () => fetchMessagingInsights(id, {
+      level: selectedAdId ? "ad" : adsetSelect !== ALL ? "ad" : "campaign",
+      dateStart: prevPeriod!.dateStart,
+      dateStop: prevPeriod!.dateStop,
+      campaignId: campaignKey ?? undefined,
+      adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
+      adId: selectedAdId ?? undefined,
+    }),
+    enabled: hasToken && Boolean(id) && mainTab === "comercial" && Boolean(prevPeriod),
     staleTime: 5 * 60 * 1000,
   });
 
-  const bottleneckQuery = useQuery({
-    queryKey: ["bottleneck", id, campaignKey],
-    queryFn: () => fetchBottleneckAnalysis(id, { campaignId: campaignKey ?? undefined }),
-    enabled: hasToken && Boolean(id) && mainTab === "comercial",
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const segmentNoQuoteQuery = useQuery({
-    queryKey: ["segment-no-quote", id, campaignKey],
-    queryFn: () => fetchSegmentNoQuote(id, { campaignId: campaignKey ?? undefined }),
-    enabled: hasToken && Boolean(id) && mainTab === "comercial",
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const cacOutTargetQuery = useQuery({
-    queryKey: ["cac-out-target", id, campaignKey, datePreset, customDateStart, customDateStop],
-    queryFn: () =>
-      fetchCacOutOfTarget(id, {
-        campaignId: campaignKey ?? undefined,
-        datePreset: (effectiveDateParams as { datePreset?: string }).datePreset,
-        dateStart: (effectiveDateParams as { dateStart?: string }).dateStart,
-        dateStop: (effectiveDateParams as { dateStop?: string }).dateStop,
-      }),
-    enabled: hasToken && Boolean(id) && mainTab === "comercial",
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const slaLostRevenueQuery = useQuery({
-    queryKey: ["sla-lost-revenue", id, campaignKey],
-    queryFn: () => fetchSlaLostRevenue(id, { campaignId: campaignKey ?? undefined }),
-    enabled: hasToken && Boolean(id) && mainTab === "comercial",
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const stabilityQuery = useQuery({
-    queryKey: ["account-stability", id, campaignKey],
-    queryFn: () => fetchAccountStability(id, { campaignId: campaignKey ?? undefined, metric: "cac" }),
-    enabled: hasToken && Boolean(id) && mainTab === "comercial",
-    staleTime: 5 * 60 * 1000,
-  });
 
   const fatigueQuery = useQuery({
     queryKey: ["fatigue", id, datePreset, campaignKey, adsetSelect, customDateStart, customDateStop],
@@ -727,12 +703,6 @@ export default function DashboardPage() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const manualDataQuery = useQuery({
-    queryKey: ["manual-data", id, campaignKey],
-    queryFn: () => fetchManualData(id, { campaignId: campaignKey ?? undefined }),
-    enabled: hasToken && Boolean(id) && mainTab === "comercial",
-    staleTime: 5 * 60 * 1000,
-  });
 
   const timeInsightsQuery = useQuery({
     queryKey: [
@@ -872,6 +842,7 @@ export default function DashboardPage() {
       .sort((a, b) => Number(b.value ?? 0) - Number(a.value ?? 0))
       .slice(0, 8)
       .map((a) => ({
+        key: String(a.action_type),
         label: shortActionTypeLabel(String(a.action_type), 26),
         value: Number(a.value ?? 0),
       }));
@@ -884,6 +855,7 @@ export default function DashboardPage() {
       .sort((a, b) => Number(b.value ?? 0) - Number(a.value ?? 0))
       .slice(0, 8)
       .map((c) => ({
+        key: String(c.action_type),
         label: shortActionTypeLabel(String(c.action_type), 26),
         value: Number(c.value ?? 0),
       }));
@@ -979,26 +951,6 @@ export default function DashboardPage() {
       color: dashboardChartColor(3),
     },
   } satisfies ChartConfig;
-
-  const thresholds = useMemo(() => loadThresholds(), []);
-
-  const aggregatedManual = useMemo(() => {
-    const rows = manualDataQuery.data?.data ?? [];
-    if (rows.length === 0) return null;
-    return aggregateManualRecords(rows);
-  }, [manualDataQuery.data]);
-
-  const manualKpis = useMemo(() => {
-    if (!aggregatedManual) return null;
-    const spend = Number(data?.summary?.spend ?? 0);
-    return computeManualKpis(aggregatedManual, spend);
-  }, [aggregatedManual, data?.summary]);
-
-  const healthScore = useMemo(() => {
-    const ctr = data?.summary?.ctr != null ? Number(data.summary.ctr) : null;
-    const frequency = data?.summary?.frequency != null ? Number(data.summary.frequency) : null;
-    return computeHealthScore({ ctr, frequency, manualKpis }, thresholds);
-  }, [data?.summary, manualKpis, thresholds]);
 
   const unifiedInsights = useMemo(() => {
     const curr = data?.summary ?? {};
@@ -1436,6 +1388,15 @@ export default function DashboardPage() {
                 </Alert>
               ) : null}
 
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="outline" className="text-xs text-muted-foreground font-normal">
+                  Objetivo activo: {objectiveMetricLabel(data.derived?.objective_metric ?? OBJECTIVE_METRIC)}
+                </Badge>
+                <Badge variant="outline" className="text-xs text-muted-foreground font-normal">
+                  Trazabilidad: resultados y CPA derivado calculados sobre este objetivo.
+                </Badge>
+              </div>
+
               {/* ── Banner de estado ── */}
               {(() => {
                 const ctr = Number(data.summary.ctr ?? 0);
@@ -1670,7 +1631,7 @@ export default function DashboardPage() {
                   {
                     label: "CPA (resultado principal)",
                     value: cpaPrincipal,
-                    tip: "Mismo criterio que el backend y la comparación de periodos: cost_per_result de Meta si es >0; si no, gasto ÷ volumen de la primera acción no trivial en la lista de acciones (comparable a «Resultados (derivado)»). No mezcla varios tipos de acción.",
+                    tip: "Mismo criterio que el backend y la comparación de periodos: cost_per_result de Meta si es >0; si no, gasto ÷ conversaciones iniciadas (onsite_conversion.messaging_conversation_started_7d).",
                   },
                   {
                     label: "Costo / acción (primer tipo Meta)",
@@ -1691,8 +1652,8 @@ export default function DashboardPage() {
                       </CardHeader>
                       <CardContent>
                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                          {costs.map((c) => (
-                            <div key={c.label} className="flex flex-col gap-0.5">
+                          {costs.map((c, i) => (
+                            <div key={`${c.label}-${i}`} className="flex flex-col gap-0.5">
                               <span className="text-muted-foreground text-xs flex items-center gap-0.5">
                                 {c.label}
                                 <InfoTooltip text={c.tip} />
@@ -1763,7 +1724,7 @@ export default function DashboardPage() {
                           <ChartTooltip content={<ChartTooltipContent />} />
                           <Bar dataKey="value" radius={4}>
                             {categoryChartData.map((d, i) => (
-                              <Cell key={String(d.label)} fill={barColorAt(i, String(d.label))} />
+                              <Cell key={`${String(d.label)}-${i}`} fill={barColorAt(i, String(d.label))} />
                             ))}
                           </Bar>
                         </BarChart>
@@ -1806,7 +1767,7 @@ export default function DashboardPage() {
                           <ChartTooltip content={<ChartTooltipContent />} />
                           <Bar dataKey="value" radius={4}>
                             {topActionsChartData.map((d, i) => (
-                              <Cell key={String(d.label)} fill={barColorAt(i, String(d.label))} />
+                              <Cell key={`${String(d.key)}-${i}`} fill={barColorAt(i, String(d.label))} />
                             ))}
                           </Bar>
                         </BarChart>
@@ -1851,7 +1812,7 @@ export default function DashboardPage() {
                         <ChartTooltip content={<ChartTooltipContent />} />
                         <Bar dataKey="value" radius={4}>
                           {costChartData.map((d, i) => (
-                            <Cell key={String(d.label)} fill={barColorAt(i, String(d.label))} />
+                            <Cell key={`${String(d.key)}-${i}`} fill={barColorAt(i, String(d.label))} />
                           ))}
                         </Bar>
                       </BarChart>
@@ -1895,6 +1856,14 @@ export default function DashboardPage() {
         <TabsContent value="creatividades" className="space-y-6 pt-4">
 
           <h3 className="text-foreground text-lg font-semibold">Ranking de anuncios</h3>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline" className="text-xs text-muted-foreground font-normal">
+              Objetivo activo: {objectiveMetricLabel(rankingQuery.data?.objective_metric ?? OBJECTIVE_METRIC)}
+            </Badge>
+            <Badge variant="outline" className="text-xs text-muted-foreground font-normal">
+              Ranking, resultados y CPA usan el mismo criterio para comparacion homogénea.
+            </Badge>
+          </div>
           <div className="flex flex-wrap items-end gap-4">
             <div className="flex items-center gap-3">
               <span className="text-muted-foreground text-sm">Métrica:</span>
@@ -2713,7 +2682,7 @@ export default function DashboardPage() {
             isError={attributionQuery.isError}
             errorMessage={attributionQuery.error instanceof Error ? attributionQuery.error.message : undefined}
             window={attributionWindow}
-            onWindowChange={setAttributionWindow}
+            onWindowChange={(w) => setAttributionWindow(w as AdsAttributionWindow)}
           />
 
           {data && prevPeriod ? (
@@ -2732,217 +2701,94 @@ export default function DashboardPage() {
 
         {/* ── Tab: Comercial (leads + datos comerciales) ── */}
         <TabsContent value="comercial" className="space-y-6 pt-4">
-          <h3 className="text-foreground text-lg font-semibold">Lead Ads</h3>
+          <h3 className="text-foreground text-lg font-semibold">Comercial (Mensajería)</h3>
           <LeadsPanel
             data={leadsQuery.data}
+            previousData={leadsPrevQuery.data}
             isLoading={leadsQuery.isLoading}
             isError={leadsQuery.isError}
             errorMessage={leadsQuery.error instanceof Error ? leadsQuery.error.message : undefined}
           />
-          <CampaignCloseTimeBoxplotCard
-            data={closeSpeedQuery.data?.data}
-            isLoading={closeSpeedQuery.isLoading}
-            isError={closeSpeedQuery.isError}
-            errorMessage={closeSpeedQuery.error instanceof Error ? closeSpeedQuery.error.message : undefined}
-          />
-          <div className="grid gap-6 lg:grid-cols-2">
-            <BottleneckWaterfallCard
-              data={bottleneckQuery.data?.data}
-              primaryBottleneck={bottleneckQuery.data?.primary_bottleneck}
-              isLoading={bottleneckQuery.isLoading}
-              isError={bottleneckQuery.isError}
-              errorMessage={bottleneckQuery.error instanceof Error ? bottleneckQuery.error.message : undefined}
-            />
-            <NonQuoteSegmentsHeatmapCard
-              data={segmentNoQuoteQuery.data?.data}
-              threshold={segmentNoQuoteQuery.data?.threshold}
-              isLoading={segmentNoQuoteQuery.isLoading}
-              isError={segmentNoQuoteQuery.isError}
-              errorMessage={segmentNoQuoteQuery.error instanceof Error ? segmentNoQuoteQuery.error.message : undefined}
-            />
-          </div>
-          <div className="grid gap-6 lg:grid-cols-2">
-            <CacOutOfTargetCard
-              data={cacOutTargetQuery.data}
-              isLoading={cacOutTargetQuery.isLoading}
-              isError={cacOutTargetQuery.isError}
-              errorMessage={cacOutTargetQuery.error instanceof Error ? cacOutTargetQuery.error.message : undefined}
-            />
-            <SlaLostRevenueCard
-              data={slaLostRevenueQuery.data}
-              isLoading={slaLostRevenueQuery.isLoading}
-              isError={slaLostRevenueQuery.isError}
-              errorMessage={slaLostRevenueQuery.error instanceof Error ? slaLostRevenueQuery.error.message : undefined}
-            />
-          </div>
-          <PerformanceControlChartCard
-            data={stabilityQuery.data}
-            isLoading={stabilityQuery.isLoading}
-            isError={stabilityQuery.isError}
-            errorMessage={stabilityQuery.error instanceof Error ? stabilityQuery.error.message : undefined}
-            title="Estabilidad (CAC) - cuenta"
-          />
-
           <Separator className="my-4" />
-          <h3 className="text-foreground text-lg font-semibold">Datos comerciales</h3>
-          {(() => {
-            const actions = data?.actions ?? [];
-            const conversationsStarted = actions
-              .filter((a) => String(a.action_type) === "onsite_conversion.messaging_conversation_started_7d")
-              .reduce((s, a) => s + Number(a.value ?? 0), 0);
-            const firstReplies = actions
-              .filter((a) => String(a.action_type) === "messaging_first_reply")
-              .reduce((s, a) => s + Number(a.value ?? 0), 0);
+          <Alert>
+            <AlertTitle>Métricas CRM removidas</AlertTitle>
+            <AlertDescription>
+              Esta vista conserva solo métricas derivadas de Meta. Los módulos que dependían de CRM/carga manual fueron retirados.
+            </AlertDescription>
+          </Alert>
 
-            return (
-              <div className="grid gap-6 lg:grid-cols-3">
-                <div className="lg:col-span-2 space-y-6">
-                  <div>
-                    <h2 className="text-foreground text-lg font-semibold mb-3">KPIs comerciales</h2>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <SemaphoreKpiCard
-                        label="Tasa de aceptación"
-                        value={manualKpis?.acceptance_rate != null ? `${(manualKpis.acceptance_rate * 100).toFixed(1)}%` : "—"}
-                        tooltip="Leads aceptados ÷ mensajes útiles. Indica calidad de conversaciones."
-                        status={evaluateSemaphore(manualKpis?.acceptance_rate ?? null, thresholds.acceptance_rate)}
-                      />
-                      <SemaphoreKpiCard
-                        label="Tasa de cierre"
-                        value={manualKpis?.close_rate != null ? `${(manualKpis.close_rate * 100).toFixed(1)}%` : "—"}
-                        tooltip="Ventas cerradas ÷ leads aceptados. Indica efectividad de ventas."
-                        status={evaluateSemaphore(manualKpis?.close_rate ?? null, thresholds.close_rate)}
-                      />
-                      <SemaphoreKpiCard
-                        label="Costo por lead aceptado"
-                        value={manualKpis?.cost_per_accepted_lead != null ? `$${manualKpis.cost_per_accepted_lead.toFixed(2)}` : "—"}
-                        tooltip="Gasto de Meta ÷ leads aceptados. Métrica de eficiencia real."
-                        status={evaluateSemaphore(manualKpis?.cost_per_accepted_lead ?? null, thresholds.cost_per_accepted_lead)}
-                      />
-                      <SemaphoreKpiCard
-                        label="Costo por venta"
-                        value={manualKpis?.cost_per_sale != null ? `$${manualKpis.cost_per_sale.toFixed(2)}` : "—"}
-                        tooltip="Gasto de Meta ÷ ventas cerradas. Costo real de adquisición de cliente."
-                        status={evaluateSemaphore(manualKpis?.cost_per_sale ?? null, thresholds.cost_per_sale)}
-                      />
-                      <SemaphoreKpiCard
-                        label="Ingreso estimado"
-                        value={manualKpis?.estimated_revenue != null && manualKpis.estimated_revenue > 0 ? `$${manualKpis.estimated_revenue.toFixed(2)}` : "—"}
-                        tooltip="Ventas cerradas × ticket promedio, o ingreso real si fue ingresado."
-                        status="gray"
-                      />
-                      <SemaphoreKpiCard
-                        label="ROAS estimado"
-                        value={manualKpis?.estimated_roas != null ? `${manualKpis.estimated_roas.toFixed(2)}x` : "—"}
-                        tooltip="Ingreso estimado ÷ gasto. ROAS calculado desde datos manuales."
-                        status={evaluateSemaphore(manualKpis?.estimated_roas ?? null, thresholds.roas)}
-                      />
-                    </div>
-                  </div>
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <span className="text-foreground text-sm font-medium">Embudo Meta por nivel:</span>
+              <Select value={funnelLevel} onValueChange={(v) => setFunnelLevel(v as typeof funnelLevel)}>
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue placeholder="Nivel" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="account">Consolidado (cuenta)</SelectItem>
+                  <SelectItem value="campaign">Por campaña</SelectItem>
+                  <SelectItem value="ad">Por anuncio</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
-                  <FunnelExtendedCard
-                    conversationsStarted={conversationsStarted}
-                    firstReplies={firstReplies}
-                    manualRecord={aggregatedManual}
-                  />
+            {funnelLevel !== "account" && (() => {
+              const adRows = rankingQuery.data?.data ?? [];
 
-                  {/* ── Embudo por nivel ── */}
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                      <span className="text-foreground text-sm font-medium">Nivel de análisis:</span>
-                      <Select value={funnelLevel} onValueChange={(v) => setFunnelLevel(v as typeof funnelLevel)}>
-                        <SelectTrigger className="w-[200px]">
-                          <SelectValue placeholder="Nivel" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="account">Consolidado (cuenta)</SelectItem>
-                          <SelectItem value="campaign">Por campaña</SelectItem>
-                          <SelectItem value="ad">Por anuncio</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
+              if (funnelLevel === "ad") {
+                const rows: FunnelLevelRow[] = adRows.map((row) => {
+                  const rowActions = row.actions ?? [];
+                  return {
+                    id: row.ad_id,
+                    name: row.ad_name,
+                    impressions: Number(row.impressions ?? 0),
+                    reach: Number(row.reach ?? 0),
+                    clicks: Number(row.unique_clicks ?? row.clicks ?? 0),
+                    conversations_started: rowActions
+                      .filter((a) => String(a.action_type) === "onsite_conversion.messaging_conversation_started_7d")
+                      .reduce((s, a) => s + Number(a.value ?? 0), 0),
+                    first_replies: rowActions
+                      .filter((a) => String(a.action_type) === "messaging_first_reply")
+                      .reduce((s, a) => s + Number(a.value ?? 0), 0),
+                    spend: Number(row.spend ?? 0),
+                  };
+                }).sort((a, b) => b.conversations_started - a.conversations_started);
+                return <FunnelLevelTable rows={rows} level="ad" />;
+              }
 
-                    {funnelLevel !== "account" && (() => {
-                      const adRows = rankingQuery.data?.data ?? [];
-
-                      if (funnelLevel === "ad") {
-                        const rows: FunnelLevelRow[] = adRows.map((row) => {
-                          const rowActions = row.actions ?? [];
-                          return {
-                            id: row.ad_id,
-                            name: row.ad_name,
-                            impressions: Number(row.impressions ?? 0),
-                            reach: Number(row.reach ?? 0),
-                            clicks: Number(row.clicks ?? 0),
-                            conversations_started: rowActions
-                              .filter((a) => String(a.action_type) === "onsite_conversion.messaging_conversation_started_7d")
-                              .reduce((s, a) => s + Number(a.value ?? 0), 0),
-                            first_replies: rowActions
-                              .filter((a) => String(a.action_type) === "messaging_first_reply")
-                              .reduce((s, a) => s + Number(a.value ?? 0), 0),
-                            spend: Number(row.spend ?? 0),
-                          };
-                        }).sort((a, b) => b.conversations_started - a.conversations_started);
-                        return <FunnelLevelTable rows={rows} level="ad" />;
-                      }
-
-                      // By campaign: group adRows by campaign_id
-                      const campaignMap: Record<string, FunnelLevelRow> = {};
-                      for (const row of adRows) {
-                        const cid = row.campaign_id ?? row.campaign_name;
-                        if (!campaignMap[cid]) {
-                          campaignMap[cid] = {
-                            id: cid,
-                            name: row.campaign_name,
-                            impressions: 0,
-                            reach: 0,
-                            clicks: 0,
-                            conversations_started: 0,
-                            first_replies: 0,
-                            spend: 0,
-                          };
-                        }
-                        const entry = campaignMap[cid];
-                        entry.impressions += Number(row.impressions ?? 0);
-                        entry.reach += Number(row.reach ?? 0);
-                        entry.clicks += Number(row.clicks ?? 0);
-                        entry.spend += Number(row.spend ?? 0);
-                        for (const a of row.actions ?? []) {
-                          if (String(a.action_type) === "onsite_conversion.messaging_conversation_started_7d") {
-                            entry.conversations_started += Number(a.value ?? 0);
-                          }
-                          if (String(a.action_type) === "messaging_first_reply") {
-                            entry.first_replies += Number(a.value ?? 0);
-                          }
-                        }
-                      }
-                      const campaignRows = Object.values(campaignMap).sort((a, b) => b.conversations_started - a.conversations_started);
-                      return <FunnelLevelTable rows={campaignRows} level="campaign" />;
-                    })()}
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <HealthScoreCard result={healthScore} />
-
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => setShowManualForm((v) => !v)}
-                  >
-                    {showManualForm ? "Cerrar formulario" : "Ingresar datos manuales"}
-                  </Button>
-
-                  {showManualForm && (
-                    <ManualDataPanel
-                      adAccountId={id}
-                      campaignId={campaignKey}
-                      onSaved={() => setShowManualForm(false)}
-                    />
-                  )}
-                </div>
-              </div>
-            );
-          })()}
+              const campaignMap: Record<string, FunnelLevelRow> = {};
+              for (const row of adRows) {
+                const cid = row.campaign_id ?? row.campaign_name;
+                if (!campaignMap[cid]) {
+                  campaignMap[cid] = {
+                    id: cid,
+                    name: row.campaign_name,
+                    impressions: 0,
+                    reach: 0,
+                    clicks: 0,
+                    conversations_started: 0,
+                    first_replies: 0,
+                    spend: 0,
+                  };
+                }
+                const entry = campaignMap[cid];
+                entry.impressions += Number(row.impressions ?? 0);
+                entry.reach += Number(row.reach ?? 0);
+                entry.clicks += Number(row.unique_clicks ?? row.clicks ?? 0);
+                entry.spend += Number(row.spend ?? 0);
+                for (const a of row.actions ?? []) {
+                  if (String(a.action_type) === "onsite_conversion.messaging_conversation_started_7d") {
+                    entry.conversations_started += Number(a.value ?? 0);
+                  }
+                  if (String(a.action_type) === "messaging_first_reply") {
+                    entry.first_replies += Number(a.value ?? 0);
+                  }
+                }
+              }
+              const campaignRows = Object.values(campaignMap).sort((a, b) => b.conversations_started - a.conversations_started);
+              return <FunnelLevelTable rows={campaignRows} level="campaign" />;
+            })()}
+          </div>
         </TabsContent>
       </Tabs>
     </div>

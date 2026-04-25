@@ -9,12 +9,17 @@ interface Props {
 export default function AdsetDiagnosticView({ selectedCampaign, selectedAdset, selectedAd }: Props) {
   return (
     <Card>
-      <CardHeader><CardTitle>Diagnostico ad set</CardTitle></CardHeader>
+      <CardHeader>
+        <CardTitle>Contexto de filtro (conjunto)</CardTitle>
+      </CardHeader>
       <CardContent className="text-sm text-muted-foreground space-y-1">
-        <p>Campana: {selectedCampaign ?? "Todas"}</p>
-        <p>Ad set: {selectedAdset ?? "Todos"}</p>
+        <p>Campaña: {selectedCampaign ?? "Todas"}</p>
+        <p>Conjunto: {selectedAdset ?? "Todos"}</p>
         <p>Anuncio: {selectedAd ?? "Todos"}</p>
-        <p>Usa las vistas de audiencia/geo/placement para identificar segmentacion o saturacion.</p>
+        <p>
+          Aquí solo se muestra el alcance del filtro. Para saturación o segmentación revisa audiencia, geo y
+          placements; no hay reglas automáticas de pausa/escala en esta tarjeta.
+        </p>
       </CardContent>
     </Card>
   );

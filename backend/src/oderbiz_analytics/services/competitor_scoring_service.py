@@ -5,7 +5,6 @@ Permite mejorar el modelo conforme acumula datos.
 
 import duckdb
 import json
-from datetime import datetime
 from typing import Optional
 
 
@@ -20,6 +19,7 @@ class CompetitorScoringService:
         """Crea tablas si no existen."""
         conn = duckdb.connect(self.db_path)
         try:
+            conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_competitor_classifications START 1")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS competitor_classifications (
                     id INTEGER PRIMARY KEY DEFAULT nextval('seq_competitor_classifications'),
@@ -37,7 +37,6 @@ class CompetitorScoringService:
                     feedback_at TIMESTAMP
                 )
             """)
-            conn.execute("CREATE SEQUENCE IF NOT EXISTS seq_competitor_classifications START 1")
         finally:
             conn.close()
     
@@ -53,9 +52,16 @@ class CompetitorScoringService:
         search_term: str,
         country: str,
     ) -> int:
-        """Guarda una clasificación en el histórico."""
+        """Guarda la clasificación más reciente para la tupla (page, usuario, término, país)."""
         conn = duckdb.connect(self.db_path)
         try:
+            conn.execute(
+                """
+                DELETE FROM competitor_classifications
+                WHERE page_id = ? AND user_page_id = ? AND search_term = ? AND country = ?
+                """,
+                [page_id, user_page_id, search_term, country],
+            )
             result = conn.execute("""
                 INSERT INTO competitor_classifications (
                     page_id, page_name, user_page_id, relevance_score, is_relevant,

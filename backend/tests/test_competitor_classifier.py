@@ -543,3 +543,17 @@ class TestMarketRadarE2EDifferentCategories:
         # Verify keywords
         keywords = body["metadata"]["keywords_used"]
         assert "comida" in keywords or "chef" in keywords or "cocina" in keywords
+
+
+def test_classifier_bienestar_sin_penalidad_por_gym_en_texto_clinico():
+    """'bienestar' en copy clínico no debe disparar penalidad por 'gym' (retirado de negativos por defecto)."""
+    c = CompetitorClassifier(
+        user_category="Psicólogo",
+        user_keywords=["terapia", "salud mental"],
+    )
+    r = c.classify(
+        page_name="Centro de bienestar emocional",
+        ad_bodies=["Terapia individual y acompañamiento en salud mental."],
+    )
+    assert r.score >= 25
+    assert r.is_relevant is True

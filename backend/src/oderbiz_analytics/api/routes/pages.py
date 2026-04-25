@@ -376,7 +376,7 @@ async def get_page_insights(
     try:
         rows = await fetch_insights_all_pages(
             base_url=base, access_token=access_token, ad_account_id=normalized_id,
-            fields="spend,impressions,reach,frequency,cpm,ctr",
+            fields="spend,impressions,reach,frequency,cpm,ctr,inline_link_click_ctr,inline_link_clicks",
             date_preset=effective_preset if not effective_time_range else None,
             time_range=effective_time_range,
             level="account", filtering=filtering,

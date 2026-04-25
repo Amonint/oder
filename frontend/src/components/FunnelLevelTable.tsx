@@ -42,7 +42,8 @@ export default function FunnelLevelTable({ rows, level }: FunnelLevelTableProps)
           Embudo por {level === "campaign" ? "campaña" : "anuncio"}
         </CardTitle>
         <CardDescription>
-          Etapas: Impresiones → Alcance → Clics → Conv. iniciadas → Respuestas. Tasas entre etapas en paréntesis.
+          Etapas: Impresiones → Alcance → Clics únicos (unique_clicks) → Conv. iniciadas → Respuestas. Tasas entre
+          etapas en paréntesis.
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0">
@@ -55,7 +56,7 @@ export default function FunnelLevelTable({ rows, level }: FunnelLevelTableProps)
                 </TableHead>
                 <TableHead className="text-right">Impresiones</TableHead>
                 <TableHead className="text-right">Alcance</TableHead>
-                <TableHead className="text-right">Clics</TableHead>
+                <TableHead className="text-right">Clics únicos</TableHead>
                 <TableHead className="text-right">Conv. iniciadas</TableHead>
                 <TableHead className="text-right">Respuestas</TableHead>
                 <TableHead className="text-right">Gasto</TableHead>

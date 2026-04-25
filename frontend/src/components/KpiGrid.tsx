@@ -43,9 +43,17 @@ const KPI_DEFS: KpiDef[] = [
   },
   {
     key: "ctr",
-    label: "CTR",
+    label: "CTR (todos los clics)",
     format: (v) => `${parseFloat(v).toFixed(2)}%`,
-    tooltip: "Click-Through Rate — porcentaje de impresiones que resultaron en algún clic (incluye clics en enlace, reacciones y otros). Se calcula: Clics ÷ Impresiones × 100.",
+    tooltip:
+      "Campo ctr de Meta: porcentaje de impresiones con al menos un clic (todos los tipos de clic). No es el CTR de enlace. Ver también «CTR enlace».",
+  },
+  {
+    key: "inline_link_click_ctr",
+    label: "CTR enlace",
+    format: (v) => `${parseFloat(v).toFixed(2)}%`,
+    tooltip:
+      "Campo inline_link_click_ctr de Meta: porcentaje de impresiones con clic en enlace inline. Suele ser más útil para anuncios orientados a tráfico web.",
   },
   {
     key: "frequency",
@@ -60,7 +68,7 @@ export default function KpiGrid({ data, isLoading }: KpiGridProps) {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
         {KPI_DEFS.map((kpi) => (
           <Card key={kpi.key}>
             <CardHeader className="pb-2">

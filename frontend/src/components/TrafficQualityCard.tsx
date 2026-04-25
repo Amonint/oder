@@ -36,7 +36,7 @@ export default function TrafficQualityCard({ data, isLoading }: TrafficQualityCa
   if (isLoading) {
     return (
       <section className="space-y-3">
-        <h2 className="text-foreground text-lg font-semibold">Calidad de Tráfico</h2>
+        <h2 className="text-foreground text-lg font-semibold">Clics y coste (Ads)</h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           {[0,1,2].map((i) => <Skeleton key={i} className="h-28 w-full rounded-xl" />)}
         </div>
@@ -51,7 +51,11 @@ export default function TrafficQualityCard({ data, isLoading }: TrafficQualityCa
   return (
     <TooltipProvider delayDuration={300}>
       <section className="space-y-3">
-        <h2 className="text-foreground text-lg font-semibold">Calidad de Tráfico</h2>
+        <h2 className="text-foreground text-lg font-semibold">Clics y coste (Ads)</h2>
+        <p className="text-muted-foreground text-xs">
+          Señales desde Meta Ads Insights (clics salientes, CTR único). No incluye comportamiento en sitio
+          (Pixel / GA4).
+        </p>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <MetricTile
             label="Clics Salientes"

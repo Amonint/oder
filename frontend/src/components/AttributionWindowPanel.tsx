@@ -79,6 +79,14 @@ export default function AttributionWindowPanel({
           )}
         </div>
 
+        <Alert>
+          <AlertTitle>No sumar ventanas</AlertTitle>
+          <AlertDescription>
+            Cada ventana (1d clic, 7d clic, vista, etc.) es un modelo de atribución distinto. Compara en paralelo,
+            no sumes los totales entre ventanas.
+          </AlertDescription>
+        </Alert>
+
         {data?.note && (
           <p className="text-muted-foreground text-xs">{data.note}</p>
         )}

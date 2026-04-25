@@ -3,6 +3,7 @@ Clasificador inteligente para identificar competidores relevantes.
 Usa reglas + scoring basado en contenido y contexto del usuario.
 """
 
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -63,13 +64,18 @@ class CompetitorClassifier:
             "streaming", "netflix", "youtube", "video", "contenido",
             "juego", "game", "gaming", "casino", "apuesta", "bet",
             "tienda", "compra", "venta", "ecommerce", "shop", "store",
-            "deporte", "sports", "fitness", "gym",
+            "deporte", "sports",
         }
         
         # Agregar custom keywords negativas
         self.negative_keywords = self.default_negative_keywords.copy()
         if custom_negative_keywords:
             self.negative_keywords.update(kw.lower() for kw in custom_negative_keywords)
+        extra = (os.environ.get("COMPETITOR_NEGATIVE_EXTRA") or "").strip()
+        if extra:
+            self.negative_keywords.update(
+                part.strip().lower() for part in extra.split(",") if part.strip()
+            )
         
         # Palabras clave positivas (general)
         self.positive_indicators = {
