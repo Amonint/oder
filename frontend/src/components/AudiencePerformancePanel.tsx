@@ -1,5 +1,5 @@
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, Scatter, ScatterChart, XAxis, YAxis, ZAxis } from "recharts";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { AudiencePerformanceResponse } from "@/api/client";
 import {
   Card,
@@ -32,12 +32,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { DASHBOARD_COLORS, barColorAt, dashboardChartColor } from "@/lib/dashboardColors";
 
 const chartConfig = {
-  spend: { label: "Gasto", color: "hsl(var(--chart-1))" },
-  results: { label: "Resultados", color: "hsl(var(--chart-2))" },
-  cpa_like: { label: "CPA aprox", color: "hsl(var(--chart-3))" },
+  spend: { label: "Gasto", color: DASHBOARD_COLORS[0] },
+  results: { label: "Resultados", color: DASHBOARD_COLORS[1] },
+  cpa_like: { label: "CPA aprox", color: DASHBOARD_COLORS[2] },
 } satisfies ChartConfig;
+
+const REF_STROKE = dashboardChartColor(3);
+const REF_STROKE_OPACITY = 0.55;
 const AUDIENCE_CUT_MODE_STORAGE_KEY = "audience_performance_cut_mode";
 
 interface AudiencePerformancePanelProps {
@@ -85,15 +89,20 @@ export default function AudiencePerformancePanel({
   }
 
   const rows = data?.data ?? [];
-  const topChartRows = rows.slice(0, 10).map((row) => ({
-    audience: row.audience_name.length > 34 ? `${row.audience_name.slice(0, 34)}...` : row.audience_name,
-    results: row.results,
-    spend: row.spend,
-  }));
+  const topChartRows = rows.slice(0, 10).map((row) => {
+    const key = String(row.audience_id ?? row.audience_name);
+    return {
+      audience: row.audience_name.length > 34 ? `${row.audience_name.slice(0, 34)}...` : row.audience_name,
+      colorKey: key,
+      results: row.results,
+      spend: row.spend,
+    };
+  });
   const scatterRows = rows
     .filter((row) => row.cpa_like != null && row.spend > 0 && row.results > 0)
     .map((row) => ({
       audience: row.audience_name,
+      colorKey: String(row.audience_id ?? row.audience_name),
       spend: row.spend,
       cpa_like: row.cpa_like as number,
       results: row.results,
@@ -137,22 +146,20 @@ export default function AudiencePerformancePanel({
   const p75Cpa = percentile(cpaValues, 0.75);
   const p25Spend = percentile(spendValues, 0.25);
   const p75Spend = percentile(spendValues, 0.75);
-  const activeCuts = useMemo(() => {
-    if (cutMode === "p25_p75") {
-      return {
-        spendLow: p25Spend,
-        spendHigh: p75Spend,
-        cpaLow: p25Cpa,
-        cpaHigh: p75Cpa,
-      };
-    }
-    return {
-      spendLow: medianSpend,
-      spendHigh: medianSpend,
-      cpaLow: medianCpa,
-      cpaHigh: medianCpa,
-    };
-  }, [cutMode, medianSpend, medianCpa, p25Spend, p75Spend, p25Cpa, p75Cpa]);
+  const activeCuts =
+    cutMode === "p25_p75"
+      ? {
+          spendLow: p25Spend,
+          spendHigh: p75Spend,
+          cpaLow: p25Cpa,
+          cpaHigh: p75Cpa,
+        }
+      : {
+          spendLow: medianSpend,
+          spendHigh: medianSpend,
+          cpaLow: medianCpa,
+          cpaHigh: medianCpa,
+        };
 
   return (
     <div className="space-y-4">
@@ -165,6 +172,9 @@ export default function AudiencePerformancePanel({
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
+          <Badge variant="outline" className="text-xs text-muted-foreground font-normal">
+            Señal inferida para hipótesis; no equivale a causalidad exacta de Meta por audiencia.
+          </Badge>
           {rows.length === 0 ? (
             <p className="text-muted-foreground text-sm">
               Sin datos suficientes para construir ranking de audiencias con estos filtros.
@@ -176,7 +186,11 @@ export default function AudiencePerformancePanel({
                 <XAxis type="number" />
                 <YAxis type="category" dataKey="audience" width={180} tickLine={false} axisLine={false} />
                 <ChartTooltip content={<ChartTooltipContent />} />
-                <Bar dataKey="results" fill="var(--color-results)" radius={4} />
+                <Bar dataKey="results" radius={4} name="Resultados">
+                  {topChartRows.map((d, i) => (
+                    <Cell key={d.colorKey} fill={barColorAt(i, d.colorKey)} />
+                  ))}
+                </Bar>
               </BarChart>
             </ChartContainer>
           )}
@@ -254,7 +268,8 @@ export default function AudiencePerformancePanel({
                 {activeCuts.spendLow != null ? (
                   <ReferenceLine
                     x={activeCuts.spendLow}
-                    stroke="hsl(var(--muted-foreground))"
+                    stroke={REF_STROKE}
+                    strokeOpacity={REF_STROKE_OPACITY}
                     strokeDasharray="4 4"
                     ifOverflow="extendDomain"
                     label={{
@@ -264,22 +279,30 @@ export default function AudiencePerformancePanel({
                           : `Mediana gasto: $${activeCuts.spendLow.toFixed(1)}`,
                       position: "insideTopLeft",
                       fontSize: 11,
+                      fill: DASHBOARD_COLORS[2],
                     }}
                   />
                 ) : null}
                 {activeCuts.spendHigh != null && cutMode === "p25_p75" ? (
                   <ReferenceLine
                     x={activeCuts.spendHigh}
-                    stroke="hsl(var(--muted-foreground))"
+                    stroke={REF_STROKE}
+                    strokeOpacity={REF_STROKE_OPACITY}
                     strokeDasharray="4 4"
                     ifOverflow="extendDomain"
-                    label={{ value: `P75 gasto: $${activeCuts.spendHigh.toFixed(1)}`, position: "insideTopRight", fontSize: 11 }}
+                    label={{
+                      value: `P75 gasto: $${activeCuts.spendHigh.toFixed(1)}`,
+                      position: "insideTopRight",
+                      fontSize: 11,
+                      fill: DASHBOARD_COLORS[2],
+                    }}
                   />
                 ) : null}
                 {activeCuts.cpaLow != null ? (
                   <ReferenceLine
                     y={activeCuts.cpaLow}
-                    stroke="hsl(var(--muted-foreground))"
+                    stroke={REF_STROKE}
+                    strokeOpacity={REF_STROKE_OPACITY}
                     strokeDasharray="4 4"
                     ifOverflow="extendDomain"
                     label={{
@@ -289,47 +312,50 @@ export default function AudiencePerformancePanel({
                           : `Mediana CPA: $${activeCuts.cpaLow.toFixed(1)}`,
                       position: "insideBottomLeft",
                       fontSize: 11,
+                      fill: DASHBOARD_COLORS[2],
                     }}
                   />
                 ) : null}
                 {activeCuts.cpaHigh != null && cutMode === "p25_p75" ? (
                   <ReferenceLine
                     y={activeCuts.cpaHigh}
-                    stroke="hsl(var(--muted-foreground))"
+                    stroke={REF_STROKE}
+                    strokeOpacity={REF_STROKE_OPACITY}
                     strokeDasharray="4 4"
                     ifOverflow="extendDomain"
-                    label={{ value: `P75 CPA: $${activeCuts.cpaHigh.toFixed(1)}`, position: "insideTopLeft", fontSize: 11 }}
+                    label={{
+                      value: `P75 CPA: $${activeCuts.cpaHigh.toFixed(1)}`,
+                      position: "insideTopLeft",
+                      fontSize: 11,
+                      fill: DASHBOARD_COLORS[2],
+                    }}
                   />
                 ) : null}
-                <Scatter data={scatterRows}>
-                  {scatterRows.map((row) => {
-                    const winner =
-                      activeCuts.cpaLow != null &&
-                      activeCuts.spendLow != null &&
-                      row.cpa_like <= activeCuts.cpaLow &&
-                      row.spend <= activeCuts.spendLow;
-                    const risky =
-                      activeCuts.cpaHigh != null &&
-                      activeCuts.spendHigh != null &&
-                      row.cpa_like >= activeCuts.cpaHigh &&
-                      row.spend >= activeCuts.spendHigh;
-                    const fill = winner
-                      ? "hsl(142 70% 40%)"
-                      : risky
-                        ? "hsl(0 72% 52%)"
-                        : "var(--color-cpa_like)";
-                    return <Cell key={`${row.audience}-${row.spend}-${row.cpa_like}`} fill={fill} />;
-                  })}
+                <Scatter data={scatterRows} name="Audiencias">
+                  {scatterRows.map((row, i) => (
+                    <Cell
+                      key={`${row.colorKey}-${row.spend}-${row.cpa_like}`}
+                      fill={barColorAt(i, row.colorKey)}
+                    />
+                  ))}
                 </Scatter>
               </ScatterChart>
             </ChartContainer>
           )}
-          <div className="mt-3 flex flex-wrap gap-2 text-xs">
-            <Badge variant="secondary">
-              Verde: {cutMode === "p25_p75" ? "<= P25 en gasto y CPA" : "<= mediana en gasto y CPA"}
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-muted-foreground">Leyenda (dispersión):</span>
+            <Badge variant="secondary" className="inline-flex items-center gap-1.5 font-normal">
+              <span
+                className="inline-block h-2 w-2 shrink-0 rounded-full border border-foreground/20"
+                style={{ background: DASHBOARD_COLORS[0] }}
+                aria-hidden
+              />
+              Cada punto es una audiencia; el color se repite según la paleta (mismo criterio que el resto del
+              panel).
             </Badge>
-            <Badge variant="secondary">
-              Rojo: {cutMode === "p25_p75" ? ">= P75 en gasto y CPA" : ">= mediana en gasto y CPA"}
+            <Badge variant="secondary" className="max-w-2xl font-normal text-left leading-snug">
+              Cuadrante favorable (bajo gasto y bajo CPA, según corte) suele quedar cerca de abajo-izquierda. Zona
+              con más gasto y más CPA, arriba-derecha relativa a las líneas.
             </Badge>
           </div>
         </CardContent>
@@ -349,6 +375,7 @@ export default function AudiencePerformancePanel({
                   <TableHead className="text-right">Resultados</TableHead>
                   <TableHead className="text-right">Leads</TableHead>
                   <TableHead className="text-right">Conversaciones</TableHead>
+                  <TableHead className="text-right">1ras respuestas</TableHead>
                   <TableHead className="text-right">Gasto</TableHead>
                   <TableHead className="text-right">CPA aprox</TableHead>
                   <TableHead className="text-right">CTR</TableHead>
@@ -358,7 +385,7 @@ export default function AudiencePerformancePanel({
               <TableBody>
                 {rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center text-muted-foreground">
+                    <TableCell colSpan={10} className="text-center text-muted-foreground">
                       Sin datos.
                     </TableCell>
                   </TableRow>
@@ -371,6 +398,9 @@ export default function AudiencePerformancePanel({
                       <TableCell className="text-right tabular-nums text-sm">{row.leads_insights.toFixed(2)}</TableCell>
                       <TableCell className="text-right tabular-nums text-sm">
                         {row.conversations_started.toFixed(2)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-sm">
+                        {row.first_replies.toFixed(2)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-sm">${row.spend.toFixed(2)}</TableCell>
                       <TableCell className="text-right tabular-nums text-sm">

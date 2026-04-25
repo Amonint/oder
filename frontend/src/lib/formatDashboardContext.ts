@@ -27,6 +27,35 @@ export function attributionWindowLabelEs(code: string | null | undefined): strin
   return ATTRIBUTION_LABELS[trimmed] ?? trimmed;
 }
 
+/** `status` / `effective_status` de campañas, conjuntos o anuncios (Marketing API). */
+const META_OBJECT_STATUS_LABELS: Record<string, string> = {
+  ACTIVE: "Activo",
+  PAUSED: "Pausada",
+  DELETED: "Eliminada",
+  ARCHIVED: "Archivada",
+  PENDING_REVIEW: "En revisión",
+  DISAPPROVED: "Rechazada",
+  PREAPPROVED: "Preaprobada",
+  PENDING_BILLING_INFO: "Falta facturación",
+  CAMPAIGN_PAUSED: "Campaña pausada",
+  ADSET_PAUSED: "Conjunto pausado",
+  AD_PAUSED: "Anuncio pausado",
+  IN_PROCESS: "Procesando",
+  WITH_ISSUES: "Con incidencias",
+  PAUSED_INVENTORY: "Pausada (inventario)",
+  PAUSED_DAILY_BUDGET: "Pausada (presupuesto diario)",
+  PAUSED_BUDGET: "Pausada (presupuesto)",
+  PAUSED_MUSIC: "Pausada (música)",
+  PAUSED_FUNDING: "Pausada (fondos)",
+};
+
+/** Nombre de estado de Meta en español; si no conocemos el código, se devuelve el original. */
+export function metaObjectStatusLabelEs(status: string | null | undefined): string {
+  if (status == null || status === "") return "—";
+  const k = status.trim();
+  return META_OBJECT_STATUS_LABELS[k] ?? k;
+}
+
 export function dashboardPeriodSummary(
   datePreset: string,
   dateStart: string | null | undefined,

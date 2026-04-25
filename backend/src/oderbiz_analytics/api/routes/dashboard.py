@@ -27,6 +27,14 @@ SUMMARY_KEYS = (
     "cost_per_result",
 )
 
+OBJECTIVE_METRIC_TO_ACTION_TYPES = {
+    "messaging_conversation_started": [
+        "onsite_conversion.messaging_conversation_started_7d"
+    ],
+    "messaging_first_reply": ["messaging_first_reply"],
+    "lead": ["lead", "onsite_conversion.lead_grouped", "leadgen_other"],
+}
+
 
 def _to_float(value: object) -> float:
     if value is None:
@@ -58,14 +66,16 @@ def _build_summary_row(row: dict) -> dict[str, float]:
     return {k: _to_float(row.get(k)) for k in SUMMARY_KEYS}
 
 
-def _first_non_trivial_action_value(entries: list[dict[str, object]]) -> float:
-    trivial = {"post_engagement", "page_engagement", "photo_view", "video_view"}
+def _sum_actions_by_types(
+    entries: list[dict[str, object]], action_types: list[str]
+) -> float:
+    accepted = set(action_types)
+    total = 0.0
     for item in entries:
         action_type = str(item.get("action_type") or "")
-        if action_type in trivial:
-            continue
-        return _to_float(item.get("value"))
-    return 0.0
+        if action_type in accepted:
+            total += _to_float(item.get("value"))
+    return total
 
 
 def _sum_purchase_action_values(entries: list[dict[str, object]]) -> float:
@@ -86,6 +96,10 @@ async def get_account_dashboard(
     campaign_id: str | None = Query(
         None,
         description="Si se indica, el resumen es solo de esa campaña (Meta level=campaign).",
+    ),
+    objective_metric: str = Query(
+        "messaging_conversation_started",
+        description="Metrica objetivo homogenea para resultados/CPA derivado.",
     ),
     settings: Settings = Depends(get_settings),
     access_token: str = Depends(get_meta_access_token),
@@ -170,7 +184,18 @@ async def get_account_dashboard(
                 "date_stop": None,
                 "attribution_window": None,
             },
-            "derived": {"results": 0.0, "cpa": None, "roas": None},
+            "derived": {
+                "results": 0.0,
+                "cpa": None,
+                "roas": None,
+                "objective_metric": objective_metric.strip().lower(),
+                "objective_action_types": OBJECTIVE_METRIC_TO_ACTION_TYPES.get(
+                    objective_metric.strip().lower(),
+                    OBJECTIVE_METRIC_TO_ACTION_TYPES[
+                        "messaging_conversation_started"
+                    ],
+                ),
+            },
             "diagnostic_inputs": {"cpm": 0.0, "ctr": 0.0, "frequency": 0.0, "spend": 0.0},
             "actions": [],
             "action_values": [],
@@ -179,13 +204,18 @@ async def get_account_dashboard(
             "date_stop": None,
         }
 
+    objective_key = objective_metric.strip().lower()
+    if objective_key not in OBJECTIVE_METRIC_TO_ACTION_TYPES:
+        objective_key = "messaging_conversation_started"
+
     row = rows[0]
     actions = _action_entries(row.get("actions"))
     action_values = _action_entries(row.get("action_values"))
     cost_per_action_type = _action_entries(row.get("cost_per_action_type"))
     summary = _build_summary_row(row)
     spend = summary.get("spend", 0.0)
-    results = _first_non_trivial_action_value(actions)
+    objective_action_types = OBJECTIVE_METRIC_TO_ACTION_TYPES[objective_key]
+    results = _sum_actions_by_types(actions, objective_action_types)
     # Meta suele mandar 0 en `cost_per_result` en agregados largos / mezcla de objetivos; el CPA útil cae al fallback.
     cost_per_result = summary.get("cost_per_result", 0.0)
     cpa = cost_per_result if cost_per_result > 0 else (spend / results if results > 0 else None)
@@ -211,6 +241,8 @@ async def get_account_dashboard(
             "results": results,
             "cpa": round(cpa, 4) if cpa is not None else None,
             "roas": round(roas, 4) if roas is not None else None,
+            "objective_metric": objective_key,
+            "objective_action_types": objective_action_types,
         },
         "diagnostic_inputs": {
             "cpm": summary.get("cpm", 0.0),

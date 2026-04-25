@@ -79,6 +79,41 @@ def _sum_actions_by_types(actions: object, action_types: list[str]) -> float:
     return total
 
 
+async def _fetch_post_permalinks(
+    base: str, access_token: str, story_ids: set[str]
+) -> dict[str, str]:
+    """Resuelve `permalink_url` de posts para `effective_object_story_id`."""
+    if not story_ids:
+        return {}
+    out: dict[str, str] = {}
+    ids = sorted(story_ids)
+    chunk_size = 50
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for i in range(0, len(ids), chunk_size):
+            chunk = ids[i : i + chunk_size]
+            r = await client.get(
+                f"{base}/",
+                params={
+                    "ids": ",".join(chunk),
+                    "fields": "permalink_url",
+                    "access_token": access_token,
+                },
+            )
+            if r.is_error:
+                continue
+            body = r.json() if r.content else {}
+            if not isinstance(body, dict):
+                continue
+            for sid in chunk:
+                node = body.get(sid)
+                if not isinstance(node, dict):
+                    continue
+                permalink = str(node.get("permalink_url") or "").strip()
+                if permalink:
+                    out[sid] = permalink
+    return out
+
+
 @router.get("/{ad_account_id}/ads/performance")
 async def get_ads_performance(
     ad_account_id: str,
@@ -198,6 +233,24 @@ async def get_ads_performance(
         # No bloqueamos ranking si este enriquecimiento opcional falla.
         ad_meta_by_id = {}
 
+    story_ids: set[str] = set()
+    for item in ad_meta_by_id.values():
+        if not isinstance(item, dict):
+            continue
+        creative = item.get("creative")
+        if not isinstance(creative, dict):
+            continue
+        sid = str(creative.get("effective_object_story_id") or "").strip()
+        if sid:
+            story_ids.add(sid)
+    try:
+        story_permalink_by_id = await _fetch_post_permalinks(
+            base, access_token, story_ids
+        )
+    except Exception:
+        # No bloqueamos el endpoint si falla el lookup opcional de permalinks.
+        story_permalink_by_id = {}
+
     messaging_actions_summary = summarize_messaging_actions(rows)
 
     aggregated_by_ad: list[dict] | None = None
@@ -227,6 +280,11 @@ async def get_ads_performance(
             if isinstance(creative, dict)
             else None
         )
+        story_permalink = (
+            story_permalink_by_id.get(str(story_id))
+            if story_id is not None
+            else None
+        )
 
         spend = _to_float(row.get("spend"))
         results = _sum_actions_by_types(row.get("actions"), objective_action_types)
@@ -250,6 +308,7 @@ async def get_ads_performance(
             "ad_name": ad_name,
             "creative_name": creative_name,
             "effective_object_story_id": story_id,
+            "effective_object_story_permalink": story_permalink,
             "ad_label": format_ad_label(
                 ad_id=ad_id,
                 ad_name=ad_name,

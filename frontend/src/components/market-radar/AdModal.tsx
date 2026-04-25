@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import type { CompetitorAdItem } from "@/api/client";
+import { AdReferenceLink } from "@/components/AdReferenceLink";
 
 interface Props {
   ad: CompetitorAdItem;
@@ -31,6 +32,7 @@ export function AdModal({ ad, isOpen, onClose }: Props) {
         </DialogHeader>
 
         <div className="space-y-4">
+          <AdReferenceLink href={ad.ad_snapshot_url ?? null} />
           {/* Visual */}
           {ad.ad_snapshot_url && (
             <div>

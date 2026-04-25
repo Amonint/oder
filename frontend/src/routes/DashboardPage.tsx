@@ -67,6 +67,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { X } from "lucide-react";
+import { AdReferenceLink } from "@/components/AdReferenceLink";
 import {
   Table,
   TableBody,
@@ -79,7 +80,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DASHBOARD_KPI_LABELS,
   DASHBOARD_KPI_TOOLTIPS,
-  RANKING_METRIC_LABELS,
   labelForMetaActionType,
   shortActionTypeLabel,
 } from "@/lib/metaInsightsLabels";
@@ -113,8 +113,9 @@ import {
   META_ATTRIBUTION_CHANGE_ISO,
   deltaPercent,
 } from "@/lib/periodCompare";
-import { attributionWindowLabelEs } from "@/lib/formatDashboardContext";
+import { attributionWindowLabelEs, metaObjectStatusLabelEs } from "@/lib/formatDashboardContext";
 import { buildLlmContextReport } from "@/lib/llmContextReport";
+import { adsManagerUrlFromAdset, adsManagerUrlFromCampaign, resolveAdReference } from "@/lib/adReference";
 
 const ALL = "__all__";
 
@@ -130,6 +131,17 @@ type RankingMetric =
   | "results"
   | "cpa"
   | "roas";
+
+/** Leyendas de gráficos del ranking: lenguaje claro para el tooltip / leyenda Recharts */
+const RANKING_CHART_LEGEND_ES: Record<RankingMetric, string> = {
+  impressions: "Veces que se mostró el anuncio",
+  clicks: "Clics en el anuncio",
+  spend: "Dinero invertido en el anuncio",
+  ctr: "Porcentaje de personas que hicieron clic",
+  results: "Resultados conseguidos (objetivo del anuncio)",
+  cpa: "Coste por cada resultado",
+  roas: "Ingresos por cada dólar invertido",
+};
 
 const GEO_METRIC_LABEL_ES: Record<GeoMapMetric, string> = {
   impressions: "impresiones",
@@ -198,14 +210,22 @@ function inferredSourceHint(source: string | null | undefined): string {
 interface ActionDistributionSectionProps {
   adRows: AdPerformanceRow[];
   availableTypes: string[];
+  adReferenceUrlById: Map<string, string>;
+  adAccountId: string;
 }
 
-function ActionDistributionSection({ adRows, availableTypes }: ActionDistributionSectionProps) {
+function ActionDistributionSection({
+  adRows,
+  availableTypes,
+  adReferenceUrlById,
+  adAccountId,
+}: ActionDistributionSectionProps) {
   const [selectedActionType, setSelectedActionType] = useState<string>(availableTypes[0] ?? "");
 
   type AdActionRow = {
     ad_id: string;
     ad_name: string;
+    campaign_id: string;
     campaign_name: string;
     ad_inferred: boolean;
     ad_source: string | undefined;
@@ -228,6 +248,7 @@ function ActionDistributionSection({ adRows, availableTypes }: ActionDistributio
       return {
         ad_id: row.ad_id,
         ad_name: withEntityFallback(row.ad_name ?? null, String(row.ad_id ?? ""), "Anuncio"),
+        campaign_id: String(row.campaign_id ?? ""),
         campaign_name: withEntityFallback(
           row.campaign_name ?? null,
           String(row.campaign_id ?? ""),
@@ -246,11 +267,18 @@ function ActionDistributionSection({ adRows, availableTypes }: ActionDistributio
     .slice(0, 10);
 
   const byCampaign = Object.values(
-    byAd.reduce<Record<string, { campaign_name: string; volume: number; spend: number; inferred: boolean }>>((acc, row) => {
-      if (!acc[row.campaign_name]) {
-        acc[row.campaign_name] = { campaign_name: row.campaign_name, volume: 0, spend: 0, inferred: false };
+    byAd.reduce<Record<string, { campaign_id: string; campaign_name: string; volume: number; spend: number; inferred: boolean }>>((acc, row) => {
+      const key = row.campaign_id ? `id:${row.campaign_id}` : `name:${row.campaign_name}`;
+      if (!acc[key]) {
+        acc[key] = {
+          campaign_id: row.campaign_id,
+          campaign_name: row.campaign_name,
+          volume: 0,
+          spend: 0,
+          inferred: false,
+        };
       }
-      const entry = acc[row.campaign_name];
+      const entry = acc[key];
       entry.volume += row.volume;
       entry.spend += row.spend;
       entry.inferred = entry.inferred || row.campaign_inferred;
@@ -260,11 +288,19 @@ function ActionDistributionSection({ adRows, availableTypes }: ActionDistributio
 
   return (
     <div className="space-y-4 pt-2">
+      <div className="space-y-1.5">
+        <h3 className="text-foreground font-semibold">¿Dónde ocurre cada tipo de resultado?</h3>
+        <p className="text-muted-foreground max-w-3xl text-sm leading-relaxed">
+          Elige abajo qué quieres medir (por ejemplo conversaciones, clics o leads). Las tablas muestran qué anuncios
+          y campañas concentran más de ese resultado en el periodo que tienes seleccionado, y un coste orientativo por
+          cada vez que ocurrió.
+        </p>
+      </div>
       <div className="flex flex-wrap items-center gap-3">
-        <h3 className="text-foreground font-semibold">Distribución de acciones</h3>
+        <span className="text-muted-foreground text-xs">Medir:</span>
         <Select value={selectedActionType} onValueChange={setSelectedActionType}>
           <SelectTrigger className="w-[260px]">
-            <SelectValue placeholder="Tipo de acción" />
+            <SelectValue placeholder="Qué medir" />
           </SelectTrigger>
           <SelectContent>
             {availableTypes.map((t) => (
@@ -280,9 +316,11 @@ function ActionDistributionSection({ adRows, availableTypes }: ActionDistributio
         {/* Por anuncio */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Por anuncio (top 10)</CardTitle>
+            <CardTitle className="text-sm">Los 10 anuncios con más de ese resultado</CardTitle>
             <CardDescription className="text-xs">
-              Columna derecha: gasto del anuncio en el periodo ÷ volumen del tipo de acción seleccionado.
+              La última columna es una media simple: lo que gastó ese anuncio en el periodo entre el número de veces que
+              se registró el resultado elegido. Sirve para comparar anuncios entre sí, no como único “coste oficial” de
+              la cuenta.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
@@ -294,14 +332,15 @@ function ActionDistributionSection({ adRows, availableTypes }: ActionDistributio
                   <TableHeader>
                     <TableRow>
                       <TableHead>Anuncio</TableHead>
-                      <TableHead className="text-right">Volumen</TableHead>
-                      <TableHead className="text-right">Gasto ÷ volumen</TableHead>
+                      <TableHead className="text-right">Veces que ocurrió</TableHead>
+                      <TableHead className="text-right">Inversión por cada vez</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {byAd.map((row) => (
                       <TableRow key={row.ad_id}>
                         <TableCell>
+                          <AdReferenceLink href={adReferenceUrlById.get(String(row.ad_id)) ?? null} compact />
                           <p className="truncate text-sm font-medium max-w-[220px] inline-flex items-center gap-2">
                             <span className="truncate">{row.ad_name}</span>
                             {row.ad_inferred ? (
@@ -335,10 +374,10 @@ function ActionDistributionSection({ adRows, availableTypes }: ActionDistributio
         {/* Por campaña */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Por campaña</CardTitle>
+            <CardTitle className="text-sm">Agrupado por campaña</CardTitle>
             <CardDescription className="text-xs">
-              Coste efectivo = gasto de los anuncios del top ÷ volumen del tipo de acción elegido (no es el CPA
-              agregado del resumen).
+              Misma idea que el cuadro de anuncios, pero sumando por campaña: cuántas veces ocurrió el resultado y una
+              media de cuánto costó cada vez. Útil para ver en qué campañas se concentra el esfuerzo.
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
@@ -350,14 +389,15 @@ function ActionDistributionSection({ adRows, availableTypes }: ActionDistributio
                   <TableHeader>
                     <TableRow>
                       <TableHead>Campaña</TableHead>
-                      <TableHead className="text-right">Volumen</TableHead>
-                      <TableHead className="text-right">Gasto ÷ volumen</TableHead>
+                      <TableHead className="text-right">Veces que ocurrió</TableHead>
+                      <TableHead className="text-right">Inversión por cada vez</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {byCampaign.map((row) => (
-                      <TableRow key={row.campaign_name}>
+                      <TableRow key={row.campaign_id || row.campaign_name}>
                         <TableCell className="text-sm font-medium max-w-[240px]">
+                          <AdReferenceLink href={adsManagerUrlFromCampaign(row.campaign_id, adAccountId)} compact />
                           <span className="inline-flex items-center gap-2 max-w-full">
                             <span className="truncate">{row.campaign_name}</span>
                             {row.inferred ? (
@@ -493,6 +533,21 @@ export default function DashboardPage() {
     },
     enabled: hasToken && Boolean(id),
   });
+
+  const adReferenceUrlById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const ad of adsListQuery.data?.data ?? []) {
+      const href = resolveAdReference({
+        adId: ad.id,
+        adAccountId: id,
+        creative: ad.creative,
+        storyId: ad.creative?.effective_object_story_id ?? null,
+        storyPermalink: ad.creative?.effective_object_story_permalink ?? null,
+      }).url;
+      if (href) map.set(String(ad.id), href);
+    }
+    return map;
+  }, [adsListQuery.data?.data, id]);
 
   const rankingQuery = useQuery({
     queryKey: [
@@ -863,21 +918,21 @@ export default function DashboardPage() {
 
   const chartConfigCategory = {
     value: {
-      label: "Eventos",
+      label: "Total en el periodo",
       color: dashboardChartColor(0),
     },
   } satisfies ChartConfig;
 
   const chartConfigTop = {
     value: {
-      label: "Cantidad",
+      label: "Veces registradas",
       color: dashboardChartColor(1),
     },
   } satisfies ChartConfig;
 
   const chartConfigCost = {
     value: {
-      label: "Coste medio",
+      label: "Inversión media por resultado",
       color: dashboardChartColor(2),
     },
   } satisfies ChartConfig;
@@ -947,7 +1002,7 @@ export default function DashboardPage() {
 
   const rankingChartConfig = {
     value: {
-      label: RANKING_METRIC_LABELS[rankingMetric] ?? rankingMetric,
+      label: RANKING_CHART_LEGEND_ES[rankingMetric],
       color: dashboardChartColor(3),
     },
   } satisfies ChartConfig;
@@ -1091,11 +1146,10 @@ export default function DashboardPage() {
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">Explorar por estructura</CardTitle>
           <CardDescription>
-            Primero elige cuenta (ya estás en{" "}
-            <span className="font-medium text-foreground">{accountLabel}</span>
-            ). La <strong>campaña</strong> filtra el <strong>resumen</strong> (KPIs
-            y gráficos de acciones), el ranking, plataformas y mensajería; conjunto
-            y anuncio afinan más.
+            Ya estás viendo la cuenta{" "}
+            <span className="font-medium text-foreground">{accountLabel}</span>. Si eliges una{" "}
+            <strong>campaña</strong>, todos los números y gráficos del resumen, el ranking y la mensajería se limitan a
+            esa campaña. Conjunto y anuncio sirven para acercarte aún más a un creativo concreto.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -1307,10 +1361,10 @@ export default function DashboardPage() {
       Object.keys(rankingQuery.data.messaging_actions_summary).length > 0 ? (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-lg">Mensajería / WhatsApp (acciones)</CardTitle>
+            <CardTitle className="text-lg">Actividad de mensajes y WhatsApp</CardTitle>
             <CardDescription>
-              Suma de tipos de acción relacionados con conversaciones en el periodo
-              del ranking (Insights).
+              Resumen rápido de conversaciones e interacciones por mensaje en el mismo periodo y filtros que estás
+              usando en el ranking (para ver si la pauta está generando diálogos).
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -1539,8 +1593,8 @@ export default function DashboardPage() {
                       <Card key="costo_conv">
                         <CardHeader className="pb-2">
                           <CardDescription className="flex items-center gap-1">
-                            Costo / conversación respondida
-                            <InfoTooltip text="KPI derivado. Fórmula: Gasto ÷ primeras respuestas (messaging_first_reply). Fuente: Meta Insights (derivado). Puede no estar disponible en todas las cuentas." />
+                            Costo por conversación con respuesta
+                            <InfoTooltip text="Cuánto te costó de media cada chat en el que alguien respondió por primera vez. Se calcula dividiendo el gasto del periodo entre esas respuestas. Solo aparece si hay datos de mensajería." />
                           </CardDescription>
                           <CardTitle className="text-2xl tabular-nums">${cpc.toFixed(2)}</CardTitle>
                         </CardHeader>
@@ -1553,15 +1607,16 @@ export default function DashboardPage() {
               <div className="space-y-3">
                 <Card>
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-base">Gasto diario (pauta asociada a la cuenta)</CardTitle>
+                    <CardTitle className="text-base">Ritmo de inversión día a día</CardTitle>
                     <CardDescription>
-                      Serie diaria desde Meta para el mismo periodo y filtro de campaña. Útil para ver ritmo de inversión.
+                      Cada punto es cuánto se gastó en un día dentro del periodo que elegiste (y la campaña filtrada, si
+                      aplica). Sirve para ver si la inversión fue estable o hubo picos.
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
                     <SpendSparkline
                       data={dailyTimePoints}
-                      legend="Gasto diario asociado a la cuenta"
+                      legend="Gasto de ese día (misma cuenta y filtros)"
                     />
                   </CardContent>
                 </Card>
@@ -1629,17 +1684,25 @@ export default function DashboardPage() {
 
                 const costs = [
                   {
-                    label: "CPA (resultado principal)",
+                    label: "Coste por resultado principal",
                     value: cpaPrincipal,
-                    tip: "Mismo criterio que el backend y la comparación de periodos: cost_per_result de Meta si es >0; si no, gasto ÷ conversaciones iniciadas (onsite_conversion.messaging_conversation_started_7d).",
+                    tip: "El coste que mejor resume tu objetivo en este resumen: lo que indica Meta como resultado principal, o si no hay dato claro, gasto entre conversaciones iniciadas por mensaje.",
                   },
                   {
-                    label: "Costo / acción (primer tipo Meta)",
+                    label: "Referencia: un solo tipo de resultado",
                     value: costPerResult,
-                    tip: "Primer cost_per_action_type numérico en la respuesta (excl. interacciones triviales). Suele referirse a un solo action_type; puede diferir mucho del CPA de cuenta agregado.",
+                    tip: "Meta a veces devuelve varios costes distintos; aquí mostramos el primero con sentido (ignorando métricas muy genéricas como solo “me gusta”). Puede no coincidir con el coste por resultado principal si tienes varios objetivos mezclados.",
                   },
-                  { label: "Costo / conv. iniciada", value: costPerConvStarted, tip: "Gasto ÷ conversaciones iniciadas (onsite_conversion.messaging_conversation_started_7d). Derivado." },
-                  { label: "Costo / conv. respondida", value: costPerReplied, tip: "Gasto ÷ primeras respuestas (messaging_first_reply). Derivado. Puede no estar disponible en todas las cuentas." },
+                  {
+                    label: "Coste por chat iniciado",
+                    value: costPerConvStarted,
+                    tip: "Gasto del periodo dividido entre las veces que alguien abrió una conversación contigo desde el anuncio.",
+                  },
+                  {
+                    label: "Coste por chat con primera respuesta",
+                    value: costPerReplied,
+                    tip: "Gasto del periodo dividido entre conversaciones donde hubo al menos una respuesta. Puede no existir en cuentas sin datos de mensajería.",
+                  },
                 ];
 
                 if (costs.every((c) => c.value === null)) return null;
@@ -1647,8 +1710,11 @@ export default function DashboardPage() {
                 return (
                   <Card>
                       <CardHeader className="pb-2">
-                        <CardTitle className="text-base">Costos de adquisición</CardTitle>
-                        <CardDescription>Comparativa de costos según etapa del embudo publicitario</CardDescription>
+                        <CardTitle className="text-base">Comparar costes según la etapa del contacto</CardTitle>
+                        <CardDescription>
+                          Cuatro maneras de mirar “cuánto me costó conseguir algo”: la que resume tu objetivo, una
+                          referencia técnica de un solo tipo de resultado, y dos focos en conversaciones por mensaje.
+                        </CardDescription>
                       </CardHeader>
                       <CardContent>
                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -1688,10 +1754,11 @@ export default function DashboardPage() {
               <div className="grid gap-6 lg:grid-cols-2">
                 <Card>
                   <CardHeader>
-                    <CardTitle>Acciones agrupadas por categoría</CardTitle>
+                    <CardTitle>¿Qué tipo de resultados estás generando?</CardTitle>
                     <CardDescription>
-                      Suma de eventos (Meta) agrupados: mensajería, tráfico,
-                      interacción, conversiones y otras.
+                      Barras que suman todo lo que pasó en el periodo (misma franja de fechas de arriba), agrupado en
+                      bloques fáciles de leer: mensajes, visitas y clics, interacciones con la publicación, compras u
+                      otras conversiones, y el resto.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="pl-0">
@@ -1735,9 +1802,11 @@ export default function DashboardPage() {
 
                 <Card>
                   <CardHeader>
-                    <CardTitle>Tipos de acción con más volumen</CardTitle>
+                    <CardTitle>Los ocho resultados más frecuentes</CardTitle>
                     <CardDescription>
-                      Top 8 tipos individuales por cantidad de eventos.
+                      Los tipos de resultado que más veces se registraron en el periodo. Cada barra es “cuántas veces
+                      ocurrió”; los nombres en el eje son los que envía la plataforma de anuncios, abreviados para que
+                      quepan.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="pl-0">
@@ -1779,10 +1848,11 @@ export default function DashboardPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Coste medio por tipo de acción (mayor primero)</CardTitle>
+                  <CardTitle>¿Qué te cuesta de media cada tipo de resultado?</CardTitle>
                   <CardDescription>
-                    Valores que devuelve Meta en el periodo (moneda de la cuenta). Solo
-                    visualización; antes estaba en tabla.
+                    Para cada tipo de resultado se muestra cuánto invertiste de media por cada vez que ocurrió, en el
+                    periodo de fechas de la franja gris de arriba (moneda de tu cuenta). Las barras más altas son los
+                    resultados más caros de conseguir en ese tramo de tiempo.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="pl-0">
@@ -1840,7 +1910,14 @@ export default function DashboardPage() {
 
                 if (availableTypes.length === 0) return null;
 
-                return <ActionDistributionSection adRows={adRows} availableTypes={availableTypes} />;
+                return (
+                  <ActionDistributionSection
+                    adRows={adRows}
+                    availableTypes={availableTypes}
+                    adReferenceUrlById={adReferenceUrlById}
+                    adAccountId={id}
+                  />
+                );
               })()}
             </>
           ) : null}
@@ -1928,7 +2005,8 @@ export default function DashboardPage() {
                 <CardHeader>
                   <CardTitle>Ranking de anuncios</CardTitle>
                   <CardDescription>
-                    Top anuncios por rendimiento en el periodo seleccionado.
+                    Ordena los anuncios por la métrica que elijas (impresiones, clics, gasto, resultados, coste por
+                    resultado o retorno). Misma ventana de fechas que el resto del panel.
                     {selectedAdId ? (
                       <span className="text-primary ml-2 inline-flex items-center gap-2 font-medium">
                         <span>Anuncio seleccionado: {selectedAdLabel}</span>
@@ -2002,6 +2080,18 @@ export default function DashboardPage() {
                               }}
                             >
                               <TableCell className="font-medium">
+                                <AdReferenceLink
+                                  href={
+                                    adReferenceUrlById.get(String(row.ad_id ?? "")) ??
+                                    resolveAdReference({
+                                      adId: String(row.ad_id ?? ""),
+                                      adAccountId: id,
+                                      creative: null,
+                                      storyId: row.effective_object_story_id ?? null,
+                                      storyPermalink: row.effective_object_story_permalink ?? null,
+                                    }).url
+                                  }
+                                />
                                 {withEntityFallback(row.ad_label, String(row.ad_id ?? ""), "Anuncio")}
                                 {row.ad_label_source && row.ad_label_source !== "meta_ad_name" ? (
                                   <Badge
@@ -2053,13 +2143,16 @@ export default function DashboardPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Distribución por anuncio</CardTitle>
+                  <CardTitle>Gráfico: los 10 anuncios destacados</CardTitle>
                   <CardDescription>
-                    {RANKING_METRIC_LABELS[rankingMetric] ?? rankingMetric} — top 10.
+                    Mide: <strong>{RANKING_CHART_LEGEND_ES[rankingMetric]}</strong>. Muestra los diez anuncios con
+                    mejor o peor valor según la métrica (en CPA suele ordenarse de mayor a menor coste para ver
+                    rápidamente los más caros).
                     {rankingMetric === "cpa" || rankingMetric === "roas" ? (
                       <span className="text-muted-foreground">
                         {" "}
-                        Barras horizontales; solo anuncios con gasto ≥ {minSpendRankingUsd} USD.
+                        Solo entran anuncios con al menos {minSpendRankingUsd} USD de gasto en el periodo, para no
+                        engañar con promedios de muy pocos datos.
                       </span>
                     ) : null}
                   </CardDescription>
@@ -2159,7 +2252,8 @@ export default function DashboardPage() {
             <CardHeader>
               <CardTitle>Campañas</CardTitle>
               <CardDescription>
-                Objetivo, presupuestos y fechas desde Graph API (estructura A).
+                Objetivo, presupuestos y fechas según Meta. «Activo» solo indica que la campaña no está en pausa; no
+                garantiza que esté gastando hoy (puede haber conjuntos pausados, presupuesto agotado u otras limitaciones).
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -2188,10 +2282,13 @@ export default function DashboardPage() {
                         (campaignsQuery.data?.data ?? []).map((c) => (
                           <TableRow key={c.id}>
                             <TableCell className="font-medium max-w-[200px] truncate">
+                              <AdReferenceLink href={adsManagerUrlFromCampaign(c.id, id)} compact />
                               {c.name}
                             </TableCell>
                             <TableCell className="text-xs">{c.objective ?? "—"}</TableCell>
-                            <TableCell className="text-xs">{c.effective_status ?? c.status ?? "—"}</TableCell>
+                            <TableCell className="text-xs">
+                              {metaObjectStatusLabelEs(c.effective_status ?? c.status)}
+                            </TableCell>
                             <TableCell className="text-right text-xs tabular-nums">
                               {c.daily_budget ?? c.lifetime_budget ?? "—"}
                             </TableCell>
@@ -2227,6 +2324,7 @@ export default function DashboardPage() {
                 <div className="space-y-4">
                   {(adsetsQuery.data?.data ?? []).map((s) => (
                     <div key={s.id} className="rounded-lg border p-3">
+                      <AdReferenceLink href={adsManagerUrlFromAdset(s.id, id)} compact />
                       <div className="flex flex-wrap items-baseline justify-between gap-2">
                         <p className="font-medium">{s.name}</p>
                         <Badge variant="outline" className="text-xs">
@@ -2265,9 +2363,21 @@ export default function DashboardPage() {
                 <div className="space-y-4">
                   {(adsListQuery.data?.data ?? []).map((ad) => (
                     <div key={ad.id} className="rounded-lg border p-3">
+                      <AdReferenceLink
+                        href={
+                          adReferenceUrlById.get(String(ad.id)) ??
+                          resolveAdReference({
+                            adId: ad.id,
+                            adAccountId: id,
+                            creative: ad.creative,
+                            storyId: ad.creative?.effective_object_story_id ?? null,
+                            storyPermalink: ad.creative?.effective_object_story_permalink ?? null,
+                          }).url
+                        }
+                      />
                       <p className="font-medium">{ad.name}</p>
                       <p className="text-muted-foreground text-xs">
-                        {ad.effective_status ?? ad.status ?? "—"} · CTA:{" "}
+                        {metaObjectStatusLabelEs(ad.effective_status ?? ad.status)} · CTA:{" "}
                         {ad.creative?.call_to_action_type ?? "—"}
                       </p>
                       {ad.creative?.title ? (
@@ -2297,10 +2407,12 @@ export default function DashboardPage() {
             isLoading={fatigueQuery.isLoading}
             isError={fatigueQuery.isError}
             errorMessage={fatigueQuery.error instanceof Error ? fatigueQuery.error.message : undefined}
+            adReferenceUrlById={adReferenceUrlById}
           />
           <CreativeSaturationScatter
             data={fatigueQuery.data?.data}
             isLoading={fatigueQuery.isLoading}
+            adReferenceUrlById={adReferenceUrlById}
           />
         </TabsContent>
 
@@ -2547,6 +2659,11 @@ export default function DashboardPage() {
                       data={geoQuery.data.data}
                       metadata={geoQuery.data.metadata}
                       metric={geoMetric}
+                      adReferenceUrl={
+                        geoQuery.data.metadata?.scope === "ad" && geoQuery.data.metadata?.ad_id
+                          ? (adReferenceUrlById.get(String(geoQuery.data.metadata.ad_id)) ?? null)
+                          : null
+                      }
                       extraCaption={
                         geoMetric === "cpa"
                           ? `CPA por región alineado con el mismo criterio de resultados que el resumen (referencia: ${attributionWindowLabelEs(data?.context?.attribution_window) ?? "ventana predeterminada Meta"}).`
@@ -2703,6 +2820,7 @@ export default function DashboardPage() {
         <TabsContent value="comercial" className="space-y-6 pt-4">
           <h3 className="text-foreground text-lg font-semibold">Comercial (Mensajería)</h3>
           <LeadsPanel
+            accountId={id}
             data={leadsQuery.data}
             previousData={leadsPrevQuery.data}
             isLoading={leadsQuery.isLoading}
@@ -2753,7 +2871,7 @@ export default function DashboardPage() {
                     spend: Number(row.spend ?? 0),
                   };
                 }).sort((a, b) => b.conversations_started - a.conversations_started);
-                return <FunnelLevelTable rows={rows} level="ad" />;
+                return <FunnelLevelTable rows={rows} level="ad" adReferenceUrlById={adReferenceUrlById} />;
               }
 
               const campaignMap: Record<string, FunnelLevelRow> = {};

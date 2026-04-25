@@ -2,6 +2,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { CompetitorAdItem } from "@/api/client";
+import { AdReferenceLink } from "@/components/AdReferenceLink";
 
 interface Props {
   data: CompetitorAdItem[];
@@ -76,16 +77,9 @@ export default function CreativeLibrary({ data }: Props) {
                       {p}
                     </Badge>
                   ))}
-                  {ad.ad_snapshot_url && (
-                    <a
-                      href={ad.ad_snapshot_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-primary underline-offset-2 hover:underline ml-auto"
-                    >
-                      Ver anuncio →
-                    </a>
-                  )}
+                  <span className="ml-auto">
+                    <AdReferenceLink href={ad.ad_snapshot_url ?? null} compact />
+                  </span>
                 </div>
               </div>
             );

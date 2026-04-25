@@ -39,6 +39,41 @@ async def _fetch_all_pages(base: str, path: str, params: dict) -> list[dict]:
     return items
 
 
+async def _fetch_post_permalinks(
+    base: str, access_token: str, story_ids: set[str]
+) -> dict[str, str]:
+    """Resuelve `permalink_url` oficial para IDs de post tipo `<PAGE_ID>_<POST_ID>`."""
+    if not story_ids:
+        return {}
+    out: dict[str, str] = {}
+    ids = sorted(story_ids)
+    chunk_size = 50
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for i in range(0, len(ids), chunk_size):
+            chunk = ids[i : i + chunk_size]
+            r = await client.get(
+                f"{base}/",
+                params={
+                    "ids": ",".join(chunk),
+                    "fields": "permalink_url",
+                    "access_token": access_token,
+                },
+            )
+            if r.is_error:
+                continue
+            body = r.json() if r.content else {}
+            if not isinstance(body, dict):
+                continue
+            for sid in chunk:
+                node = body.get(sid)
+                if not isinstance(node, dict):
+                    continue
+                permalink = str(node.get("permalink_url") or "").strip()
+                if permalink:
+                    out[sid] = permalink
+    return out
+
+
 @router.get("/{account_id}/campaigns")
 async def list_campaigns(
     account_id: str,
@@ -120,6 +155,17 @@ async def list_ads(
         raise HTTPException(status_code=502, detail="Error al obtener anuncios de Meta.") from None
     except httpx.RequestError:
         raise HTTPException(status_code=502, detail="No se pudo contactar a la API de Meta.") from None
+    story_ids: set[str] = set()
+    for row in data:
+        creative = row.get("creative") if isinstance(row, dict) else {}
+        sid = (
+            str(creative.get("effective_object_story_id") or "").strip()
+            if isinstance(creative, dict)
+            else ""
+        )
+        if sid:
+            story_ids.add(sid)
+    post_permalink_by_story_id = await _fetch_post_permalinks(base, access_token, story_ids)
     for row in data:
         creative = row.get("creative") if isinstance(row, dict) else {}
         creative_name = creative.get("name") if isinstance(creative, dict) else None
@@ -140,4 +186,8 @@ async def list_ads(
             creative_name=creative_name,
             story_id=story_id,
         )
+        if isinstance(creative, dict) and story_id:
+            creative["effective_object_story_permalink"] = post_permalink_by_story_id.get(
+                str(story_id)
+            )
     return {"data": data}

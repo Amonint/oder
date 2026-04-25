@@ -3,16 +3,19 @@ import DateRangePickerModal from "@/components/DateRangePickerModal";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
+  fetchAdAccounts,
   fetchCampaigns,
+  fetchAdsList,
+  fetchPages,
   fetchPageGeo,
   fetchPageDemographics,
   fetchPageInsights,
   fetchPageConversionTimeseries,
+  fetchPageStability,
   fetchPageTrafficQuality,
   fetchPageAdDiagnostics,
   fetchPageFunnel,
   fetchPageTimeseries,
-  fetchPageStability,
   getMetaAccessToken,
   type GeoInsightRow,
   type GeoMetadata,
@@ -22,6 +25,7 @@ import { useCompetitorResolve } from "@/hooks/useCompetitorResolve";
 import type { CompetitorResolvedSuggestion } from "@/api/client";
 import RetentionModule from "@/components/RetentionModule";
 import TrafficQualityCard from "@/components/TrafficQualityCard";
+import PerformanceControlChartCard from "@/components/PerformanceControlChartCard";
 import AdDiagnosticsTable from "@/components/AdDiagnosticsTable";
 import ConversionFunnelCard from "@/components/ConversionFunnelCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -48,7 +52,6 @@ import GeoMap from "@/components/GeoMap";
 import ChoroplethMap from "@/components/ChoroplethMap";
 import DemographicsPanel from "@/components/DemographicsPanel";
 import SpendSparkline from "@/components/SpendSparkline";
-import PerformanceControlChartCard from "@/components/PerformanceControlChartCard";
 import {
   Card,
   CardContent,
@@ -58,6 +61,7 @@ import {
 } from "@/components/ui/card";
 import { computePrevPeriod, unionCrossesMetaAttributionChange } from "@/lib/periodCompare";
 import { buildLlmPageContextReport } from "@/lib/llmPageContextReport";
+import { resolveAdReference } from "@/lib/adReference";
 
 const ALL = "__all__";
 
@@ -157,13 +161,24 @@ export default function PageDashboardPage() {
   function handleDownloadReport() {
     try {
       setIsExportingReport(true);
+      const account = accountsQuery.data?.data.find((a) => a.id === id);
+      const page = pagesQuery.data?.data.find((p) => p.page_id === pid);
+      const selectedCampaignName =
+        campaignId != null
+          ? (campaignsQuery.data?.data.find((c) => c.id === campaignId)?.name ?? null)
+          : null;
       const report = buildLlmPageContextReport({
         accountId: id,
+        accountName: account?.name ?? null,
         pageId: pid,
+        pageName: page?.name ?? null,
         datePreset,
         dateStart: (effectiveDateParams as { dateStart?: string }).dateStart ?? null,
         dateStop: (effectiveDateParams as { dateStop?: string }).dateStop ?? null,
         campaignId: campaignId ?? null,
+        campaignName: selectedCampaignName,
+        currency: account?.currency ?? null,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         insights: insightsQuery.data,
         geo: geoQuery.data,
         demographics: pageDemographicsQuery.data,
@@ -172,6 +187,8 @@ export default function PageDashboardPage() {
         actions: undefined,
         traffic: trafficQualityQuery.data,
         campaigns: campaignsQuery.data?.data ?? [],
+        ads: adsListQuery.data?.data ?? [],
+        adDiagnostics: adDiagnosticsQuery.data?.data ?? [],
       });
       const filename = `llm_context_report_page_${pid.replace(/[^a-zA-Z0-9_-]/g, "_")}_${new Date().toISOString().slice(0, 10)}.json`;
       const blob = new Blob([JSON.stringify(report, null, 2)], {
@@ -210,6 +227,47 @@ export default function PageDashboardPage() {
     staleTime: 10 * 60 * 1000,
   });
 
+  const accountsQuery = useQuery({
+    queryKey: ["accounts"],
+    queryFn: fetchAdAccounts,
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const pagesQuery = useQuery({
+    queryKey: ["pages", id, datePreset, customDateStart, customDateStop],
+    queryFn: () =>
+      fetchPages(id, {
+        datePreset,
+        dateStart: (effectiveDateParams as { dateStart?: string }).dateStart,
+        dateStop: (effectiveDateParams as { dateStop?: string }).dateStop,
+      }),
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const adsListQuery = useQuery({
+    queryKey: ["ads-list", id, campaignId],
+    queryFn: () => {
+      if (campaignId) return fetchAdsList(id, { campaignId });
+      return fetchAdsList(id);
+    },
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const adReferenceUrlById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const ad of adsListQuery.data?.data ?? []) {
+      const href = resolveAdReference({
+        adId: ad.id,
+        adAccountId: id,
+        creative: ad.creative,
+        storyId: ad.creative?.effective_object_story_id ?? null,
+        storyPermalink: ad.creative?.effective_object_story_permalink ?? null,
+      }).url;
+      if (href) map.set(String(ad.id), href);
+    }
+    return map;
+  }, [adsListQuery.data?.data, id]);
+
   const conversionTsQuery = useQuery({
     queryKey: ["page-conv-ts", id, pid, datePreset, customDateStart, customDateStop, campaignId],
     queryFn: () => fetchPageConversionTimeseries(id, pid, opts),
@@ -219,6 +277,12 @@ export default function PageDashboardPage() {
   const trafficQualityQuery = useQuery({
     queryKey: ["page-traffic-quality", id, pid, datePreset, customDateStart, customDateStop, campaignId],
     queryFn: () => fetchPageTrafficQuality(id, pid, opts),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const pageStabilityQuery = useQuery({
+    queryKey: ["page-stability", id, pid, campaignId],
+    queryFn: () => fetchPageStability(id, pid, { campaignId }),
     staleTime: 5 * 60 * 1000,
   });
 
@@ -267,20 +331,6 @@ export default function PageDashboardPage() {
         ...opts,
         breakdown: pageDemographicsBreakdown,
       }),
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const pageStabilityQuery = useQuery({
-    queryKey: [
-      "page-stability",
-      id,
-      pid,
-      campaignId,
-      datePreset,
-      customDateStart,
-      customDateStop,
-    ],
-    queryFn: () => fetchPageStability(id, pid, { campaignId, metric: "cac" }),
     staleTime: 5 * 60 * 1000,
   });
 
@@ -421,18 +471,6 @@ export default function PageDashboardPage() {
         comparisonLoading={pageConversionPrevQuery.isLoading}
         showAttributionDiscontinuity={pageConvDiscontinuity}
       />
-      <PerformanceControlChartCard
-        data={pageStabilityQuery.data}
-        isLoading={pageStabilityQuery.isLoading}
-        isError={pageStabilityQuery.isError}
-        errorMessage={
-          pageStabilityQuery.error instanceof Error
-            ? pageStabilityQuery.error.message
-            : undefined
-        }
-        title="Estabilidad (CAC) - página"
-      />
-
       {/* Módulo 2: Embudo de Conversión */}
       <ConversionFunnelCard
         data={funnelQuery.data}
@@ -443,6 +481,14 @@ export default function PageDashboardPage() {
       <TrafficQualityCard
         data={trafficQualityQuery.data}
         isLoading={trafficQualityQuery.isLoading}
+      />
+
+      <PerformanceControlChartCard
+        data={pageStabilityQuery.data}
+        isLoading={pageStabilityQuery.isLoading}
+        isError={pageStabilityQuery.isError}
+        errorMessage={pageStabilityQuery.error instanceof Error ? pageStabilityQuery.error.message : undefined}
+        title="Estabilidad CAC (Página)"
       />
 
       {/* Distribución geográfica */}
@@ -521,6 +567,7 @@ export default function PageDashboardPage() {
       <AdDiagnosticsTable
         data={adDiagnosticsQuery.data?.data}
         isLoading={adDiagnosticsQuery.isLoading}
+        adReferenceUrlById={adReferenceUrlById}
       />
     </div>
   );

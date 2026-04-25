@@ -13,7 +13,7 @@ export const DASHBOARD_KPI_LABELS: Record<string, string> = {
   cpm: "Coste por 1.000 impresiones",
   cpp: "Coste por 1.000 personas alcanzadas",
   ctr: "Tasa de clics (CTR)",
-  cost_per_result: "Coste por resultado (Meta)",
+  cost_per_result: "Coste por resultado principal",
 };
 
 /** Tooltips descriptivos para KPIs del resumen */
@@ -82,9 +82,9 @@ export const RANKING_METRIC_LABELS: Record<string, string> = {
   clicks: "Clics",
   spend: "Gasto",
   ctr: "Tasa de clics (CTR)",
-  results: "Resultados (primer tipo no trivial)",
-  cpa: "CPA (coste por resultado)",
-  roas: "ROAS (compras / gasto)",
+  results: "Resultados (objetivo del anuncio)",
+  cpa: "Coste por resultado (CPA)",
+  roas: "Retorno sobre gasto (ROAS)",
 };
 
 /**

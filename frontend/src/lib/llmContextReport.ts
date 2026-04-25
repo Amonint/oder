@@ -7,6 +7,7 @@ import type {
 } from "@/api/client";
 import type { DailyInsightPoint } from "@/lib/timeSeriesFromMeta";
 import { ctrNumber, enrichAdRankingRows, toFloat } from "@/lib/adRankingDerived";
+import { adsManagerUrlFromAdset, adsManagerUrlFromCampaign, resolveAdReference } from "@/lib/adReference";
 
 type ReportInput = {
   accountId: string;
@@ -256,6 +257,25 @@ export function buildLlmContextReport(input: ReportInput) {
     };
   });
 
+  const adReferencesResolved = input.ads.reduce((acc, ad) => {
+    const href = resolveAdReference({
+      adId: ad.id,
+      adAccountId: input.accountId,
+      creative: ad.creative,
+      storyId: ad.creative?.effective_object_story_id ?? null,
+      storyPermalink: ad.creative?.effective_object_story_permalink ?? null,
+    }).url;
+    return acc + (href ? 1 : 0);
+  }, 0);
+  const campaignReferencesResolved = input.campaigns.reduce(
+    (acc, c) => acc + (adsManagerUrlFromCampaign(c.id, input.accountId) ? 1 : 0),
+    0,
+  );
+  const adsetReferencesResolved = input.adsets.reduce(
+    (acc, a) => acc + (adsManagerUrlFromAdset(a.id, input.accountId) ? 1 : 0),
+    0,
+  );
+
   const riskFlags = [
     {
       flag_code: "insufficient_data",
@@ -317,6 +337,32 @@ export function buildLlmContextReport(input: ReportInput) {
       adsets_count: input.adsets.length,
       ads_count: input.ads.length,
       valid_ads_count: validRows.length,
+    },
+    report_updates_applied: {
+      ad_reference_links_enabled: true,
+      ad_reference_priority: [
+        "effective_object_story_permalink",
+        "creative.object_story_spec links",
+        "effective_object_story_id fallback",
+        "ads_manager fallback",
+      ],
+      catalog_reference_links_enabled: true,
+      messaging_campaign_reference_links_enabled: true,
+      diagnostics_layout_overflow_fixed: true,
+      non_technical_copy_refined: true,
+      dashboard_palette_standardized: true,
+    },
+    reference_link_coverage: {
+      ads_total: input.ads.length,
+      ads_with_reference: adReferencesResolved,
+      campaigns_total: input.campaigns.length,
+      campaigns_with_reference: campaignReferencesResolved,
+      adsets_total: input.adsets.length,
+      adsets_with_reference: adsetReferencesResolved,
+    },
+    module_status: {
+      crm_dependent_modules_removed: true,
+      messaging_module_meta_only: true,
     },
     risk_flags: riskFlags,
     calculation_trace: {

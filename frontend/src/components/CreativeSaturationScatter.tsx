@@ -13,15 +13,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import type { FatigueRow } from "@/api/client";
 import { barColorAt } from "@/lib/dashboardColors";
+import { AdReferenceLink } from "@/components/AdReferenceLink";
 
 const MIN_IMPRESSIONS = 500;
 
 interface CreativeSaturationScatterProps {
   data: FatigueRow[] | undefined;
   isLoading: boolean;
+  adReferenceUrlById?: Map<string, string>;
 }
 
-export default function CreativeSaturationScatter({ data, isLoading }: CreativeSaturationScatterProps) {
+export default function CreativeSaturationScatter({ data, isLoading, adReferenceUrlById }: CreativeSaturationScatterProps) {
   const points =
     (data ?? [])
       .filter((r) => r.impressions >= MIN_IMPRESSIONS && r.frequency > 0)
@@ -75,6 +77,7 @@ export default function CreativeSaturationScatter({ data, isLoading }: CreativeS
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null;
                   const p = payload[0]?.payload as {
+                    ad_id?: string;
                     name?: string;
                     frequency?: number;
                     ctr?: number;
@@ -84,6 +87,7 @@ export default function CreativeSaturationScatter({ data, isLoading }: CreativeS
                   if (!p) return null;
                   return (
                     <div className="rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-md">
+                      <AdReferenceLink href={adReferenceUrlById?.get(String(p.ad_id ?? "")) ?? null} compact />
                       <p className="font-medium">{p.name ?? ""}</p>
                       <p className="text-muted-foreground mt-1 tabular-nums">
                         Frecuencia: {p.frequency?.toFixed(2) ?? "—"} · CTR: {p.ctr != null ? `${p.ctr.toFixed(2)}%` : "—"}

@@ -4,6 +4,7 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { AdReferenceLink } from "@/components/AdReferenceLink";
 
 export interface FunnelLevelRow {
   id: string;
@@ -19,6 +20,7 @@ export interface FunnelLevelRow {
 interface FunnelLevelTableProps {
   rows: FunnelLevelRow[];
   level: "campaign" | "ad";
+  adReferenceUrlById?: Map<string, string>;
 }
 
 function pct(from: number, to: number): string {
@@ -26,7 +28,7 @@ function pct(from: number, to: number): string {
   return `${((to / from) * 100).toFixed(1)}%`;
 }
 
-export default function FunnelLevelTable({ rows, level }: FunnelLevelTableProps) {
+export default function FunnelLevelTable({ rows, level, adReferenceUrlById }: FunnelLevelTableProps) {
   if (rows.length === 0) {
     return (
       <p className="text-muted-foreground text-sm p-2">
@@ -66,6 +68,9 @@ export default function FunnelLevelTable({ rows, level }: FunnelLevelTableProps)
               {rows.map((row) => (
                 <TableRow key={row.id}>
                   <TableCell>
+                    {level === "ad" ? (
+                      <AdReferenceLink href={adReferenceUrlById?.get(String(row.id)) ?? null} compact />
+                    ) : null}
                     <p className="truncate text-sm font-medium max-w-[220px]">{row.name}</p>
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-sm">

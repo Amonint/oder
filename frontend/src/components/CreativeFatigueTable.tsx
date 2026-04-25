@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import InfoTooltip from "@/components/InfoTooltip";
 import type { FatigueRow, FatigueAlert } from "@/api/client";
+import { AdReferenceLink } from "@/components/AdReferenceLink";
 
 type SortBy = "fatigue" | "spend" | "cpa" | "response_rate" | "scale";
 
@@ -23,6 +24,7 @@ interface CreativeFatigueTableProps {
   isLoading: boolean;
   isError: boolean;
   errorMessage?: string;
+  adReferenceUrlById?: Map<string, string>;
 }
 
 const EMPTY_PUBLICATION_RE = /^(?:publicaci[oó]n:\s*)?["“”'`]\s*["“”'`]$/i;
@@ -83,6 +85,7 @@ export default function CreativeFatigueTable({
   isLoading,
   isError,
   errorMessage,
+  adReferenceUrlById,
 }: CreativeFatigueTableProps) {
   const [sortBy, setSortBy] = useState<SortBy>("fatigue");
 
@@ -189,6 +192,7 @@ export default function CreativeFatigueTable({
                       return (
                         <TableRow key={row.ad_id}>
                           <TableCell>
+                            <AdReferenceLink href={adReferenceUrlById?.get(String(row.ad_id)) ?? null} compact />
                             <p className="truncate text-sm font-medium max-w-[200px]">{safeAdName(row.ad_name, row.ad_id)}</p>
                             <p className="text-muted-foreground font-mono text-xs">{row.ad_id}</p>
                           </TableCell>

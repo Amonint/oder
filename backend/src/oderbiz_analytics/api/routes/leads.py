@@ -21,6 +21,17 @@ LEAD_ACTION_TYPES = {
     "onsite_conversion.lead_grouped",
     "leadgen_other",
 }
+CONVERSATION_STARTED_ACTION_TYPES = {
+    "onsite_conversion.messaging_conversation_started_7d",
+}
+FIRST_REPLY_ACTION_TYPES = {
+    "messaging_first_reply",
+}
+SENT_MESSAGE_ACTION_TYPES = {
+    "onsite_conversion.messaging_user_depth_2_message_send",
+    "onsite_conversion.messaging_user_depth_3_message_send",
+    "onsite_conversion.messaging_user_depth_5_message_send",
+}
 
 
 def _extract_leads(actions: list[dict]) -> int:
@@ -41,6 +52,32 @@ def _extract_cpa_lead(cost_per_action: list[dict]) -> float | None:
             except (TypeError, ValueError):
                 pass
     return None
+
+
+def _extract_action_count(actions: list[dict], action_types: set[str]) -> int:
+    total = 0
+    for a in actions:
+        if a.get("action_type") in action_types:
+            try:
+                total += int(float(a.get("value", 0)))
+            except (TypeError, ValueError):
+                pass
+    return total
+
+
+def _extract_cost_per_action(cost_per_action: list[dict], action_types: set[str]) -> float | None:
+    values: list[float] = []
+    for a in cost_per_action:
+        if a.get("action_type") in action_types:
+            try:
+                v = float(a.get("value", 0))
+                if v > 0:
+                    values.append(v)
+            except (TypeError, ValueError):
+                pass
+    if not values:
+        return None
+    return sum(values) / len(values)
 
 
 @router.get("/{ad_account_id}/insights/leads")
@@ -146,4 +183,142 @@ async def get_leads_insights(
         "date_preset": effective_preset,
         "time_range": use_time_range,
         "note": "leads_insights = leads reportados en Insights. Para formularios nativos se requiere leads_retrieval.",
+    }
+
+
+@router.get("/{ad_account_id}/insights/messaging")
+async def get_messaging_insights(
+    ad_account_id: str,
+    level: Literal["account", "campaign", "ad"] = Query("campaign"),
+    date_preset: str | None = Query(None),
+    date_start: str | None = Query(None),
+    date_stop: str | None = Query(None),
+    campaign_id: str | None = Query(None),
+    adset_id: str | None = Query(None),
+    ad_id: str | None = Query(None),
+    settings: Settings = Depends(get_settings),
+    access_token: str = Depends(get_meta_access_token),
+):
+    if bool(date_start) != bool(date_stop):
+        raise HTTPException(status_code=422, detail="Se requieren date_start y date_stop juntos.")
+
+    object_id = normalize_ad_account_id(ad_account_id)
+    base = f"https://graph.facebook.com/{settings.meta_graph_version}".rstrip("/")
+    use_time_range: dict[str, str] | None = None
+    effective_preset: str | None = None
+
+    if date_start and date_stop:
+        use_time_range = {"since": date_start, "until": date_stop}
+    else:
+        effective_preset = date_preset if date_preset else "last_30d"
+
+    filtering = None
+    aid = (ad_id or "").strip()
+    sid = (adset_id or "").strip()
+    cid = (campaign_id or "").strip()
+    if aid:
+        filtering = [{"field": "ad.id", "operator": "IN", "value": [aid]}]
+    elif sid:
+        filtering = [{"field": "adset.id", "operator": "IN", "value": [sid]}]
+    elif cid:
+        filtering = [{"field": "campaign.id", "operator": "IN", "value": [cid]}]
+
+    try:
+        rows = await fetch_insights(
+            base_url=base,
+            access_token=access_token,
+            ad_account_id=object_id,
+            fields=LEADS_FIELDS,
+            level=level,
+            date_preset=effective_preset,
+            time_range=use_time_range,
+            filtering=filtering,
+        )
+    except httpx.HTTPStatusError:
+        raise HTTPException(
+            status_code=502, detail="Error al obtener datos de mensajeria de Meta."
+        ) from None
+    except httpx.RequestError:
+        raise HTTPException(
+            status_code=502, detail="No se pudo contactar a la API de Meta."
+        ) from None
+
+    enriched = []
+    total_conversations = 0
+    total_first_replies = 0
+    total_sent_messages = 0
+    total_spend = 0.0
+
+    for row in rows:
+        actions = row.get("actions") or []
+        cost_per_action = row.get("cost_per_action_type") or []
+        spend = float(row.get("spend", 0) or 0)
+        conversations_started = _extract_action_count(actions, CONVERSATION_STARTED_ACTION_TYPES)
+        first_replies = _extract_action_count(actions, FIRST_REPLY_ACTION_TYPES)
+        sent_messages = _extract_action_count(actions, SENT_MESSAGE_ACTION_TYPES)
+        cost_per_conversation = _extract_cost_per_action(cost_per_action, CONVERSATION_STARTED_ACTION_TYPES)
+        cost_per_first_reply = _extract_cost_per_action(cost_per_action, FIRST_REPLY_ACTION_TYPES)
+        total_conversations += conversations_started
+        total_first_replies += first_replies
+        total_sent_messages += sent_messages
+        total_spend += spend
+
+        enriched.append({
+            **row,
+            "campaign_name": format_entity_name(
+                kind="Campaña",
+                entity_id=row.get("campaign_id"),
+                name=row.get("campaign_name"),
+            ),
+            "ad_name": format_entity_name(
+                kind="Anuncio",
+                entity_id=row.get("ad_id"),
+                name=row.get("ad_name"),
+            ),
+            "conversations_started": conversations_started,
+            "first_replies": first_replies,
+            "sent_messages": sent_messages,
+            "cost_per_conversation_started": (
+                round(cost_per_conversation, 2) if cost_per_conversation is not None else (
+                    round(spend / conversations_started, 2) if conversations_started > 0 else None
+                )
+            ),
+            "cost_per_first_reply": (
+                round(cost_per_first_reply, 2) if cost_per_first_reply is not None else (
+                    round(spend / first_replies, 2) if first_replies > 0 else None
+                )
+            ),
+        })
+
+    avg_cost_per_conversation = (
+        round(total_spend / total_conversations, 2) if total_conversations > 0 else None
+    )
+    avg_cost_per_first_reply = (
+        round(total_spend / total_first_replies, 2) if total_first_replies > 0 else None
+    )
+    first_reply_rate = (
+        round(total_first_replies / total_conversations, 4)
+        if total_conversations > 0
+        else None
+    )
+
+    return {
+        "data": enriched,
+        "summary": {
+            "total_conversations_started": total_conversations,
+            "total_first_replies": total_first_replies,
+            "total_sent_messages": total_sent_messages,
+            "total_spend": round(total_spend, 2),
+            "avg_cost_per_conversation_started": avg_cost_per_conversation,
+            "avg_cost_per_first_reply": avg_cost_per_first_reply,
+            "first_reply_rate": first_reply_rate,
+        },
+        "level": level,
+        "date_preset": effective_preset,
+        "time_range": use_time_range,
+        "note": (
+            "Metricas de mensajeria desde Insights. "
+            "Acciones base: onsite_conversion.messaging_conversation_started_7d, "
+            "messaging_first_reply y messaging_user_depth_*_message_send."
+        ),
     }

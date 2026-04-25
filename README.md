@@ -1,6 +1,7 @@
 # Oderbiz Analytics
 
 Plataforma de analitica para Meta Ads (Facebook/Instagram) con:
+
 - **Backend** en FastAPI (integracion con Graph/Marketing API + persistencia local en DuckDB).
 - **Frontend** en React + Vite para exploracion de cuentas, dashboards y modulos de diagnostico.
 
@@ -61,7 +62,7 @@ docker-compose.yml        entorno con web + api + job opcional de ingesta
 
 ---
 
-## Endpoints principales (API ` /api/v1 `)
+## Endpoints principales (API `/api/v1`)
 
 ### Base y cuenta
 
@@ -142,6 +143,20 @@ docker-compose.yml        entorno con web + api + job opcional de ingesta
 
 ---
 
+## Referencias de anuncios (UI)
+
+- En vistas de **Cuenta** y **Pagina**, las tablas/listados por anuncio muestran un enlace `Ver referencia` encima del nombre.
+- Prioridad de resolucion del enlace:
+  1. `effective_object_story_permalink` (permalink oficial de Meta si existe),
+  2. link de destino en `creative.object_story_spec` (CTA/link_data/template/photo),
+  3. fallback por `effective_object_story_id`,
+  4. fallback a Ads Manager del anuncio.
+- Endpoints que entregan permalink oficial:
+  - `GET /accounts/{account_id}/ads`
+  - `GET /accounts/{ad_account_id}/ads/performance`
+
+---
+
 ## Requisitos
 
 - Python `3.12`
@@ -188,6 +203,7 @@ Desde la raiz:
 ```
 
 Este script:
+
 - instala backend editable si falta (`pip install -e ".[dev]"`)
 - levanta API en `http://127.0.0.1:8000`
 - levanta frontend en `http://localhost:5173`
@@ -221,6 +237,7 @@ docker compose up --build
 ```
 
 Servicios:
+
 - `web` en `http://localhost:5173`
 - `api` en `http://localhost:8000`
 

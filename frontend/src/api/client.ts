@@ -184,6 +184,8 @@ export interface AdPerformanceRow {
   results?: number;
   cpa?: number | null;
   roas?: number | null;
+  effective_object_story_id?: string | null;
+  effective_object_story_permalink?: string | null;
   date_start?: string;
   date_stop?: string;
 }
@@ -304,6 +306,52 @@ export interface AdsetRow {
   updated_time?: string;
 }
 
+export interface AdCreativeCallToActionValue {
+  link?: string;
+}
+
+export interface AdCreativeCallToAction {
+  value?: AdCreativeCallToActionValue;
+}
+
+export interface AdCreativeLinkData {
+  link?: string;
+  call_to_action?: AdCreativeCallToAction;
+}
+
+export interface AdCreativeVideoData {
+  call_to_action?: AdCreativeCallToAction;
+}
+
+export interface AdCreativeTemplateData {
+  link?: string;
+}
+
+export interface AdCreativePhotoData {
+  link?: string;
+}
+
+export interface AdCreativeObjectStorySpec {
+  link_data?: AdCreativeLinkData;
+  video_data?: AdCreativeVideoData;
+  template_data?: AdCreativeTemplateData;
+  photo_data?: AdCreativePhotoData;
+  [key: string]: unknown;
+}
+
+export interface AdCreative {
+  id?: string;
+  name?: string;
+  title?: string;
+  body?: string;
+  call_to_action_type?: string;
+  effective_object_story_id?: string;
+  effective_object_story_permalink?: string;
+  object_story_spec?: AdCreativeObjectStorySpec;
+  asset_feed_spec?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export async function fetchAdsets(
   adAccountId: string,
   campaignId?: string
@@ -324,14 +372,7 @@ export interface AdRow {
   campaign_id: string;
   status?: string;
   effective_status?: string;
-  creative?: {
-    id?: string;
-    name?: string;
-    title?: string;
-    body?: string;
-    call_to_action_type?: string;
-    object_story_spec?: Record<string, unknown>;
-  };
+  creative?: AdCreative;
   created_time?: string;
   updated_time?: string;
 }

@@ -24,11 +24,11 @@ export default function DashboardContextStrip({
       role="note"
       className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground"
     >
-      Periodo: <span className="text-foreground/90">{period}</span>
+      Fechas del informe: <span className="text-foreground/90">{period}</span>
       {" · "}
-      Moneda: <span className="text-foreground/90 tabular-nums">{currency}</span>
+      Moneda de los importes: <span className="text-foreground/90 tabular-nums">{currency}</span>
       {" · "}
-      Atribución (conversiones / ROAS / CPA):{" "}
+      Cómo se atribuyen ventas y conversiones a los anuncios:{" "}
       <span className="text-foreground/90">{attr}</span>
     </div>
   );

@@ -1,6 +1,6 @@
 import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts";
 import type { AdPerformanceRow } from "@/api/client";
-import { barColorAt } from "@/lib/dashboardColors";
+import { DASHBOARD_COLORS, barColorAt, dashboardChartColor } from "@/lib/dashboardColors";
 import { enrichAdRankingRows } from "@/lib/adRankingDerived";
 import {
   ChartContainer,
@@ -51,11 +51,11 @@ function buildEfficiencyBestFirst(rows: AdPerformanceRow[], minSpendUsd: number)
 }
 
 const cpaConfig = {
-  value: { label: "CPA (USD)", color: "hsl(var(--chart-1))" },
+  value: { label: "CPA (USD)", color: DASHBOARD_COLORS[0] },
 } satisfies ChartConfig;
 
 const roasConfig = {
-  value: { label: "ROAS (×)", color: "hsl(var(--chart-2))" },
+  value: { label: "ROAS (×)", color: dashboardChartColor(1) },
 } satisfies ChartConfig;
 
 export default function AdCreatividadEfficiencyBarCharts({

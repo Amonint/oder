@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { GeoInsightRow, GeoMetadata } from "@/api/client";
 import { barColorAt } from "@/lib/dashboardColors";
+import { AdReferenceLink } from "@/components/AdReferenceLink";
 
 export type GeoMapMetric = "impressions" | "clicks" | "spend" | "reach" | "cpa" | "results";
 
@@ -61,6 +62,8 @@ interface GeoMapProps {
   minSpendUsd?: number;
   /** Texto adicional bajo el subtítulo (p. ej. alineación CPA con KPI). */
   extraCaption?: string;
+  /** Enlace opcional al anuncio cuando metadata.scope === "ad". */
+  adReferenceUrl?: string | null;
 }
 
 type GeoChartDatum = {
@@ -136,6 +139,7 @@ export default function GeoMap({
   metric = "impressions",
   minSpendUsd = 25,
   extraCaption,
+  adReferenceUrl,
 }: GeoMapProps) {
   if (!data || data.length === 0) {
     return (
@@ -182,6 +186,9 @@ export default function GeoMap({
           {alignmentNote}
           {extraCaption ? ` ${extraCaption}` : null}
         </p>
+        {metadata.scope === "ad" ? (
+          <AdReferenceLink href={adReferenceUrl ?? null} />
+        ) : null}
       </CardHeader>
       <CardContent>
         <ResponsiveContainer width="100%" height={300}>

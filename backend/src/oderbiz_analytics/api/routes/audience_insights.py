@@ -30,8 +30,10 @@ VALID_CATEGORIES = {
 LEAD_ACTION_TYPES = {"lead", "onsite_conversion.lead_grouped", "leadgen_other"}
 MESSAGING_ACTION_TYPES = {
     "onsite_conversion.messaging_conversation_started_7d",
-    "onsite_conversion.messaging_first_reply",
+}
+FIRST_REPLY_ACTION_TYPES = {
     "messaging_first_reply",
+    "onsite_conversion.messaging_first_reply",
 }
 
 
@@ -213,7 +215,8 @@ async def get_audiences_performance(
         spend = _to_float(row.get("spend"))
         leads = _sum_actions(row.get("actions"), LEAD_ACTION_TYPES)
         conversations = _sum_actions(row.get("actions"), MESSAGING_ACTION_TYPES)
-        results = leads if leads > 0 else conversations
+        first_replies = _sum_actions(row.get("actions"), FIRST_REPLY_ACTION_TYPES)
+        results = conversations if conversations > 0 else (first_replies if first_replies > 0 else leads)
         ad_identifier = str(row.get("ad_id") or "").strip()
         campaign_name = str(row.get("campaign_name") or "").strip()
 
@@ -230,6 +233,7 @@ async def get_audiences_performance(
                     "results": 0.0,
                     "leads_insights": 0.0,
                     "conversations_started": 0.0,
+                    "first_replies": 0.0,
                     "ads": set(),
                     "campaigns": set(),
                 }
@@ -240,6 +244,7 @@ async def get_audiences_performance(
             bucket["results"] += results / split_factor
             bucket["leads_insights"] += leads / split_factor
             bucket["conversations_started"] += conversations / split_factor
+            bucket["first_replies"] += first_replies / split_factor
             if ad_identifier:
                 bucket["ads"].add(ad_identifier)
             if campaign_name:
@@ -265,6 +270,7 @@ async def get_audiences_performance(
                 "results": round(results, 2),
                 "leads_insights": round(float(bucket["leads_insights"]), 2),
                 "conversations_started": round(float(bucket["conversations_started"]), 2),
+                "first_replies": round(float(bucket["first_replies"]), 2),
                 "cpa_like": round(spend / results, 4) if results > 0 else None,
                 "ads_count": len(bucket["ads"]),
                 "campaigns_count": len(bucket["campaigns"]),
@@ -294,6 +300,7 @@ async def get_audiences_performance(
         },
         "note": (
             "Distribucion inferida: el rendimiento de cada anuncio se reparte entre sus etiquetas de audiencia "
-            "seleccionadas. No representa atribucion causal exacta por interes en Meta."
+            "seleccionadas. `conversations_started` y `first_replies` se reportan por separado. "
+            "No representa atribucion causal exacta por interes en Meta."
         ),
     }

@@ -5,15 +5,21 @@ import {
 } from "@/components/ui/table";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import InfoTooltip from "@/components/InfoTooltip";
+import { AdReferenceLink } from "@/components/AdReferenceLink";
 import type { AdDiagnosticsRow } from "@/api/client";
 import { barPaletteByRowIndex } from "@/lib/dashboardColors";
 
 interface AdDiagnosticsTableProps {
   data: AdDiagnosticsRow[] | undefined;
   isLoading: boolean;
+  adReferenceUrlById?: Map<string, string>;
 }
 
-export default function AdDiagnosticsTable({ data, isLoading }: AdDiagnosticsTableProps) {
+export default function AdDiagnosticsTable({
+  data,
+  isLoading,
+  adReferenceUrlById,
+}: AdDiagnosticsTableProps) {
   return (
     <section className="space-y-3">
       <div>
@@ -37,6 +43,7 @@ export default function AdDiagnosticsTable({ data, isLoading }: AdDiagnosticsTab
             </p>
           ) : (
             <TooltipProvider delayDuration={300}>
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -84,15 +91,18 @@ export default function AdDiagnosticsTable({ data, isLoading }: AdDiagnosticsTab
                     return (
                   <TableRow key={row.ad_id}>
                     <TableCell className="max-w-[240px]">
-                      <p className="truncate text-sm font-medium inline-flex items-center gap-2">
-                        <span className="truncate">{row.ad_name}</span>
+                      <div className="min-w-0 space-y-0.5">
+                      <AdReferenceLink href={adReferenceUrlById?.get(String(row.ad_id)) ?? null} compact />
+                      <p className="text-sm font-medium flex items-center gap-2 min-w-0">
+                        <span className="truncate block min-w-0">{row.ad_name}</span>
                         {row.ad_name_source && row.ad_name_source !== "meta_ad_name" ? (
-                          <span className="rounded border px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground">
+                          <span className="shrink-0 rounded border px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground">
                             Nombre inferido
                           </span>
                         ) : null}
                       </p>
-                      <p className="text-muted-foreground font-mono text-xs">{row.ad_id}</p>
+                      <p className="text-muted-foreground font-mono text-xs break-all leading-tight">{row.ad_id}</p>
+                      </div>
                     </TableCell>
                     <TableCell className="align-middle">
                       <div
@@ -122,6 +132,7 @@ export default function AdDiagnosticsTable({ data, isLoading }: AdDiagnosticsTab
                 })()}
               </TableBody>
             </Table>
+            </div>
             </TooltipProvider>
           )}
         </CardContent>
