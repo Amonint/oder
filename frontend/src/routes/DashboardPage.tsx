@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import DateRangePickerModal from "@/components/DateRangePickerModal";
 import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts";
 import AdCreatividadEfficiencyBarCharts from "@/components/AdCreatividadEfficiencyBarCharts";
@@ -20,6 +20,8 @@ import {
   fetchMessagingInsights,
   fetchCreativeFatigue,
   fetchTimeInsights,
+  fetchEntitySummary,
+  fetchAdsetsLearningSummary,
   getMetaAccessToken,
   type AdPerformanceRow,
 } from "@/api/client";
@@ -106,6 +108,16 @@ import {
 import { ctrNumber, enrichAdRankingRows, toFloat } from "@/lib/adRankingDerived";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import HourlyCpaHeatmapSection from "@/components/HourlyCpaHeatmapSection";
+import HorizontalAdEfficiencyBars from "@/components/HorizontalAdEfficiencyBars";
+import EntityCpaRoasBarsCard from "@/components/EntityCpaRoasBarsCard";
+import PlacementTreemapAndMix from "@/components/PlacementTreemapAndMix";
+import GeoRegionalEfficiencyBars from "@/components/GeoRegionalEfficiencyBars";
+import CreativeFatigueCpaScatter from "@/components/CreativeFatigueCpaScatter";
+import PlacementDeviceGroupedBars from "@/components/PlacementDeviceGroupedBars";
+import LearningStageSpendChart from "@/components/LearningStageSpendChart";
+import OutboundMessagingFunnelCard from "@/components/OutboundMessagingFunnelCard";
+import PurchaseVsMessagingScatterCard from "@/components/PurchaseVsMessagingScatterCard";
 import DashboardContextStrip from "@/components/DashboardContextStrip";
 import {
   computePrevPeriod,
@@ -114,7 +126,11 @@ import {
   deltaPercent,
 } from "@/lib/periodCompare";
 import { attributionWindowLabelEs, metaObjectStatusLabelEs } from "@/lib/formatDashboardContext";
-import { buildLlmContextReport } from "@/lib/llmContextReport";
+import { ACCOUNT_DASHBOARD_OBJECTIVE_METRIC } from "@/lib/accountDashboardExportConstants";
+import { collectAccountDashboardExport } from "@/lib/accountDashboardExportCollect";
+import {
+  buildAccountDashboardSnapshot,
+} from "@/lib/dashboardExportAccount";
 import { adsManagerUrlFromAdset, adsManagerUrlFromCampaign, resolveAdReference } from "@/lib/adReference";
 
 const ALL = "__all__";
@@ -160,8 +176,6 @@ const DATE_PRESETS = [
   { value: "custom", label: "Personalizado" },
   { value: "maximum", label: "Máximo disponible" },
 ] as const;
-const OBJECTIVE_METRIC = "messaging_conversation_started" as const;
-
 function objectiveMetricLabel(metric: string | null | undefined): string {
   switch (metric) {
     case "messaging_first_reply":
@@ -172,6 +186,23 @@ function objectiveMetricLabel(metric: string | null | undefined): string {
     default:
       return "Conversaciones iniciadas";
   }
+}
+
+const FIRST_REPLY_ACTION_TYPES = new Set([
+  "messaging_first_reply",
+  "onsite_conversion.messaging_first_reply",
+]);
+
+function isFirstReplyActionType(actionType: unknown): boolean {
+  return FIRST_REPLY_ACTION_TYPES.has(String(actionType ?? ""));
+}
+
+function sumFirstReplyActions(
+  actions: Array<{ action_type?: unknown; value?: unknown }> | null | undefined,
+): number {
+  return (actions ?? [])
+    .filter((a) => isFirstReplyActionType(a.action_type))
+    .reduce((s, a) => s + Number(a.value ?? 0), 0);
 }
 
 function formatNum(n: number): string {
@@ -468,7 +499,7 @@ export default function DashboardPage() {
     queryFn: () =>
       fetchAccountDashboard(id, datePreset, {
         campaignId: campaignKey ?? undefined,
-        objectiveMetric: OBJECTIVE_METRIC,
+        objectiveMetric: ACCOUNT_DASHBOARD_OBJECTIVE_METRIC,
         ...effectiveDateParams,
       }),
     enabled: hasToken && Boolean(id),
@@ -488,7 +519,7 @@ export default function DashboardPage() {
     queryFn: () =>
       fetchAccountDashboard(id, "last_30d", {
         campaignId: campaignKey ?? undefined,
-        objectiveMetric: OBJECTIVE_METRIC,
+        objectiveMetric: ACCOUNT_DASHBOARD_OBJECTIVE_METRIC,
         dateStart: prevPeriod!.dateStart,
         dateStop: prevPeriod!.dateStop,
       }),
@@ -564,7 +595,7 @@ export default function DashboardPage() {
     ],
     queryFn: () => {
       const opts: Parameters<typeof fetchAdsPerformance>[1] = { ...effectiveDateParams };
-      opts.objectiveMetric = OBJECTIVE_METRIC;
+      opts.objectiveMetric = ACCOUNT_DASHBOARD_OBJECTIVE_METRIC;
       opts.attributionWindow = attributionWindow;
       if (perfGranularity === "daily") opts.timeIncrement = 1;
       if (selectedAdId) {
@@ -599,6 +630,7 @@ export default function DashboardPage() {
       } else if (campaignKey) {
         opts.campaignId = campaignKey;
       }
+      opts.includeDeviceBreakdowns = true;
       return fetchPlacementInsights(id, opts);
     },
     enabled: hasToken && Boolean(id) && mainTab === "audiencia",
@@ -624,6 +656,7 @@ export default function DashboardPage() {
         adId: selectedAdId ?? undefined,
         adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
         campaignId: campaignKey ?? undefined,
+        objectiveMetric: ACCOUNT_DASHBOARD_OBJECTIVE_METRIC,
         ...effectiveDateParams,
       }),
     enabled:
@@ -631,6 +664,15 @@ export default function DashboardPage() {
       Boolean(id) &&
       (geoScope === "account" || Boolean(selectedAdId) || adsetSelect !== ALL || Boolean(campaignKey)),
   });
+
+  useEffect(() => {
+    if (
+      geoQuery.data?.metadata?.objective_breakdown_complete === false &&
+      (geoMetric === "cpa" || geoMetric === "results")
+    ) {
+      setGeoMetric("spend");
+    }
+  }, [geoMetric, geoQuery.data?.metadata?.objective_breakdown_complete]);
 
   const targetingQuery = useQuery({
     queryKey: ["targeting", id, selectedAdId],
@@ -656,6 +698,7 @@ export default function DashboardPage() {
       campaignId: campaignKey ?? undefined,
       adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
       adId: selectedAdId ?? undefined,
+      objectiveMetric: ACCOUNT_DASHBOARD_OBJECTIVE_METRIC,
     }),
     enabled: hasToken && Boolean(id) && mainTab === "audiencia",
     staleTime: 5 * 60 * 1000,
@@ -786,9 +829,109 @@ export default function DashboardPage() {
   });
 
   const dailyTimePoints = useMemo(
-    () => parseTimeInsightRows((timeInsightsQuery.data?.data ?? []) as Record<string, unknown>[]),
-    [timeInsightsQuery.data],
+    () =>
+      parseTimeInsightRows(
+        (timeInsightsQuery.data?.data ?? []) as Record<string, unknown>[],
+        data?.derived?.objective_action_types ?? [],
+      ),
+    [timeInsightsQuery.data, data?.derived?.objective_action_types],
   );
+
+  const hourlyTimeInsightsQuery = useQuery({
+    queryKey: [
+      "time-insights-hourly",
+      id,
+      mainTab,
+      datePreset,
+      customDateStart,
+      customDateStop,
+      campaignKey,
+      adsetSelect,
+      selectedAdId,
+      attributionWindow,
+    ],
+    queryFn: () =>
+      fetchTimeInsights(id, {
+        ...effectiveDateParams,
+        campaignId: campaignKey ?? undefined,
+        adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
+        adId: selectedAdId ?? undefined,
+        timeIncrement: "hourly",
+        attributionWindow,
+      }),
+    enabled: hasToken && Boolean(id) && mainTab === "resumen",
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const entityCampaignSummaryQuery = useQuery({
+    queryKey: [
+      "entity-summary-campaign",
+      id,
+      datePreset,
+      customDateStart,
+      customDateStop,
+      campaignKey,
+      adsetSelect,
+      selectedAdId,
+      attributionWindow,
+    ],
+    queryFn: () =>
+      fetchEntitySummary(id, {
+        level: "campaign",
+        ...effectiveDateParams,
+        campaignId: campaignKey ?? undefined,
+        adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
+        objectiveMetric: ACCOUNT_DASHBOARD_OBJECTIVE_METRIC,
+        attributionWindow,
+      }),
+    enabled: hasToken && Boolean(id) && mainTab === "resumen",
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const entityAdsetSummaryQuery = useQuery({
+    queryKey: [
+      "entity-summary-adset",
+      id,
+      datePreset,
+      customDateStart,
+      customDateStop,
+      campaignKey,
+      adsetSelect,
+      selectedAdId,
+      attributionWindow,
+    ],
+    queryFn: () =>
+      fetchEntitySummary(id, {
+        level: "adset",
+        ...effectiveDateParams,
+        campaignId: campaignKey ?? undefined,
+        adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
+        objectiveMetric: ACCOUNT_DASHBOARD_OBJECTIVE_METRIC,
+        attributionWindow,
+      }),
+    enabled: hasToken && Boolean(id) && mainTab === "resumen",
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const learningSummaryQuery = useQuery({
+    queryKey: [
+      "learning-summary",
+      id,
+      datePreset,
+      customDateStart,
+      customDateStop,
+      campaignKey,
+      adsetSelect,
+    ],
+    queryFn: () =>
+      fetchAdsetsLearningSummary(id, {
+        ...effectiveDateParams,
+        campaignId: campaignKey ?? undefined,
+        adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
+      }),
+    enabled: hasToken && Boolean(id) && mainTab === "resumen",
+    staleTime: 5 * 60 * 1000,
+  });
 
   const datePresetLabelEs = useMemo(
     () => DATE_PRESETS.find((p) => p.value === datePreset)?.label ?? datePreset,
@@ -805,28 +948,56 @@ export default function DashboardPage() {
     }
   }
 
-  function handleDownloadLlmReport() {
+  async function handleDownloadLlmReport() {
+    setIsExportingReport(true);
     try {
-      setIsExportingReport(true);
-      const report = buildLlmContextReport({
+      const collected = await collectAccountDashboardExport({
+        accountId: id,
+        datePreset,
+        customDateStart,
+        customDateStop,
+        campaignSelect,
+        adsetSelect,
+        selectedAdId,
+        attributionWindow,
+        perfGranularity,
+        demographicsBreakdown,
+        audienceCategory,
+        audienceMinSpend,
+        geoScope,
+      });
+      const report = buildAccountDashboardSnapshot({
         accountId: id,
         accountName: accountLabel,
         currency: accountsQuery.data?.data.find((a) => a.id === id)?.currency ?? null,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-        datePreset,
-        dateStart: data?.date_start ?? (datePreset === "custom" ? customDateStart : null),
-        dateStop: data?.date_stop ?? (datePreset === "custom" ? customDateStop : null),
-        campaignId: campaignKey,
-        adsetId: adsetSelect !== ALL ? adsetSelect : null,
-        adId: selectedAdId,
-        dashboard: data,
-        rankingRows: rankingQuery.data?.data ?? [],
-        dailyPoints: dailyTimePoints,
-        campaigns: campaignsQuery.data?.data ?? [],
-        adsets: adsetsQuery.data?.data ?? [],
-        ads: adsListQuery.data?.data ?? [],
+        filters: {
+          unified_dashboard_ui: useUnifiedDashboard,
+          objective_metric_used: ACCOUNT_DASHBOARD_OBJECTIVE_METRIC,
+          ranking_metric_ui: rankingMetric,
+          min_spend_ranking_usd_ui: minSpendRankingUsd,
+          geo_metric_ui: geoMetric,
+          funnel_level_ui: funnelLevel,
+          date_preset: datePreset,
+          custom_date_start: customDateStart,
+          custom_date_stop: customDateStop,
+          resolved_date_range: {
+            since: collected.dashboard?.date_start ?? (datePreset === "custom" ? customDateStart : null),
+            until: collected.dashboard?.date_stop ?? (datePreset === "custom" ? customDateStop : null),
+          },
+          campaign_id: campaignKey,
+          adset_id: adsetSelect !== ALL ? adsetSelect : null,
+          ad_id: selectedAdId,
+          attribution_window: attributionWindow,
+          performance_granularity: perfGranularity,
+          demographics_breakdown: demographicsBreakdown,
+          audience_category: audienceCategory,
+          audience_min_spend: audienceMinSpend,
+          geo_scope: geoScope,
+        },
+        collected,
       });
-      const filename = `llm_context_report_${id.replace(/[^a-zA-Z0-9_-]/g, "_")}_${new Date().toISOString().slice(0, 10)}.json`;
+      const filename = `dashboard_snapshot_account_${id.replace(/[^a-zA-Z0-9_-]/g, "_")}_${new Date().toISOString().slice(0, 10)}.json`;
       const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -1126,10 +1297,10 @@ export default function DashboardPage() {
           <Button
             type="button"
             variant="default"
-            onClick={handleDownloadLlmReport}
-            disabled={isExportingReport || isLoading || rankingQuery.isLoading}
+            onClick={() => void handleDownloadLlmReport()}
+            disabled={isExportingReport}
           >
-            {isExportingReport ? "Generando..." : "Descargar reporte"}
+            {isExportingReport ? "Recolectando módulos…" : "Descargar reporte"}
           </Button>
         </div>
       </div>
@@ -1444,7 +1615,7 @@ export default function DashboardPage() {
 
               <div className="flex flex-wrap gap-2">
                 <Badge variant="outline" className="text-xs text-muted-foreground font-normal">
-                  Objetivo activo: {objectiveMetricLabel(data.derived?.objective_metric ?? OBJECTIVE_METRIC)}
+                  Objetivo activo: {objectiveMetricLabel(data.derived?.objective_metric ?? ACCOUNT_DASHBOARD_OBJECTIVE_METRIC)}
                 </Badge>
                 <Badge variant="outline" className="text-xs text-muted-foreground font-normal">
                   Trazabilidad: resultados y CPA derivado calculados sobre este objetivo.
@@ -1584,9 +1755,7 @@ export default function DashboardPage() {
                   })}
                   {(() => {
                     const spend = Number(data.summary.spend ?? 0);
-                    const replies = (data.actions ?? [])
-                      .filter((a) => String(a.action_type) === "messaging_first_reply")
-                      .reduce((s, a) => s + Number(a.value ?? 0), 0);
+                    const replies = sumFirstReplyActions(data.actions);
                     if (replies === 0) return null;
                     const cpc = spend / replies;
                     return (
@@ -1629,7 +1798,47 @@ export default function DashboardPage() {
                   attributionWindowCode={attributionWindow}
                   metaAttributionSent={timeInsightsQuery.data?.attribution_windows_sent ?? null}
                 />
+                <HourlyCpaHeatmapSection
+                  rows={(hourlyTimeInsightsQuery.data?.data ?? []) as Record<string, unknown>[]}
+                  isLoading={hourlyTimeInsightsQuery.isLoading}
+                  isError={hourlyTimeInsightsQuery.isError}
+                  errorMessage={
+                    hourlyTimeInsightsQuery.error instanceof Error
+                      ? hourlyTimeInsightsQuery.error.message
+                      : undefined
+                  }
+                />
               </div>
+
+              <div className="grid gap-4 xl:grid-cols-2">
+                <HorizontalAdEfficiencyBars
+                  rows={rankingQuery.data?.data}
+                  isLoading={rankingQuery.isLoading}
+                />
+                <EntityCpaRoasBarsCard
+                  campaigns={entityCampaignSummaryQuery.data}
+                  adsets={entityAdsetSummaryQuery.data}
+                  isLoading={
+                    entityCampaignSummaryQuery.isLoading || entityAdsetSummaryQuery.isLoading
+                  }
+                  isError={entityCampaignSummaryQuery.isError || entityAdsetSummaryQuery.isError}
+                  errorMessage={
+                    entityCampaignSummaryQuery.error instanceof Error
+                      ? entityCampaignSummaryQuery.error.message
+                      : entityAdsetSummaryQuery.error instanceof Error
+                        ? entityAdsetSummaryQuery.error.message
+                        : undefined
+                  }
+                />
+              </div>
+              <LearningStageSpendChart
+                data={learningSummaryQuery.data}
+                isLoading={learningSummaryQuery.isLoading}
+                isError={learningSummaryQuery.isError}
+                errorMessage={
+                  learningSummaryQuery.error instanceof Error ? learningSummaryQuery.error.message : undefined
+                }
+              />
 
               {datePreset === "maximum" ? (
                 <Alert>
@@ -1677,9 +1886,7 @@ export default function DashboardPage() {
                 const costPerConvStarted = convsStarted > 0 ? spend / convsStarted : null;
 
                 // Costo por conversación respondida
-                const replies = actions
-                  .filter((a) => String(a.action_type) === "messaging_first_reply")
-                  .reduce((s, a) => s + Number(a.value ?? 0), 0);
+                const replies = sumFirstReplyActions(actions);
                 const costPerReplied = replies > 0 ? spend / replies : null;
 
                 const costs = [
@@ -1935,7 +2142,7 @@ export default function DashboardPage() {
           <h3 className="text-foreground text-lg font-semibold">Ranking de anuncios</h3>
           <div className="flex flex-wrap gap-2">
             <Badge variant="outline" className="text-xs text-muted-foreground font-normal">
-              Objetivo activo: {objectiveMetricLabel(rankingQuery.data?.objective_metric ?? OBJECTIVE_METRIC)}
+              Objetivo activo: {objectiveMetricLabel(rankingQuery.data?.objective_metric ?? ACCOUNT_DASHBOARD_OBJECTIVE_METRIC)}
             </Badge>
             <Badge variant="outline" className="text-xs text-muted-foreground font-normal">
               Ranking, resultados y CPA usan el mismo criterio para comparacion homogénea.
@@ -2414,6 +2621,14 @@ export default function DashboardPage() {
             isLoading={fatigueQuery.isLoading}
             adReferenceUrlById={adReferenceUrlById}
           />
+          <CreativeFatigueCpaScatter
+            data={fatigueQuery.data?.data}
+            alerts={fatigueQuery.data?.alerts}
+            isLoading={fatigueQuery.isLoading}
+            adReferenceUrlById={adReferenceUrlById}
+          />
+          <OutboundMessagingFunnelCard rows={rankingQuery.data?.data} isLoading={rankingQuery.isLoading} />
+          <PurchaseVsMessagingScatterCard rows={rankingQuery.data?.data} isLoading={rankingQuery.isLoading} />
         </TabsContent>
 
         {/* ── Tab: Audiencia (plataformas + geografía + demografía) ── */}
@@ -2523,6 +2738,14 @@ export default function DashboardPage() {
                     datePreset={placementQuery.data?.date_preset ?? null}
                     timeRange={placementQuery.data?.time_range ?? null}
                   />
+                  <PlacementTreemapAndMix
+                    rows={placementQuery.data?.data}
+                    isLoading={placementQuery.isLoading}
+                  />
+                  <PlacementDeviceGroupedBars
+                    rows={placementQuery.data?.data}
+                    isLoading={placementQuery.isLoading}
+                  />
                 </>
               )}
             </CardContent>
@@ -2549,8 +2772,12 @@ export default function DashboardPage() {
               <SelectContent>
                 <SelectItem value="impressions">Por impresiones</SelectItem>
                 <SelectItem value="spend">Por gasto</SelectItem>
-                <SelectItem value="cpa">Por CPA</SelectItem>
-                <SelectItem value="results">Por resultados</SelectItem>
+                {geoQuery.data?.metadata?.objective_breakdown_complete !== false ? (
+                  <>
+                    <SelectItem value="cpa">Por CPA</SelectItem>
+                    <SelectItem value="results">Por resultados</SelectItem>
+                  </>
+                ) : null}
               </SelectContent>
             </Select>
           </div>
@@ -2673,6 +2900,7 @@ export default function DashboardPage() {
                   ) : null}
                 </CardContent>
               </Card>
+              <GeoRegionalEfficiencyBars rows={geoQuery.data?.data ?? []} mapMetric={geoMetric} />
             </>
           ) : null}
 
@@ -2865,9 +3093,7 @@ export default function DashboardPage() {
                     conversations_started: rowActions
                       .filter((a) => String(a.action_type) === "onsite_conversion.messaging_conversation_started_7d")
                       .reduce((s, a) => s + Number(a.value ?? 0), 0),
-                    first_replies: rowActions
-                      .filter((a) => String(a.action_type) === "messaging_first_reply")
-                      .reduce((s, a) => s + Number(a.value ?? 0), 0),
+                    first_replies: sumFirstReplyActions(rowActions),
                     spend: Number(row.spend ?? 0),
                   };
                 }).sort((a, b) => b.conversations_started - a.conversations_started);
@@ -2898,7 +3124,7 @@ export default function DashboardPage() {
                   if (String(a.action_type) === "onsite_conversion.messaging_conversation_started_7d") {
                     entry.conversations_started += Number(a.value ?? 0);
                   }
-                  if (String(a.action_type) === "messaging_first_reply") {
+                  if (isFirstReplyActionType(a.action_type)) {
                     entry.first_replies += Number(a.value ?? 0);
                   }
                 }

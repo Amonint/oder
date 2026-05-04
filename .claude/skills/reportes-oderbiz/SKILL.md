@@ -4,7 +4,7 @@ description: |
   Agente orquestador para generar reportes ejecutivos en LaTeX desde JSON interno
   de Oderbiz, combinando performance propia con inteligencia competitiva y
   trazabilidad completa de fuentes.
-version: 1.2.0
+version: 1.2.1
 author: oderbiz
 tags:
   - executive-report
@@ -35,9 +35,23 @@ Al activarse, responde exactamente:
 
 ## Objetivo del agente
 
-Tomar un JSON de negocio (formato base `llm_context_report.page.v1`), ejecutar
-analisis interno + investigacion competitiva, y generar un reporte nuevo en
+Tomar un JSON de negocio exportado desde Oderbiz (formato **`dashboard_snapshot.page.v1`**
+principal; compatible con JSON histórico `llm_context_report.page.v1` si te lo siguen pegando),
+ejecutar analisis interno + investigacion competitiva, y generar un reporte nuevo en
 LaTeX con fuentes y limitaciones.
+
+### Migracion `dashboard_snapshot` (May 2026)
+
+Desde la app, **Descargar reporte** ahora guarda snapshots con:
+
+- **`dashboard_snapshot.page.v1`**: marca/página. Bloque `data.*` tiene las mismas respuestas API
+  que muestra la UI (`page_insights`, `page_geo`, `page_funnel`, `page_timeseries`, series de conversiones/calidad, etc.);
+  campo `coverage` indica modulo ok/error/skipped (p. ej. competidor solo si eligió uno).
+- **`dashboard_snapshot.account.v1`**: cuenta Ads. Equivalente consolidado (`data.account_dashboard`,
+  placements, audiencia, mensajeria, fatiga creativa, time insights, rankings, inventario de ads, etc.).
+- **`readme`**, **`filters`** y **`coverage`** acompañan cada archivo.
+
+Si el cliente pega **`llm_context_report.page.v1`** (viejo builder resumido), sigue válido hasta que se adapte todo el intake. Para snapshot, sintetiza “visión ejecutiva inicial” combinando `data.page_insights` + totales desde `data.page_timeseries` si no existe `page_overview` legacy.
 
 ---
 
@@ -49,19 +63,33 @@ LaTeX con fuentes y limitaciones.
 
 ### Campos minimos obligatorios
 
+**Legacy (`llm_context_report.page.v1`):**
+
 - `schema_version`
 - `report_metadata`
 - `page_overview`
 - `timeseries_daily`
 
-Dentro de `report_metadata` exigir para version enriquecida:
+**Snapshot (`dashboard_snapshot.page.v1`):**
+
+- `schema_version`
+- `report_metadata`
+- `data.page_insights`
+- `data.page_timeseries` (serie de gasto/impresiones que alimenta el sparkline UI)
+
+Para snapshot, fecha y filtros viven sobre todo en **`filters`** (preset, campaña opcional); `coverage` marca modulos recuperados vs error.
+
+### Metadatos
+
+Dentro de `report_metadata` exigir para version enriquecida legacy o snapshot página:
+
 
 - `account_id`
 - `account_name`
 - `page_id`
 - `page_name`
 - `date_preset`
-- `date_range`
+- `date_range` (legacy en la raíz del JSON; en snapshot puede inferirse con `filters` + periodo devuelto por API)
 - `filters.campaign_id` (nullable)
 - `filters.campaign_name` (nullable)
 - `currency` (nullable)
@@ -69,11 +97,12 @@ Dentro de `report_metadata` exigir para version enriquecida:
 
 ### Campos opcionales de alto valor
 
-- `funnel`
-- `traffic_quality`
-- `geo`
-- `demographics`
-- `campaigns_available`
+**Legacy:** campos en la raíz como `funnel`, `traffic_quality`, `geo`, `demographics`, `campaigns_available`.
+
+**Snapshot (`dashboard_snapshot.page.v1`):**
+
+- equivalentes dentro de **`data`**: `page_funnel`, `page_traffic_quality`, `page_geo`, `demographics_insights_page`, `campaigns`,
+  `page_conversion_timeseries`, `page_traffic_quality_timeseries`, `competitor_ads` (solo si cliente eligió competidor), etc.
 
 ### Regla de validacion
 
@@ -353,7 +382,7 @@ Si ya existe uno igual en fecha:
 `Necesito que me des el JSON para empezar, el JSON de tu negocio.`
 
 **Usuario**
-(pega JSON `llm_context_report.page.v1`)
+(pega JSON `dashboard_snapshot.page.v1` generado desde Oderbiz, o bien legacy `llm_context_report.page.v1`)
 
 **Agente**
 1. valida entrada

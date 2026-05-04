@@ -68,7 +68,7 @@ Documento orientado **solo a lo que el sistema hace hoy**: pantallas, rutas, mó
 - Periodo: hoy, 7/30/90 días, personalizado (modal fechas), máximo.
 - Vista anuncios: **periodo agregado** o **diario** (suma por anuncio).
 - Enlace a vista **Página** (listado de páginas de esa cuenta).
-- **Descargar reporte:** JSON para contexto LLM (`buildLlmContextReport`).
+- **Descargar reporte:** JSON snapshot `dashboard_snapshot.account.v1` (paridad con todas las cargas del dashboard).
 
 **Filtros en cascada**
 
@@ -104,7 +104,7 @@ Documento orientado **solo a lo que el sistema hace hoy**: pantallas, rutas, mó
 - Periodos iguales que en cuenta + rango personalizado.
 - Filtro opcional por **campaña** (solo pauta de esa página).
 - **Inteligencia competitiva:** buscar página competidora, elegir sugerencia, abrir panel (§4).
-- **Descargar reporte:** JSON `buildLlmPageContextReport`.
+- **Descargar reporte:** JSON snapshot `dashboard_snapshot.page.v1` (paridad columnas página + datos competidor si hay uno seleccionado).
 
 **Módulos de datos (página)**
 
@@ -144,7 +144,7 @@ Solo en dashboard de **página**, cuando hay competidor seleccionado.
 |------|-----|
 | `DateRangePickerModal` | Rango personalizado en dashboards |
 | `periodCompare.ts` | Periodo previo y reglas de discontinuidad Meta |
-| `llmContextReport.ts` / `llmPageContextReport.ts` | Armado del JSON de exportación |
+| `accountDashboardExportCollect.ts` / `pageDashboardExportCollect.ts` + `dashboardExportAccount.ts` / `dashboardExportPage.ts` | Recolección y armado JSON de exportación dashboard |
 | `GeoMap`, `ChoroplethMap` | Visualización geográfica |
 | `api/client.ts` | Cliente HTTP y funciones por endpoint |
 

@@ -26,7 +26,7 @@ router = APIRouter(prefix="/accounts", tags=["ads_ranking"])
 PERF_FIELDS = (
     "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,"
     "impressions,clicks,unique_clicks,spend,reach,frequency,cpm,cpp,ctr,"
-    "cost_per_result,purchase_roas,inline_link_clicks,"
+    "cost_per_result,purchase_roas,inline_link_clicks,outbound_clicks,"
     "actions,action_values,cost_per_action_type,date_start,date_stop"
 )
 
@@ -34,7 +34,10 @@ OBJECTIVE_METRIC_TO_ACTION_TYPES = {
     "messaging_conversation_started": [
         "onsite_conversion.messaging_conversation_started_7d"
     ],
-    "messaging_first_reply": ["messaging_first_reply"],
+    "messaging_first_reply": [
+        "messaging_first_reply",
+        "onsite_conversion.messaging_first_reply",
+    ],
     "lead": ["lead", "onsite_conversion.lead_grouped", "leadgen_other"],
 }
 
@@ -62,6 +65,14 @@ def _sum_purchase_values(action_values: object) -> float:
         action_type = str(item.get("action_type") or "")
         if "purchase" in action_type:
             total += _to_float(item.get("value"))
+    return total
+
+
+def _sum_outbound_clicks(row: dict) -> int:
+    total = 0
+    for oc in row.get("outbound_clicks") or []:
+        if str(oc.get("action_type")) == "outbound_click":
+            total += int(_to_float(oc.get("value")))
     return total
 
 
@@ -196,6 +207,7 @@ async def get_ads_performance(
         action_windows = meta_window_list(attrib_param)
 
     try:
+        use_local_maximum_filter = effective_preset == "maximum" and use_time_range is None and filtering is not None
         rows = await fetch_insights_all_pages(
             base_url=base,
             access_token=access_token,
@@ -204,10 +216,17 @@ async def get_ads_performance(
             level="ad",
             date_preset=effective_preset,
             time_range=use_time_range,
-            filtering=filtering,
+            filtering=None if use_local_maximum_filter else filtering,
             time_increment=time_increment,
             action_attribution_windows=action_windows,
         )
+        if use_local_maximum_filter:
+            if aid:
+                rows = [row for row in rows if str(row.get("ad_id") or "").strip() == aid]
+            elif sid:
+                rows = [row for row in rows if str(row.get("adset_id") or "").strip() == sid]
+            elif cid:
+                rows = [row for row in rows if str(row.get("campaign_id") or "").strip() == cid]
     except httpx.HTTPStatusError:
         raise HTTPException(
             status_code=502,
@@ -288,6 +307,7 @@ async def get_ads_performance(
 
         spend = _to_float(row.get("spend"))
         results = _sum_actions_by_types(row.get("actions"), objective_action_types)
+        outbound_total = _sum_outbound_clicks(row)
         cost_per_result = _to_float(row.get("cost_per_result"))
         cpa = cost_per_result if cost_per_result > 0 else (spend / results if results > 0 else None)
         purchase_roas = _to_float(row.get("purchase_roas"))
@@ -305,6 +325,7 @@ async def get_ads_performance(
 
         enriched = {
             **row,
+            "outbound_clicks_total": outbound_total,
             "ad_name": ad_name,
             "creative_name": creative_name,
             "effective_object_story_id": story_id,

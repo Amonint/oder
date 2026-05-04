@@ -13,6 +13,7 @@ import {
   fetchPageConversionTimeseries,
   fetchPageStability,
   fetchPageTrafficQuality,
+  fetchPageTrafficQualityTimeseries,
   fetchPageAdDiagnostics,
   fetchPageFunnel,
   fetchPageTimeseries,
@@ -25,9 +26,12 @@ import { useCompetitorResolve } from "@/hooks/useCompetitorResolve";
 import type { CompetitorResolvedSuggestion } from "@/api/client";
 import RetentionModule from "@/components/RetentionModule";
 import TrafficQualityCard from "@/components/TrafficQualityCard";
+import TrafficQualityTimeseriesCard from "@/components/TrafficQualityTimeseriesCard";
 import PerformanceControlChartCard from "@/components/PerformanceControlChartCard";
+import ConversionCpaControlChartCard from "@/components/ConversionCpaControlChartCard";
 import AdDiagnosticsTable from "@/components/AdDiagnosticsTable";
 import ConversionFunnelCard from "@/components/ConversionFunnelCard";
+import FunnelReplyGaugeCard from "@/components/FunnelReplyGaugeCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,7 +53,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import KpiGrid from "@/components/KpiGrid";
 import GeoMap from "@/components/GeoMap";
-import ChoroplethMap from "@/components/ChoroplethMap";
+import ChoroplethMap, { type ChoroplethMetric } from "@/components/ChoroplethMap";
+import GeoRegionalEfficiencyBars from "@/components/GeoRegionalEfficiencyBars";
 import DemographicsPanel from "@/components/DemographicsPanel";
 import SpendSparkline from "@/components/SpendSparkline";
 import {
@@ -60,10 +65,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { computePrevPeriod, unionCrossesMetaAttributionChange } from "@/lib/periodCompare";
-import { buildLlmPageContextReport } from "@/lib/llmPageContextReport";
+import { buildPageDashboardSnapshot } from "@/lib/dashboardExportPage";
+import { collectPageDashboardExport } from "@/lib/pageDashboardExportCollect";
 import { resolveAdReference } from "@/lib/adReference";
 
 const ALL = "__all__";
+const PAGE_BREAKDOWN_OBJECTIVE_METRIC = "messaging_conversation_started" as const;
 
 const DATE_PRESETS = [
   { value: "today", label: "Hoy" },
@@ -73,6 +80,16 @@ const DATE_PRESETS = [
   { value: "custom", label: "Personalizado" },
   { value: "maximum", label: "Máximo disponible" },
 ] as const;
+
+function isoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function shiftDays(baseIso: string, days: number): string {
+  const d = new Date(`${baseIso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return isoDate(d);
+}
 
 const EMPTY_PUBLICATION_RE = /^(?:publicaci[oó]n:\s*)?["“”'`]\s*["“”'`]$/i;
 function safeCampaignName(name: string | null | undefined, id: string | null | undefined): string {
@@ -106,6 +123,8 @@ export default function PageDashboardPage() {
   const [pageGeoMetric, setPageGeoMetric] = useState<
     "impressions" | "spend" | "cpa" | "results"
   >("impressions");
+  const [choroplethProvinceMetric, setChoroplethProvinceMetric] =
+    useState<ChoroplethMetric>("impressions");
   const [isExportingReport, setIsExportingReport] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
 
@@ -137,16 +156,33 @@ export default function PageDashboardPage() {
   if (!id) return <Navigate to="/accounts" replace />;
   if (!pid) return <Navigate to={`/accounts/${encodeURIComponent(id)}/pages`} replace />;
 
-  const effectiveDateParams = useMemo(() => {
+  const explicitDateWindow = useMemo(() => {
     if (datePreset === "today") {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = isoDate(new Date());
       return { dateStart: today, dateStop: today };
     }
     if (datePreset === "custom" && customDateStart && customDateStop) {
       return { dateStart: customDateStart, dateStop: customDateStop };
     }
-    return { datePreset };
+    if (datePreset === "last_7d") {
+      const stop = isoDate(new Date());
+      return { dateStart: shiftDays(stop, -6), dateStop: stop };
+    }
+    if (datePreset === "last_30d") {
+      const stop = isoDate(new Date());
+      return { dateStart: shiftDays(stop, -29), dateStop: stop };
+    }
+    if (datePreset === "last_90d") {
+      const stop = isoDate(new Date());
+      return { dateStart: shiftDays(stop, -89), dateStop: stop };
+    }
+    return null;
   }, [datePreset, customDateStart, customDateStop]);
+
+  const effectiveDateParams = useMemo(() => {
+    if (explicitDateWindow) return explicitDateWindow;
+    return { datePreset };
+  }, [explicitDateWindow, datePreset]);
 
   function handleDatePresetChange(value: string) {
     if (value === "custom") {
@@ -158,39 +194,52 @@ export default function PageDashboardPage() {
     }
   }
 
-  function handleDownloadReport() {
+  async function handleDownloadReport() {
+    setIsExportingReport(true);
     try {
-      setIsExportingReport(true);
       const account = accountsQuery.data?.data.find((a) => a.id === id);
       const page = pagesQuery.data?.data.find((p) => p.page_id === pid);
       const selectedCampaignName =
         campaignId != null
-          ? (campaignsQuery.data?.data.find((c) => c.id === campaignId)?.name ?? null)
+          ? safeCampaignName(
+              campaignsQuery.data?.data.find((c) => c.id === campaignId)?.name ??
+                null,
+              campaignId,
+            )
           : null;
-      const report = buildLlmPageContextReport({
+      const collected = await collectPageDashboardExport({
+        accountId: id,
+        pageId: pid,
+        datePreset,
+        customDateStart,
+        customDateStop,
+        campaignSelect,
+        demographicsBreakdown: pageDemographicsBreakdown,
+        competitorPageId: selectedCompetitor?.id ?? null,
+      });
+      const report = buildPageDashboardSnapshot({
         accountId: id,
         accountName: account?.name ?? null,
         pageId: pid,
         pageName: page?.name ?? null,
-        datePreset,
-        dateStart: (effectiveDateParams as { dateStart?: string }).dateStart ?? null,
-        dateStop: (effectiveDateParams as { dateStop?: string }).dateStop ?? null,
-        campaignId: campaignId ?? null,
-        campaignName: selectedCampaignName,
         currency: account?.currency ?? null,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-        insights: insightsQuery.data,
-        geo: geoQuery.data,
-        demographics: pageDemographicsQuery.data,
-        funnel: funnelQuery.data,
-        timeseries: pageTimeseriesQuery.data,
-        actions: undefined,
-        traffic: trafficQualityQuery.data,
-        campaigns: campaignsQuery.data?.data ?? [],
-        ads: adsListQuery.data?.data ?? [],
-        adDiagnostics: adDiagnosticsQuery.data?.data ?? [],
+        filters: {
+          date_preset: datePreset,
+          custom_date_start: customDateStart,
+          custom_date_stop: customDateStop,
+          campaign_id: campaignId ?? null,
+          campaign_name: selectedCampaignName,
+          geo_metric_selected_ui: pageGeoMetric,
+          choropleth_metric_selected_ui: choroplethProvinceMetric,
+          demographics_breakdown: pageDemographicsBreakdown,
+          competitor: selectedCompetitor
+            ? { page_id: selectedCompetitor.id, name: selectedCompetitor.name }
+            : null,
+        },
+        collected,
       });
-      const filename = `llm_context_report_page_${pid.replace(/[^a-zA-Z0-9_-]/g, "_")}_${new Date().toISOString().slice(0, 10)}.json`;
+      const filename = `dashboard_snapshot_page_${pid.replace(/[^a-zA-Z0-9_-]/g, "_")}_${new Date().toISOString().slice(0, 10)}.json`;
       const blob = new Blob([JSON.stringify(report, null, 2)], {
         type: "application/json;charset=utf-8",
       });
@@ -207,7 +256,11 @@ export default function PageDashboardPage() {
     }
   }
 
-  const opts = { ...effectiveDateParams, campaignId };
+  const opts = {
+    ...effectiveDateParams,
+    campaignId,
+    objectiveMetric: PAGE_BREAKDOWN_OBJECTIVE_METRIC,
+  };
 
   const insightsQuery = useQuery({
     queryKey: ["page-insights", id, pid, datePreset, customDateStart, customDateStop, campaignId],
@@ -280,6 +333,12 @@ export default function PageDashboardPage() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const trafficQualityTsQuery = useQuery({
+    queryKey: ["page-traffic-quality-ts", id, pid, datePreset, customDateStart, customDateStop, campaignId],
+    queryFn: () => fetchPageTrafficQualityTimeseries(id, pid, opts),
+    staleTime: 5 * 60 * 1000,
+  });
+
   const pageStabilityQuery = useQuery({
     queryKey: ["page-stability", id, pid, campaignId],
     queryFn: () => fetchPageStability(id, pid, { campaignId }),
@@ -342,19 +401,26 @@ export default function PageDashboardPage() {
   }, [conversionTsQuery.data?.data]);
 
   const prevPageConvPeriod = useMemo(() => {
+    if (datePreset === "maximum") return null;
+    if (explicitDateWindow) {
+      return computePrevPeriod(explicitDateWindow.dateStart, explicitDateWindow.dateStop);
+    }
     if (!pageConvBounds) return null;
     return computePrevPeriod(pageConvBounds.start, pageConvBounds.stop);
-  }, [pageConvBounds]);
+  }, [datePreset, explicitDateWindow, pageConvBounds]);
 
   const pageConvDiscontinuity = useMemo(() => {
-    if (!pageConvBounds || !prevPageConvPeriod) return false;
+    if (!prevPageConvPeriod) return false;
+    const currStart = explicitDateWindow?.dateStart ?? pageConvBounds?.start;
+    const currStop = explicitDateWindow?.dateStop ?? pageConvBounds?.stop;
+    if (!currStart || !currStop) return false;
     return unionCrossesMetaAttributionChange(
-      pageConvBounds.start,
-      pageConvBounds.stop,
+      currStart,
+      currStop,
       prevPageConvPeriod.dateStart,
       prevPageConvPeriod.dateStop,
     );
-  }, [pageConvBounds, prevPageConvPeriod]);
+  }, [explicitDateWindow, pageConvBounds, prevPageConvPeriod]);
 
   const pageConversionPrevQuery = useQuery({
     queryKey: [
@@ -384,7 +450,11 @@ export default function PageDashboardPage() {
         ? clicksRaw
         : parseInt(String(clicksRaw ?? "0"), 10) || 0;
     const results =
-      typeof r.results === "number" ? r.results : parseInt(String(r.results ?? "0"), 10) || 0;
+      typeof r.results === "number"
+        ? r.results
+        : r.results == null
+          ? undefined
+          : parseInt(String(r.results), 10) || 0;
     const cpa =
       r.cpa === null || r.cpa === undefined ? null : Number(r.cpa);
     return {
@@ -399,16 +469,32 @@ export default function PageDashboardPage() {
     };
   });
 
-  const choroplethMetric: "spend" | "impressions" =
-    pageGeoMetric === "spend" ? "spend" : "impressions";
+  const choroplethRows = geoRows.map((r) => ({
+    region_name: r.region_name,
+    spend: parseFloat(String(r.spend ?? "0")) || 0,
+    impressions: r.impressions,
+    clicks: r.clicks,
+    reach: r.reach,
+    results: r.results,
+    cpa: r.cpa,
+  }));
 
-  const geoMeta: GeoMetadata = {
+  const geoMeta: GeoMetadata = geoQuery.data?.metadata ?? {
     scope: "account",
     ad_id: null,
     total_rows: geoRows.length,
-    complete_coverage: true,
+    complete_coverage: false,
+    objective_metric: PAGE_BREAKDOWN_OBJECTIVE_METRIC,
+    objective_breakdown_complete: null,
+    warning: null,
     note: `Página: ${pid}`,
   };
+
+  useEffect(() => {
+    if (geoMeta.objective_breakdown_complete === false && (pageGeoMetric === "cpa" || pageGeoMetric === "results")) {
+      setPageGeoMetric("spend");
+    }
+  }, [geoMeta.objective_breakdown_complete, pageGeoMetric]);
 
   const primaryError = insightsQuery.error ?? null;
 
@@ -470,17 +556,46 @@ export default function PageDashboardPage() {
         comparisonSeries={pageConversionPrevQuery.data?.data}
         comparisonLoading={pageConversionPrevQuery.isLoading}
         showAttributionDiscontinuity={pageConvDiscontinuity}
+        currentPeriod={
+          explicitDateWindow
+            ? { dateStart: explicitDateWindow.dateStart, dateStop: explicitDateWindow.dateStop }
+            : pageConvBounds
+            ? { dateStart: pageConvBounds.start, dateStop: pageConvBounds.stop }
+            : undefined
+        }
+        previousPeriod={
+          prevPageConvPeriod
+            ? { dateStart: prevPageConvPeriod.dateStart, dateStop: prevPageConvPeriod.dateStop }
+            : undefined
+        }
+      />
+      <ConversionCpaControlChartCard
+        data={conversionTsQuery.data?.data}
+        isLoading={conversionTsQuery.isLoading}
       />
       {/* Módulo 2: Embudo de Conversión */}
       <ConversionFunnelCard
         data={funnelQuery.data}
         isLoading={funnelQuery.isLoading}
       />
+      <FunnelReplyGaugeCard
+        funnel={funnelQuery.data}
+        insightsRow={insightsQuery.data?.data?.[0]}
+        isLoading={funnelQuery.isLoading || insightsQuery.isLoading}
+      />
 
       {/* Módulo 3: Calidad de Tráfico */}
       <TrafficQualityCard
         data={trafficQualityQuery.data}
         isLoading={trafficQualityQuery.isLoading}
+      />
+      <TrafficQualityTimeseriesCard
+        data={trafficQualityTsQuery.data?.data}
+        isLoading={trafficQualityTsQuery.isLoading}
+        isError={trafficQualityTsQuery.isError}
+        errorMessage={
+          trafficQualityTsQuery.error instanceof Error ? trafficQualityTsQuery.error.message : undefined
+        }
       />
 
       <PerformanceControlChartCard
@@ -514,8 +629,12 @@ export default function PageDashboardPage() {
                 <SelectContent>
                   <SelectItem value="impressions">Por impresiones</SelectItem>
                   <SelectItem value="spend">Por gasto</SelectItem>
-                  <SelectItem value="cpa">Por CPA</SelectItem>
-                  <SelectItem value="results">Por resultados</SelectItem>
+                  {geoMeta.objective_breakdown_complete !== false ? (
+                    <>
+                      <SelectItem value="cpa">Por CPA</SelectItem>
+                      <SelectItem value="results">Por resultados</SelectItem>
+                    </>
+                  ) : null}
                 </SelectContent>
               </Select>
             </div>
@@ -525,7 +644,7 @@ export default function PageDashboardPage() {
               metric={pageGeoMetric}
               extraCaption={
                 pageGeoMetric === "cpa"
-                  ? "CPA por región según resultados que devuelve Meta en este desglose; compáralo con el CPA agregado de los KPIs del mismo periodo y filtro de campaña."
+                  ? "CPA por región alineado al objetivo activo de resultados cuando Meta sí lo devuelve en este desglose."
                   : undefined
               }
             />
@@ -537,15 +656,34 @@ export default function PageDashboardPage() {
             ) : null}
           </div>
           {geoQuery.data && geoQuery.data.data.length > 0 && (
-            <ChoroplethMap
-              data={geoQuery.data.data.map((row) => ({
-                region_name: row.region_name || row.region || "",
-                spend: parseFloat(String(row.spend ?? "0")),
-                impressions: parseInt(String(row.impressions ?? "0"), 10) || undefined,
-              }))}
-              metric={choroplethMetric}
-            />
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-muted-foreground text-sm">
+                  Métrica del coropleta (provincias)
+                </span>
+                <Select
+                  value={choroplethProvinceMetric}
+                  onValueChange={(v) => setChoroplethProvinceMetric(v as ChoroplethMetric)}
+                >
+                  <SelectTrigger className="w-[220px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="impressions">Impresiones</SelectItem>
+                    <SelectItem value="spend">Gasto</SelectItem>
+                    <SelectItem value="clicks">Clics</SelectItem>
+                    <SelectItem value="reach">Alcance</SelectItem>
+                    <SelectItem value="results">Resultados</SelectItem>
+                    <SelectItem value="cpa">CPA</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <ChoroplethMap data={choroplethRows} metric={choroplethProvinceMetric} />
+            </div>
           )}
+          {geoRows.length > 0 ? (
+            <GeoRegionalEfficiencyBars rows={geoRows} mapMetric={pageGeoMetric} />
+          ) : null}
         </div>
       ) : null}
 
@@ -651,10 +789,10 @@ export default function PageDashboardPage() {
           </Button>
           <Button
             type="button"
-            onClick={handleDownloadReport}
-            disabled={isExportingReport || insightsQuery.isLoading || pageTimeseriesQuery.isLoading}
+            onClick={() => void handleDownloadReport()}
+            disabled={isExportingReport}
           >
-            {isExportingReport ? "Generando..." : "Descargar reporte"}
+            {isExportingReport ? "Recolectando módulos…" : "Descargar reporte"}
           </Button>
         </div>
       </div>

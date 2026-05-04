@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections import defaultdict
+from datetime import date
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,11 +15,16 @@ from oderbiz_analytics.adapters.meta.graph_edges import fetch_graph_edge_all_pag
 from oderbiz_analytics.adapters.meta.insights import fetch_insights, fetch_insights_all_pages
 from oderbiz_analytics.api.deps import get_meta_access_token
 from oderbiz_analytics.api.routes.demographics import DEMO_FIELDS, VALID_BREAKDOWNS
-from oderbiz_analytics.api.routes.geo_insights import GEO_FIELDS, _extract_results_and_cpa
+from oderbiz_analytics.api.routes.geo_insights import (
+    GEO_FIELDS,
+    _extract_results_and_cpa,
+    _mask_unavailable_objective_breakdown,
+    _objective_breakdown_status,
+)
 from oderbiz_analytics.api.utils import normalize_ad_account_id
 from oderbiz_analytics.config import Settings, get_settings
 from oderbiz_analytics.services.ad_label import format_ad_label, infer_ad_label_source
-from oderbiz_analytics.services.geo_formatter import enrich_geo_row
+from oderbiz_analytics.services.geo_formatter import enrich_geo_row, get_geo_metadata
 
 router = APIRouter(prefix="/accounts", tags=["pages"])
 
@@ -31,9 +38,21 @@ def _make_cache_key(
     adset_id: str = "",
     ad_id: str = "",
     breakdown: str = "",
+    objective_metric: str = "",
+    *,
+    date_start: str = "",
+    date_stop: str = "",
 ) -> str:
+    rng = ""
+    ds, de = date_start.strip(), date_stop.strip()
+    if ds and de:
+        rng = f"|rng:{ds}:{de}"
+    elif date_preset in {"today", "last_7d", "last_30d", "last_90d"}:
+        # Evita respuestas stale en presets relativos: rota cache por dia calendario.
+        rng = f"|preset_day:{date.today().isoformat()}"
     raw = (
-        f"{account_id}|{page_id}|{endpoint}|{date_preset}|{campaign_id}|{adset_id}|{ad_id}|{breakdown}"
+        f"{account_id}|{page_id}|{endpoint}|{date_preset}|"
+        f"{campaign_id}|{adset_id}|{ad_id}|{breakdown}|{objective_metric}{rng}"
     )
     return hashlib.sha256(raw.encode()).hexdigest()
 
@@ -81,6 +100,8 @@ async def get_pages_list(
         account_id=normalized_id,
         endpoint="pages_list",
         date_preset=effective_preset,
+        date_start=ds if effective_time_range else "",
+        date_stop=de if effective_time_range else "",
     )
 
     # Check cache first
@@ -192,7 +213,7 @@ async def _get_adset_ids_for_page(
         base_url=base,
         access_token=access_token,
         path=f"{account_id}/adsets",
-        fields="id,promoted_object",
+        fields="promoted_object",
     )
     ids = [
         a["id"]
@@ -255,7 +276,7 @@ def _extract_cpa(rows: list[dict]) -> list[dict]:
     """
     Para cada fila (un día), calcula:
       - spend: float
-      - cpa: float (cost_per_action_type filtrado por lead/purchase/messaging, primer match)
+      - cpa: float (gasto ÷ conversiones relevantes expuestas en `conversions`)
       - conversions: float (suma de actions relevantes)
       - revenue: float (suma de action_values por purchase)
       - replied: float (messaging_conversation_replied_7d)
@@ -274,6 +295,7 @@ def _extract_cpa(rows: list[dict]) -> list[dict]:
 
         # conversiones
         conversions = 0.0
+        conversations_started = 0.0
         replied = 0.0
         depth2 = 0.0
         for a in (row.get("actions") or []):
@@ -281,19 +303,15 @@ def _extract_cpa(rows: list[dict]) -> list[dict]:
             val = float(a.get("value", 0) or 0)
             if at in CONVERSION_TYPES:
                 conversions += val
+            if at == "onsite_conversion.messaging_conversation_started_7d":
+                conversations_started += val
             if at == "onsite_conversion.messaging_conversation_replied_7d":
                 replied += val
             if at == "onsite_conversion.messaging_user_depth_2_message_send":
                 depth2 += val
 
-        # CPA
-        cpa = 0.0
-        for a in (row.get("cost_per_action_type") or []):
-            if a.get("action_type") in CONVERSION_TYPES:
-                cpa = float(a.get("value", 0) or 0)
-                break
-        if cpa == 0.0 and conversions > 0:
-            cpa = round(spend / conversions, 2)
+        # CPA coherente con el total de conversiones expuesto.
+        cpa = round(spend / conversions, 2) if conversions > 0 else 0.0
 
         # revenue
         revenue = 0.0
@@ -306,6 +324,7 @@ def _extract_cpa(rows: list[dict]) -> list[dict]:
             "spend": round(spend, 2),
             "cpa": round(cpa, 2),
             "conversions": round(conversions, 0),
+            "conversations_started": round(conversations_started, 0),
             "revenue": round(revenue, 2),
             "replied": round(replied, 0),
             "depth2": round(depth2, 0),
@@ -360,7 +379,8 @@ async def get_page_insights(
         effective_time_range = {"since": ds, "until": de}
 
     cache_key = _make_cache_key(normalized_id, "page_insights", page_id=page_id,
-        date_preset=effective_preset, campaign_id=cid, adset_id=sid, ad_id=aid)
+        date_preset=effective_preset, campaign_id=cid, adset_id=sid, ad_id=aid,
+        date_start=ds if effective_time_range else "", date_stop=de if effective_time_range else "")
     cached = get_cache(settings.duckdb_path, cache_key)
     if cached is not None:
         return cached
@@ -422,7 +442,8 @@ async def get_page_placements(
         effective_time_range = {"since": ds, "until": de}
 
     cache_key = _make_cache_key(normalized_id, "page_placements", page_id=page_id,
-        date_preset=effective_preset, campaign_id=cid, adset_id=sid, ad_id=aid)
+        date_preset=effective_preset, campaign_id=cid, adset_id=sid, ad_id=aid,
+        date_start=ds if effective_time_range else "", date_stop=de if effective_time_range else "")
     cached = get_cache(settings.duckdb_path, cache_key)
     if cached is not None:
         return cached
@@ -469,6 +490,10 @@ async def get_page_geo(
     campaign_id: str | None = Query(None),
     adset_id: str | None = Query(None),
     ad_id: str | None = Query(None),
+    objective_metric: str | None = Query(
+        None,
+        description="Métrica objetivo para alinear resultados y CPA derivados.",
+    ),
     settings: Settings = Depends(get_settings),
     access_token: str = Depends(get_meta_access_token),
 ):
@@ -485,7 +510,9 @@ async def get_page_geo(
         effective_time_range = {"since": ds, "until": de}
 
     cache_key = _make_cache_key(normalized_id, "page_geo", page_id=page_id,
-        date_preset=effective_preset, campaign_id=cid, adset_id=sid, ad_id=aid)
+        date_preset=effective_preset, campaign_id=cid, adset_id=sid, ad_id=aid,
+        objective_metric=(objective_metric or "").strip(),
+        date_start=ds if effective_time_range else "", date_stop=de if effective_time_range else "")
     cached = get_cache(settings.duckdb_path, cache_key)
     if cached is not None:
         return cached
@@ -493,7 +520,13 @@ async def get_page_geo(
     adset_ids = await _get_adset_ids_for_page(base, access_token, normalized_id, page_id, settings)
     filtering = _page_filtering(adset_ids, campaign_id=cid, adset_id=sid, ad_id=aid)
     if not filtering:
-        result = {"data": [], "page_id": page_id, "date_preset": effective_preset, "breakdowns": ["region"]}
+        result = {
+            "data": [],
+            "page_id": page_id,
+            "date_preset": effective_preset,
+            "breakdowns": ["region"],
+            "metadata": get_geo_metadata(scope="account", ad_id=None, total_rows=0),
+        }
         set_cache(settings.duckdb_path, cache_key, result)
         return result
 
@@ -513,9 +546,68 @@ async def get_page_geo(
     enriched_rows = []
     for row in rows:
         enriched = enrich_geo_row(row)
-        enriched.update(_extract_results_and_cpa(row))
+        enriched.update(_extract_results_and_cpa(row, objective_metric=objective_metric))
         enriched_rows.append(enriched)
-    result = {"data": enriched_rows, "page_id": page_id, "date_preset": effective_preset, "breakdowns": ["region"]}
+
+    objective_status = None
+    if objective_metric is not None:
+        aggregate_rows = await fetch_insights_all_pages(
+            base_url=base,
+            access_token=access_token,
+            ad_account_id=normalized_id,
+            fields=GEO_FIELDS,
+            date_preset=effective_preset if not effective_time_range else None,
+            time_range=effective_time_range,
+            level="account",
+            filtering=filtering,
+        )
+        aggregate_row = aggregate_rows[0] if aggregate_rows else {}
+        objective_status = _objective_breakdown_status(
+            enriched_rows,
+            aggregate_row,
+            objective_metric=objective_metric,
+        )
+        if objective_status and not bool(objective_status["objective_breakdown_complete"]):
+            enriched_rows = _mask_unavailable_objective_breakdown(enriched_rows)
+    result = {
+        "data": enriched_rows,
+        "page_id": page_id,
+        "date_preset": effective_preset,
+        "breakdowns": ["region"],
+        "metadata": get_geo_metadata(
+            scope="account",
+            ad_id=None,
+            total_rows=len(enriched_rows),
+            complete_coverage=bool(
+                objective_status["objective_breakdown_complete"]
+                if objective_status is not None
+                else True
+            ),
+            objective_metric=(
+                str(objective_status["objective_metric"]) if objective_status is not None else None
+            ),
+            objective_results_total=(
+                float(objective_status["objective_results_total"])
+                if objective_status is not None
+                else None
+            ),
+            objective_results_breakdown_total=(
+                float(objective_status["objective_results_breakdown_total"])
+                if objective_status is not None
+                else None
+            ),
+            objective_breakdown_complete=(
+                bool(objective_status["objective_breakdown_complete"])
+                if objective_status is not None
+                else None
+            ),
+            warning=(
+                str(objective_status["warning"])
+                if objective_status and objective_status["warning"]
+                else None
+            ),
+        ),
+    }
     set_cache(settings.duckdb_path, cache_key, result)
     return result
 
@@ -535,6 +627,10 @@ async def get_page_demographics(
     campaign_id: str | None = Query(None),
     adset_id: str | None = Query(None),
     ad_id: str | None = Query(None),
+    objective_metric: str | None = Query(
+        None,
+        description="Métrica objetivo para alinear resultados y CPA derivados.",
+    ),
     settings: Settings = Depends(get_settings),
     access_token: str = Depends(get_meta_access_token),
 ):
@@ -566,6 +662,9 @@ async def get_page_demographics(
         adset_id=sid,
         ad_id=aid,
         breakdown=breakdown,
+        objective_metric=(objective_metric or "").strip(),
+        date_start=ds if effective_time_range else "",
+        date_stop=de if effective_time_range else "",
     )
     cached = get_cache(settings.duckdb_path, cache_key)
     if cached is not None:
@@ -607,11 +706,18 @@ async def get_page_demographics(
     except httpx.RequestError:
         raise HTTPException(status_code=502, detail="No se pudo contactar a Meta.") from None
 
+    enriched_rows = []
+    for row in rows:
+        enriched = dict(row)
+        enriched.update(_extract_results_and_cpa(row, objective_metric=objective_metric))
+        enriched_rows.append(enriched)
+
     result = {
-        "data": rows,
+        "data": enriched_rows,
         "breakdown": breakdown,
         "date_preset": effective_preset if not effective_time_range else None,
         "time_range": effective_time_range,
+        "objective_metric": (objective_metric or "").strip().lower() or None,
         "note": "reach excluido de este breakdown para respetar limitaciones históricas de Meta.",
         "page_id": page_id,
         "campaign_id": cid or None,
@@ -652,7 +758,8 @@ async def get_page_actions(
         effective_time_range = {"since": ds, "until": de}
 
     cache_key = _make_cache_key(normalized_id, "page_actions", page_id=page_id,
-        date_preset=effective_preset, campaign_id=cid, adset_id=sid, ad_id=aid)
+        date_preset=effective_preset, campaign_id=cid, adset_id=sid, ad_id=aid,
+        date_start=ds if effective_time_range else "", date_stop=de if effective_time_range else "")
     cached = get_cache(settings.duckdb_path, cache_key)
     if cached is not None:
         return cached
@@ -717,7 +824,8 @@ async def get_page_timeseries(
         effective_time_range = {"since": ds, "until": de}
 
     cache_key = _make_cache_key(normalized_id, "page_timeseries", page_id=page_id,
-        date_preset=effective_preset, campaign_id=cid, adset_id=sid, ad_id=aid)
+        date_preset=effective_preset, campaign_id=cid, adset_id=sid, ad_id=aid,
+        date_start=ds if effective_time_range else "", date_stop=de if effective_time_range else "")
     cached = get_cache(settings.duckdb_path, cache_key)
     if cached is not None:
         return cached
@@ -771,8 +879,15 @@ async def get_page_conversion_timeseries(
     if ds and de:
         effective_time_range = {"since": ds, "until": de}
 
-    cache_key = _make_cache_key(normalized_id, "page_conv_ts", page_id=page_id,
-        date_preset=effective_preset, campaign_id=cid)
+    cache_key = _make_cache_key(
+        normalized_id,
+        "page_conv_ts",
+        page_id=page_id,
+        date_preset=effective_preset,
+        campaign_id=cid,
+        date_start=ds if effective_time_range else "",
+        date_stop=de if effective_time_range else "",
+    )
     cached = get_cache(settings.duckdb_path, cache_key)
     if cached is not None:
         return cached
@@ -828,7 +943,8 @@ async def get_page_traffic_quality(
         effective_time_range = {"since": ds, "until": de}
 
     cache_key = _make_cache_key(normalized_id, "page_traffic_quality", page_id=page_id,
-        date_preset=effective_preset, campaign_id=cid)
+        date_preset=effective_preset, campaign_id=cid,
+        date_start=ds if effective_time_range else "", date_stop=de if effective_time_range else "")
     cached = get_cache(settings.duckdb_path, cache_key)
     if cached is not None:
         return cached
@@ -888,6 +1004,104 @@ async def get_page_traffic_quality(
     return result
 
 
+@router.get("/{ad_account_id}/pages/{page_id}/traffic-quality/timeseries")
+async def get_page_traffic_quality_timeseries(
+    ad_account_id: str,
+    page_id: str,
+    date_preset: str | None = Query(None),
+    date_start: str | None = Query(None),
+    date_stop: str | None = Query(None),
+    campaign_id: str | None = Query(None),
+    settings: Settings = Depends(get_settings),
+    access_token: str = Depends(get_meta_access_token),
+):
+    """Serie diaria: outbound, CTR único y gasto para ver tendencia de calidad de tráfico."""
+    normalized_id = normalize_ad_account_id(ad_account_id)
+    effective_preset = date_preset if date_preset else "last_30d"
+    base = f"https://graph.facebook.com/{settings.meta_graph_version}"
+    cid = (campaign_id or "").strip()
+
+    ds = (date_start or "").strip()
+    de = (date_stop or "").strip()
+    _validate_custom_range(ds, de)
+    effective_time_range: dict[str, str] | None = None
+    if ds and de:
+        effective_time_range = {"since": ds, "until": de}
+
+    cache_key = _make_cache_key(
+        normalized_id,
+        "page_traffic_quality_ts",
+        page_id=page_id,
+        date_preset=effective_preset,
+        campaign_id=cid,
+        date_start=ds if effective_time_range else "",
+        date_stop=de if effective_time_range else "",
+    )
+    cached = get_cache(settings.duckdb_path, cache_key)
+    if cached is not None:
+        return cached
+
+    adset_ids = await _get_adset_ids_for_page(base, access_token, normalized_id, page_id, settings)
+    filtering = _page_filtering(adset_ids, campaign_id=cid)
+    if not filtering:
+        result = {"data": [], "page_id": page_id, "date_preset": effective_preset}
+        set_cache(settings.duckdb_path, cache_key, result)
+        return result
+
+    try:
+        rows = await fetch_insights_all_pages(
+            base_url=base,
+            access_token=access_token,
+            ad_account_id=normalized_id,
+            fields="spend,impressions,outbound_clicks,unique_clicks,unique_ctr,date_start,date_stop",
+            date_preset=effective_preset if not effective_time_range else None,
+            time_range=effective_time_range,
+            level="account",
+            filtering=filtering,
+            time_increment=1,
+        )
+    except httpx.HTTPStatusError:
+        raise HTTPException(status_code=502, detail="Error al obtener serie de calidad de tráfico.") from None
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="No se pudo contactar a Meta.") from None
+
+    out: list[dict] = []
+    for row in rows:
+        d = str(row.get("date_start") or row.get("date_stop") or "").strip()
+        if not d:
+            continue
+        spend = float(row.get("spend", 0) or 0)
+        impressions = int(float(row.get("impressions", 0) or 0))
+        unique_clicks = int(float(row.get("unique_clicks", 0) or 0))
+        outbound = 0
+        for oc in row.get("outbound_clicks") or []:
+            if oc.get("action_type") == "outbound_click":
+                outbound += int(float(oc.get("value", 0) or 0))
+        uctr_raw = row.get("unique_ctr")
+        try:
+            if uctr_raw is None or uctr_raw == "":
+                uctr = (unique_clicks / impressions * 100.0) if impressions > 0 else 0.0
+            else:
+                s = str(uctr_raw).strip().rstrip("%")
+                uctr = float(s)
+        except (TypeError, ValueError):
+            uctr = (unique_clicks / impressions * 100.0) if impressions > 0 else 0.0
+        out.append(
+            {
+                "date": d,
+                "spend": round(spend, 2),
+                "impressions": impressions,
+                "unique_clicks": unique_clicks,
+                "outbound_clicks": outbound,
+                "unique_ctr": round(uctr, 4),
+            }
+        )
+    out.sort(key=lambda r: r["date"])
+    result = {"data": out, "page_id": page_id, "date_preset": effective_preset}
+    set_cache(settings.duckdb_path, cache_key, result)
+    return result
+
+
 @router.get("/{ad_account_id}/pages/{page_id}/ad-diagnostics")
 async def get_page_ad_diagnostics(
     ad_account_id: str,
@@ -912,8 +1126,9 @@ async def get_page_ad_diagnostics(
     if ds and de:
         effective_time_range = {"since": ds, "until": de}
 
-    cache_key = _make_cache_key(normalized_id, "page_ad_diag", page_id=page_id,
-        date_preset=effective_preset, campaign_id=cid)
+    cache_key = _make_cache_key(normalized_id, "page_ad_diag_spark", page_id=page_id,
+        date_preset=effective_preset, campaign_id=cid,
+        date_start=ds if effective_time_range else "", date_stop=de if effective_time_range else "")
     cached = get_cache(settings.duckdb_path, cache_key)
     if cached is not None:
         return cached
@@ -941,6 +1156,44 @@ async def get_page_ad_diagnostics(
     # Ordenar por gasto desc, tomar top 5
     sorted_rows = sorted(rows, key=lambda r: float(r.get("spend", 0) or 0), reverse=True)
     top5 = sorted_rows[:5]
+
+    ad_ids_top = [
+        str(r.get("ad_id") or "").strip() for r in top5 if str(r.get("ad_id") or "").strip()
+    ]
+    daily_by_ad: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    if ad_ids_top and filtering:
+        try:
+            daily_filter = list(filtering) + [
+                {"field": "ad.id", "operator": "IN", "value": ad_ids_top}
+            ]
+            daily_rows = await fetch_insights_all_pages(
+                base_url=base,
+                access_token=access_token,
+                ad_account_id=normalized_id,
+                fields="ad_id,spend,date_start",
+                date_preset=effective_preset if not effective_time_range else None,
+                time_range=effective_time_range,
+                level="ad",
+                filtering=daily_filter,
+                time_increment=1,
+            )
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            daily_rows = []
+        else:
+            for row in daily_rows:
+                if not isinstance(row, dict):
+                    continue
+                aid = str(row.get("ad_id") or "").strip()
+                d = str(row.get("date_start") or "").strip()
+                if not aid or not d:
+                    continue
+                try:
+                    sp = float(row.get("spend", 0) or 0)
+                except (TypeError, ValueError):
+                    sp = 0.0
+                daily_by_ad[aid].append((d, sp))
+            for aid in list(daily_by_ad.keys()):
+                daily_by_ad[aid].sort(key=lambda x: x[0])
 
     def _cpa_from_row(row: dict) -> float | None:
         spend = float(row.get("spend", 0) or 0)
@@ -975,6 +1228,8 @@ async def get_page_ad_diagnostics(
             if a.get("action_type") == "post_engagement"
         )
         engagement_rate = round((post_engagement / impressions) * 100, 2) if impressions > 0 else 0.0
+        aid = str(r.get("ad_id", "") or "")
+        daily_spend = [round(sp, 2) for _, sp in daily_by_ad.get(aid, [])]
         enriched.append({
             "ad_id": r.get("ad_id", ""),
             "ad_name": format_ad_label(
@@ -994,6 +1249,7 @@ async def get_page_ad_diagnostics(
             "cpm": round(float(r.get("cpm", 0) or 0), 2),
             "engagement_rate": engagement_rate,
             "cpa": _cpa_from_row(r),
+            "daily_spend": daily_spend,
         })
 
     result = {"data": enriched, "page_id": page_id, "date_preset": effective_preset}
@@ -1026,7 +1282,8 @@ async def get_page_funnel(
         effective_time_range = {"since": ds, "until": de}
 
     cache_key = _make_cache_key(normalized_id, "page_funnel", page_id=page_id,
-        date_preset=effective_preset, campaign_id=cid)
+        date_preset=effective_preset, campaign_id=cid,
+        date_start=ds if effective_time_range else "", date_stop=de if effective_time_range else "")
     cached = get_cache(settings.duckdb_path, cache_key)
     if cached is not None:
         return cached
@@ -1075,7 +1332,7 @@ async def get_page_funnel(
             val = int(float(a.get("value", 0) or 0))
             if at == "onsite_conversion.messaging_conversation_started_7d":
                 total_conversations += val
-            elif at == "onsite_conversion.messaging_first_reply":
+            elif at in {"onsite_conversion.messaging_first_reply", "messaging_first_reply"}:
                 total_first_replies += val
 
     result = {

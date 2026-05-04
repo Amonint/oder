@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from oderbiz_analytics.adapters.meta.insights import fetch_insights
 from oderbiz_analytics.api.deps import get_meta_access_token
+from oderbiz_analytics.api.routes.geo_insights import _extract_results_and_cpa
 from oderbiz_analytics.api.utils import normalize_ad_account_id
 from oderbiz_analytics.config import Settings, get_settings
 
@@ -28,6 +29,10 @@ async def get_demographics_insights(
     campaign_id: str | None = Query(None),
     adset_id: str | None = Query(None),
     ad_id: str | None = Query(None),
+    objective_metric: str = Query(
+        "messaging_conversation_started",
+        description="Métrica objetivo para alinear resultados y CPA derivados.",
+    ),
     settings: Settings = Depends(get_settings),
     access_token: str = Depends(get_meta_access_token),
 ):
@@ -94,10 +99,17 @@ async def get_demographics_insights(
             status_code=502, detail="No se pudo contactar a la API de Meta."
         ) from None
 
+    enriched_rows = []
+    for row in rows:
+        enriched = dict(row)
+        enriched.update(_extract_results_and_cpa(row, objective_metric=objective_metric))
+        enriched_rows.append(enriched)
+
     return {
-        "data": rows,
+        "data": enriched_rows,
         "breakdown": breakdown,
         "date_preset": effective_preset,
         "time_range": use_time_range,
+        "objective_metric": objective_metric.strip().lower(),
         "note": "reach excluido de este breakdown para respetar limitaciones históricas de Meta.",
     }

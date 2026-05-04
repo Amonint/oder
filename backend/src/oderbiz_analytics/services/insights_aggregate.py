@@ -17,7 +17,7 @@ def _safe_float(val: object) -> float:
         return 0.0
 
 
-def _add_actions(dest: list[dict], src: list[dict]) -> list[dict]:
+def add_actions_sum(dest: list[dict], src: list[dict]) -> list[dict]:
     """Merge src actions into dest list, summing values for matching action_type."""
     by_type: dict[str, float] = {a["action_type"]: _safe_float(a.get("value")) for a in dest}
     for action in src:
@@ -31,8 +31,9 @@ def aggregate_ad_rows(rows: list[dict]) -> list[dict]:
     Aggregate daily rows (time_increment=1) into one row per ad_id.
     Numeric fields are summed; actions and cost_per_action_type are merged.
     """
-    SUM_FIELDS = {"impressions", "clicks", "reach"}
+    SUM_FIELDS = {"impressions", "clicks", "reach", "unique_clicks", "inline_link_clicks"}
     DECIMAL_FIELDS = {"spend"}
+    FLOAT_SUM = {"freq_weighted_numerator"}  # sum(frequency * impressions) for weighted avg
 
     buckets: dict[str, dict] = {}
 
@@ -52,9 +53,13 @@ def aggregate_ad_rows(rows: list[dict]) -> list[dict]:
                 "impressions": 0,
                 "clicks": 0,
                 "reach": 0,
+                "unique_clicks": 0,
+                "inline_link_clicks": 0,
                 "spend": Decimal("0"),
+                "freq_weighted_numerator": 0.0,
                 "actions": [],
                 "cost_per_action_type": [],
+                "outbound_clicks": [],
             }
 
         b = buckets[ad_id]
@@ -68,13 +73,21 @@ def aggregate_ad_rows(rows: list[dict]) -> list[dict]:
             except InvalidOperation:
                 pass
 
+        impr_i = int(row.get("impressions") or 0)
+        f_row = _safe_float(row.get("frequency"))
+        if impr_i > 0 and f_row > 0:
+            b["freq_weighted_numerator"] = b["freq_weighted_numerator"] + (f_row * impr_i)
+
         if row.get("actions"):
-            b["actions"] = _add_actions(b["actions"], row["actions"])
+            b["actions"] = add_actions_sum(b["actions"], row["actions"])
 
         if row.get("cost_per_action_type"):
-            b["cost_per_action_type"] = _add_actions(
+            b["cost_per_action_type"] = add_actions_sum(
                 b["cost_per_action_type"], row["cost_per_action_type"]
             )
+
+        if row.get("outbound_clicks"):
+            b["outbound_clicks"] = add_actions_sum(b["outbound_clicks"], row["outbound_clicks"])
 
     result = []
     for b in buckets.values():
@@ -82,6 +95,8 @@ def aggregate_ad_rows(rows: list[dict]) -> list[dict]:
         impr = b["impressions"] or 1
         clicks = b["clicks"]
         b["ctr"] = f"{clicks / impr * 100:.4f}"
+        num = b.pop("freq_weighted_numerator", 0.0)
+        b["frequency"] = f"{num / impr:.4f}" if impr > 0 and num > 0 else "0"
         result.append(b)
 
     result.sort(key=lambda r: _safe_float(r.get("spend", 0)), reverse=True)

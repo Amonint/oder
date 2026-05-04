@@ -18,13 +18,81 @@ from oderbiz_analytics.services.geo_formatter import (
 router = APIRouter(prefix="/accounts", tags=["geo_insights"])
 
 _TRIVIAL_ACTIONS = {"post_engagement", "page_engagement", "photo_view"}
+OBJECTIVE_METRIC_TO_ACTION_TYPES = {
+    "messaging_conversation_started": [
+        "onsite_conversion.messaging_conversation_started_7d",
+    ],
+    "messaging_first_reply": [
+        "messaging_first_reply",
+        "onsite_conversion.messaging_first_reply",
+    ],
+    "lead": ["lead", "onsite_conversion.lead_grouped", "leadgen_other"],
+}
 
 
-def _extract_results_and_cpa(row: dict) -> dict:
-    """Extrae resultados y CPA de actions/cost_per_action_type."""
+def _normalize_objective_metric(objective_metric: str | None) -> str | None:
+    if objective_metric is None:
+        return None
+    key = objective_metric.strip().lower()
+    if key in OBJECTIVE_METRIC_TO_ACTION_TYPES:
+        return key
+    return "messaging_conversation_started"
+
+
+def _sum_actions_by_types(actions: object, action_types: list[str]) -> float:
+    if not isinstance(actions, list):
+        return 0.0
+    accepted = set(action_types)
+    total = 0.0
+    for item in actions:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("action_type") or "") not in accepted:
+            continue
+        try:
+            total += float(item.get("value", 0) or 0)
+        except (TypeError, ValueError):
+            pass
+    return total
+
+
+def _matching_cost_per_action(cost_per_action_type: object, action_types: list[str]) -> float | None:
+    if not isinstance(cost_per_action_type, list):
+        return None
+    accepted = set(action_types)
+    for item in cost_per_action_type:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("action_type") or "") not in accepted:
+            continue
+        try:
+            value = float(item.get("value", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def _extract_results_and_cpa(row: dict, objective_metric: str | None = None) -> dict:
+    """Extrae resultados y CPA, alineados al objetivo cuando se informa."""
     actions = row.get("actions") or []
     cost_per = row.get("cost_per_action_type") or []
     spend = float(row.get("spend", 0) or 0)
+    objective_key = _normalize_objective_metric(objective_metric)
+
+    if objective_key is not None:
+        objective_action_types = OBJECTIVE_METRIC_TO_ACTION_TYPES[objective_key]
+        results = _sum_actions_by_types(actions, objective_action_types)
+        cpa = _matching_cost_per_action(cost_per, objective_action_types)
+        if cpa is None and results > 0:
+            cpa = spend / results
+        return {
+            "results": round(results, 2),
+            "cpa": round(cpa, 2) if cpa is not None else None,
+            "objective_metric": objective_key,
+            "objective_action_types": objective_action_types,
+        }
 
     results = 0
     for a in actions:
@@ -47,6 +115,47 @@ def _extract_results_and_cpa(row: dict) -> dict:
 
     return {"results": results, "cpa": round(cpa, 2) if cpa is not None else None}
 
+
+def _objective_breakdown_status(
+    rows: list[dict],
+    aggregate_row: dict,
+    objective_metric: str | None,
+) -> dict[str, object] | None:
+    objective_key = _normalize_objective_metric(objective_metric)
+    if objective_key is None:
+        return None
+
+    aggregate = _extract_results_and_cpa(aggregate_row, objective_metric=objective_key)
+    aggregate_results = float(aggregate.get("results") or 0)
+    breakdown_results = round(
+        sum(float(row.get("results") or 0) for row in rows if row.get("results") is not None),
+        2,
+    )
+    complete = aggregate_results <= 0 or abs(breakdown_results - aggregate_results) <= 0.01
+    warning = None
+    if not complete:
+        warning = (
+            "Meta no devolvió resultados del objetivo completos en este breakdown geográfico. "
+            "Se ocultan resultados y CPA por región para evitar interpretar ceros como reales."
+        )
+    return {
+        "objective_metric": objective_key,
+        "objective_results_total": round(aggregate_results, 2),
+        "objective_results_breakdown_total": breakdown_results,
+        "objective_breakdown_complete": complete,
+        "warning": warning,
+    }
+
+
+def _mask_unavailable_objective_breakdown(rows: list[dict]) -> list[dict]:
+    masked: list[dict] = []
+    for row in rows:
+        item = dict(row)
+        item["results"] = None
+        item["cpa"] = None
+        masked.append(item)
+    return masked
+
 GEO_FIELDS = "impressions,clicks,spend,reach,actions,cost_per_action_type"
 
 
@@ -61,6 +170,10 @@ async def get_geo_insights(
     date_start: str | None = Query(None),
     date_stop: str | None = Query(None),
     geo_breakdown: Literal["region", "country"] = Query("region"),
+    objective_metric: str | None = Query(
+        None,
+        description="Métrica objetivo para alinear resultados y CPA derivados.",
+    ),
     settings: Settings = Depends(get_settings),
     access_token: str = Depends(get_meta_access_token),
 ):
@@ -136,14 +249,59 @@ async def get_geo_insights(
     enriched_rows = []
     for row in rows:
         enriched = enrich_geo_row(row) if geo_breakdown == "region" else row
-        enriched.update(_extract_results_and_cpa(row))
+        enriched.update(_extract_results_and_cpa(row, objective_metric=objective_metric))
         enriched_rows.append(enriched)
+
+    objective_status = None
+    if objective_metric is not None:
+        aggregate_rows = await fetch_insights(
+            base_url=base,
+            access_token=access_token,
+            ad_account_id=object_id,
+            fields=GEO_FIELDS,
+            level=level,
+            date_preset=effective_preset,
+            time_range=use_time_range,
+            filtering=filtering,
+        )
+        aggregate_row = aggregate_rows[0] if aggregate_rows else {}
+        objective_status = _objective_breakdown_status(
+            enriched_rows,
+            aggregate_row,
+            objective_metric=objective_metric,
+        )
+        if objective_status and not bool(objective_status["objective_breakdown_complete"]):
+            enriched_rows = _mask_unavailable_objective_breakdown(enriched_rows)
 
     # Metadata de cobertura completa y alcance
     metadata = get_geo_metadata(
         scope="ad" if aid else "account",
         ad_id=aid if aid else None,
         total_rows=len(enriched_rows),
+        complete_coverage=bool(
+            objective_status["objective_breakdown_complete"]
+            if objective_status is not None
+            else True
+        ),
+        objective_metric=(
+            str(objective_status["objective_metric"]) if objective_status is not None else None
+        ),
+        objective_results_total=(
+            float(objective_status["objective_results_total"])
+            if objective_status is not None
+            else None
+        ),
+        objective_results_breakdown_total=(
+            float(objective_status["objective_results_breakdown_total"])
+            if objective_status is not None
+            else None
+        ),
+        objective_breakdown_complete=(
+            bool(objective_status["objective_breakdown_complete"])
+            if objective_status is not None
+            else None
+        ),
+        warning=str(objective_status["warning"]) if objective_status and objective_status["warning"] else None,
     )
 
     return {

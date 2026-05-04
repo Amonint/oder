@@ -162,8 +162,8 @@ export default function AudiencePerformancePanel({
         };
 
   return (
-    <div className="space-y-4">
-      <Card>
+    <div className="flex flex-col gap-4">
+      <Card className="order-2">
         <CardHeader>
           <CardTitle>Ranking de audiencias (inferido)</CardTitle>
           <CardDescription>
@@ -210,9 +210,9 @@ export default function AudiencePerformancePanel({
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="order-1">
         <CardHeader>
-          <CardTitle>Mapa estadístico de eficiencia</CardTitle>
+          <CardTitle>Mapa estadístico de eficiencia (vista principal)</CardTitle>
           <CardDescription>
             Dispersión por audiencia: eje X = gasto, eje Y = CPA aprox, tamaño = resultados. Abajo-izquierda suele
             indicar audiencias más eficientes.
@@ -361,7 +361,7 @@ export default function AudiencePerformancePanel({
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="order-3">
         <CardHeader>
           <CardTitle>Detalle por audiencia</CardTitle>
         </CardHeader>

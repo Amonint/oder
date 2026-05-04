@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
@@ -89,6 +89,7 @@ function sumConversionActions(actions: InsightActionItem[] | undefined): number 
 }
 
 function segmentCpa(row: DemographicsRow): number | null {
+  if (typeof row.cpa === "number" && Number.isFinite(row.cpa) && row.cpa > 0) return row.cpa;
   const fromMeta = firstNumericCostPerAction(row.cost_per_action_type);
   if (fromMeta != null) return fromMeta;
   const spend = parseFloat(String(row.spend ?? "0"));
@@ -162,32 +163,46 @@ function DemographicsCpaTooltip({
         CPA: {row.cpa != null ? `$${row.cpa.toFixed(2)}` : "—"}
       </p>
       <p className="text-muted-foreground mt-0.5">
-        Primer cost_per_action_type numérico de Meta, o gasto ÷ suma de conversiones (lead, compra, mensaje iniciado, píxel).
+        {typeof row.cpa === "number"
+          ? "Alineado con el objetivo activo del dashboard."
+          : "Primer cost_per_action_type numérico de Meta, o gasto ÷ suma de conversiones (lead, compra, mensaje iniciado, píxel)."}
       </p>
     </div>
   );
 }
 
 function DemographicsAgeGenderHeatmap({ rows }: { rows: DemographicsRow[] }) {
+  const [colorBy, setColorBy] = useState<"spend" | "cpa">("cpa");
+
   const model = useMemo(() => {
+    const ages = [...new Set(rows.map((row) => (row.age ?? "").trim()).filter(Boolean))];
+    const genders = [...new Set(rows.map((row) => (row.gender ?? "").trim()).filter(Boolean))];
+    ages.sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
+    genders.sort((a, b) => a.localeCompare(b, "es"));
+
     const spendMap = new Map<string, number>();
+    const cpaMap = new Map<string, number | null>();
     for (const r of rows) {
       const age = (r.age ?? "").trim();
       const gender = (r.gender ?? "").trim();
       if (!age || !gender) continue;
       const k = `${age}\t${gender}`;
+      const prevSpend = spendMap.get(k) ?? 0;
       const add = parseFloat(String(r.spend ?? "0")) || 0;
-      spendMap.set(k, (spendMap.get(k) ?? 0) + add);
+      spendMap.set(k, prevSpend + add);
+      if (prevSpend === 0) cpaMap.set(k, segmentCpa(r));
+      else cpaMap.set(k, null);
     }
-    const ages = [...new Set(rows.map((row) => (row.age ?? "").trim()).filter(Boolean))];
-    const genders = [...new Set(rows.map((row) => (row.gender ?? "").trim()).filter(Boolean))];
-    ages.sort((a, b) => a.localeCompare(b, "es", { numeric: true }));
-    genders.sort((a, b) => a.localeCompare(b, "es"));
+
     let maxSpend = 0;
+    let maxCpa = 0;
     for (const v of spendMap.values()) maxSpend = Math.max(maxSpend, v);
-    const max = maxSpend > 0 ? maxSpend : 1;
-    return { ages, genders, spendMap, max };
-  }, [rows]);
+    for (const c of cpaMap.values()) {
+      if (c != null && c > maxCpa) maxCpa = c;
+    }
+    const max = colorBy === "spend" ? (maxSpend > 0 ? maxSpend : 1) : (maxCpa > 0 ? maxCpa : 1);
+    return { ages, genders, spendMap, cpaMap, max };
+  }, [rows, colorBy]);
 
   if (model.ages.length === 0 || model.genders.length === 0) {
     return (
@@ -200,10 +215,23 @@ function DemographicsAgeGenderHeatmap({ rows }: { rows: DemographicsRow[] }) {
   return (
     <div className="border-border space-y-2 border-t px-4 py-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-foreground text-sm font-semibold">Mapa de calor — gasto (edad × género)</h3>
-        <Badge variant="outline" className="text-xs font-normal text-muted-foreground">
-          Intensidad = gasto relativo al máximo de la tabla
-        </Badge>
+        <h3 className="text-foreground text-sm font-semibold">
+          Mapa de calor — {colorBy === "cpa" ? "CPA por celda" : "Gasto (edad × género)"}
+        </h3>
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground text-xs">Colorear por</span>
+          <select
+            className="border-border bg-background rounded-md border px-2 py-1 text-xs"
+            value={colorBy}
+            onChange={(e) => setColorBy(e.target.value as "spend" | "cpa")}
+          >
+            <option value="cpa">CPA (decisiones)</option>
+            <option value="spend">Gasto</option>
+          </select>
+          <Badge variant="outline" className="text-xs font-normal text-muted-foreground">
+            Intensidad relativa al máximo de la tabla
+          </Badge>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-max min-w-full border-collapse text-xs">
@@ -222,22 +250,36 @@ function DemographicsAgeGenderHeatmap({ rows }: { rows: DemographicsRow[] }) {
               <tr key={age}>
                 <th className="border-border bg-muted/30 p-2 text-left font-medium tabular-nums">{age}</th>
                 {model.genders.map((g, ci) => {
-                  const spend = model.spendMap.get(`${age}\t${g}`) ?? 0;
-                  const t = model.max > 0 ? spend / model.max : 0;
+                  const k = `${age}\t${g}`;
+                  const spend = model.spendMap.get(k) ?? 0;
+                  const cpa = model.cpaMap.get(k) ?? null;
+                  const val = colorBy === "spend" ? spend : cpa != null && cpa > 0 ? cpa : 0;
+                  const t = model.max > 0 ? val / model.max : 0;
                   const fill = barColorAt(ri + ci, `${age}-${g}`);
+                  const display =
+                    colorBy === "spend"
+                      ? spend > 0
+                        ? `$${spend.toFixed(0)}`
+                        : "—"
+                      : cpa != null && cpa > 0
+                        ? `$${cpa.toFixed(0)}`
+                        : "—";
                   return (
                     <td
                       key={`${age}-${g}`}
                       className="border-border border p-1 text-center tabular-nums"
                       style={{
                         backgroundColor:
-                          spend > 0
+                          val > 0
                             ? `color-mix(in oklab, ${fill} ${Math.round(18 + t * 72)}%, hsl(var(--muted)))`
                             : "hsl(var(--muted) / 0.25)",
                       }}
-                      title={`${age} · ${g}: $${spend.toFixed(2)}`}
+                      title={
+                        `${age} · ${g}: gasto $${spend.toFixed(2)}` +
+                        (cpa != null ? ` · CPA $${cpa.toFixed(2)}` : "")
+                      }
                     >
-                      {spend > 0 ? `$${spend.toFixed(0)}` : "—"}
+                      {display}
                     </td>
                   );
                 })}

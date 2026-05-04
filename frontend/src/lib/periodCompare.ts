@@ -1,5 +1,5 @@
-/** Meta dejó de ofrecer ciertas ventanas view largas desde esta fecha (Ads Insights). */
-export const META_ATTRIBUTION_CHANGE_ISO = "2026-01-12";
+/** Meta alineó cambios de atribución/ventanas reportadas por Insights desde esta fecha. */
+export const META_ATTRIBUTION_CHANGE_ISO = "2025-06-10";
 
 /** Inicio/fin del periodo anterior con la misma duración (días inclusivos) que [dateStart, dateStop]. */
 export function computePrevPeriod(dateStart: string, dateStop: string): { dateStart: string; dateStop: string } {

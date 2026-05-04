@@ -44,7 +44,7 @@ No incluye:
 
 ### Entrada principal
 
-- JSON del reporte interno con base en `llm_context_report.page.v1`.
+- JSON del reporte interno con base `dashboard_snapshot.page.v1` (historico `llm_context_report.page.v1`).
 
 ### Campos obligatorios minimos
 

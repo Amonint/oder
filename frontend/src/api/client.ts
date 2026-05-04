@@ -184,6 +184,9 @@ export interface AdPerformanceRow {
   results?: number;
   cpa?: number | null;
   roas?: number | null;
+  /** Lista cruda de Meta; total agregado en `outbound_clicks_total`. */
+  outbound_clicks?: InsightActionItem[];
+  outbound_clicks_total?: number;
   effective_object_story_id?: string | null;
   effective_object_story_permalink?: string | null;
   date_start?: string;
@@ -209,6 +212,11 @@ export interface GeoMetadata {
   ad_id: string | null;
   total_rows: number;
   complete_coverage: boolean;
+  objective_metric?: string | null;
+  objective_results_total?: number | null;
+  objective_results_breakdown_total?: number | null;
+  objective_breakdown_complete?: boolean | null;
+  warning?: string | null;
   note: string;
 }
 
@@ -490,6 +498,107 @@ export interface PlacementInsightsResponse {
   breakdowns: string[];
 }
 
+export interface EntitySummaryRow {
+  entity_id: string;
+  name: string;
+  level: string;
+  campaign_id?: string;
+  campaign_name?: string;
+  adset_id?: string;
+  adset_name?: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  results: number;
+  cpa: number | null;
+  roas: number | null;
+  purchase_value: number;
+}
+
+export interface EntitySummaryResponse {
+  data: EntitySummaryRow[];
+  level: string;
+  objective_metric?: string;
+  date_preset?: string | null;
+  time_range?: { since: string; until: string } | null;
+  attribution_window?: string | null;
+}
+
+export async function fetchEntitySummary(
+  adAccountId: string,
+  opts: {
+    level: "campaign" | "adset";
+    datePreset?: string;
+    dateStart?: string;
+    dateStop?: string;
+    campaignId?: string;
+    adsetId?: string;
+    objectiveMetric?: "messaging_conversation_started" | "messaging_first_reply" | "lead";
+    attributionWindow?:
+      | "click_1d"
+      | "click_7d"
+      | "click_28d"
+      | "view_1d"
+      | "view_7d";
+  }
+): Promise<EntitySummaryResponse> {
+  const q = new URLSearchParams({ level: opts.level });
+  if (opts.datePreset) q.set("date_preset", opts.datePreset);
+  if (opts.dateStart) q.set("date_start", opts.dateStart);
+  if (opts.dateStop) q.set("date_stop", opts.dateStop);
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.adsetId) q.set("adset_id", opts.adsetId);
+  if (opts.objectiveMetric) q.set("objective_metric", opts.objectiveMetric);
+  if (opts.attributionWindow) q.set("attribution_window", opts.attributionWindow);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/entity-summary?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export interface LearningStageSpendRow {
+  stage: string;
+  spend: number;
+}
+
+export interface LearningAdsetRow {
+  adset_id: string;
+  adset_name: string;
+  campaign_id: string;
+  campaign_name: string;
+  spend: number;
+  learning_stage: string;
+}
+
+export interface LearningSummaryResponse {
+  by_stage: LearningStageSpendRow[];
+  adsets: LearningAdsetRow[];
+  date_preset?: string | null;
+  time_range?: { since: string; until: string } | null;
+}
+
+export async function fetchAdsetsLearningSummary(
+  adAccountId: string,
+  opts: {
+    datePreset?: string;
+    dateStart?: string;
+    dateStop?: string;
+    campaignId?: string;
+    adsetId?: string;
+  }
+): Promise<LearningSummaryResponse> {
+  const q = new URLSearchParams();
+  if (opts.datePreset) q.set("date_preset", opts.datePreset);
+  if (opts.dateStart) q.set("date_start", opts.dateStart);
+  if (opts.dateStop) q.set("date_stop", opts.dateStop);
+  if (opts.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts.adsetId) q.set("adset_id", opts.adsetId);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/adsets/learning-summary?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
 export async function fetchPlacementInsights(
   adAccountId: string,
   opts: {
@@ -529,6 +638,7 @@ export async function fetchGeoInsights(
     dateStart?: string;
     dateStop?: string;
     geoBreakdown?: "region" | "country";
+    objectiveMetric?: "messaging_conversation_started" | "messaging_first_reply" | "lead";
   }
 ): Promise<GeoInsightsResponse> {
   const q = new URLSearchParams({ scope: opts.scope });
@@ -539,6 +649,7 @@ export async function fetchGeoInsights(
   if (opts.dateStart) q.set("date_start", opts.dateStart);
   if (opts.dateStop) q.set("date_stop", opts.dateStop);
   if (opts.geoBreakdown) q.set("geo_breakdown", opts.geoBreakdown);
+  if (opts.objectiveMetric) q.set("objective_metric", opts.objectiveMetric);
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/geo?${q}`;
   const r = await apiFetch(path);
   if (!r.ok) throw new Error(await readErrorMessage(r));
@@ -664,6 +775,7 @@ export interface PageGeoResponse {
   page_id: string;
   date_preset: string;
   breakdowns: string[];
+  metadata?: GeoMetadata;
 }
 
 export interface PageActionRow {
@@ -703,6 +815,7 @@ type PageFilterOpts = {
   campaignId?: string | null;
   adsetId?: string | null;
   adId?: string | null;
+  objectiveMetric?: "messaging_conversation_started" | "messaging_first_reply" | "lead";
 };
 
 function buildPageQuery(opts: PageFilterOpts): URLSearchParams {
@@ -716,6 +829,7 @@ function buildPageQuery(opts: PageFilterOpts): URLSearchParams {
   if (opts.campaignId) q.set("campaign_id", opts.campaignId);
   if (opts.adsetId) q.set("adset_id", opts.adsetId);
   if (opts.adId) q.set("ad_id", opts.adId);
+  if (opts.objectiveMetric) q.set("objective_metric", opts.objectiveMetric);
   return q;
 }
 
@@ -876,6 +990,7 @@ export interface ConversionTimeseriesRow {
   spend: number;
   cpa: number;
   conversions: number;
+  conversations_started: number;
   revenue: number;
   replied: number;
   depth2: number;
@@ -914,6 +1029,21 @@ export interface TrafficQualityResponse {
   date_preset: string;
 }
 
+export interface TrafficQualityTimeseriesRow {
+  date: string;
+  spend: number;
+  impressions: number;
+  unique_clicks: number;
+  outbound_clicks: number;
+  unique_ctr: number;
+}
+
+export interface TrafficQualityTimeseriesResponse {
+  data: TrafficQualityTimeseriesRow[];
+  page_id: string;
+  date_preset: string;
+}
+
 export async function fetchPageTrafficQuality(
   adAccountId: string,
   pageId: string,
@@ -921,6 +1051,18 @@ export async function fetchPageTrafficQuality(
 ): Promise<TrafficQualityResponse> {
   const q = buildPageQuery(opts);
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages/${encodeURIComponent(pageId)}/traffic-quality?${q}`;
+  const r = await apiFetch(path);
+  if (!r.ok) throw new Error(await readErrorMessage(r));
+  return r.json();
+}
+
+export async function fetchPageTrafficQualityTimeseries(
+  adAccountId: string,
+  pageId: string,
+  opts: PageFilterOpts = {}
+): Promise<TrafficQualityTimeseriesResponse> {
+  const q = buildPageQuery(opts);
+  const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/pages/${encodeURIComponent(pageId)}/traffic-quality/timeseries?${q}`;
   const r = await apiFetch(path);
   if (!r.ok) throw new Error(await readErrorMessage(r));
   return r.json();
@@ -940,6 +1082,8 @@ export interface AdDiagnosticsRow {
   cpm: number;
   engagement_rate: number;
   cpa?: number | null;
+  /** Gasto diario en orden cronológico (Insights time_increment=1); vacío si falla la serie. */
+  daily_spend?: number[];
 }
 
 export interface AdDiagnosticsResponse {
@@ -1188,6 +1332,10 @@ export interface DemographicsRow {
   cpc?: string;
   actions?: InsightActionItem[];
   cost_per_action_type?: InsightActionItem[];
+  results?: number;
+  cpa?: number | null;
+  objective_metric?: string;
+  objective_action_types?: string[];
 }
 
 export interface DemographicsResponse {
@@ -1195,6 +1343,7 @@ export interface DemographicsResponse {
   breakdown: string;
   date_preset: string | null;
   time_range: { since: string; until: string } | null;
+  objective_metric?: string;
   note: string;
 }
 
@@ -1208,6 +1357,7 @@ export async function fetchDemographicsInsights(
     campaignId?: string;
     adsetId?: string;
     adId?: string;
+    objectiveMetric?: "messaging_conversation_started" | "messaging_first_reply" | "lead";
   }
 ): Promise<DemographicsResponse> {
   const q = new URLSearchParams();
@@ -1221,6 +1371,7 @@ export async function fetchDemographicsInsights(
   if (opts.campaignId) q.set("campaign_id", opts.campaignId);
   if (opts.adsetId) q.set("adset_id", opts.adsetId);
   if (opts.adId) q.set("ad_id", opts.adId);
+  if (opts.objectiveMetric) q.set("objective_metric", opts.objectiveMetric);
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/demographics?${q}`;
   const r = await apiFetch(path);
   if (!r.ok) throw new Error(await readErrorMessage(r));

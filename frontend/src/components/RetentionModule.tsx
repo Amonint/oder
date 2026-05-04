@@ -4,6 +4,7 @@ import {
   Bar,
   Cell,
   Line,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -23,14 +24,17 @@ import { META_ATTRIBUTION_CHANGE_ISO } from "@/lib/periodCompare";
 interface RetentionModuleProps {
   data: ConversionTimeseriesRow[] | undefined;
   isLoading: boolean;
-  /** Serie del periodo anterior (misma lógica de API; se alinea por días relativos al final). */
+  /** Serie del periodo anterior; se alinea posición a posición con el periodo actual (anclado al largo de la serie actual). */
   comparisonSeries?: ConversionTimeseriesRow[] | undefined;
   comparisonLoading?: boolean;
-  /** Mostrar aviso si la comparación cruza el cambio de métricas Meta (2026-01-12). */
+  /** Mostrar aviso si la comparación cruza el cambio de métricas Meta (2025-06-10). */
   showAttributionDiscontinuity?: boolean;
+  currentPeriod?: { dateStart: string; dateStop: string };
+  previousPeriod?: { dateStart: string; dateStop: string };
 }
 
-function alignTrailingSeries(
+/** Ancla al periodo actual: D1…D_M con M = días del actual; el día i empareja el punto del anterior con el mismo desplazamiento desde el final. */
+function alignComparisonToCurrentPeriod(
   curr: ConversionTimeseriesRow[],
   prev: ConversionTimeseriesRow[],
 ): Array<{
@@ -42,17 +46,51 @@ function alignTrailingSeries(
 }> {
   const a = [...curr].sort((x, y) => x.date.localeCompare(y.date));
   const b = [...prev].sort((x, y) => x.date.localeCompare(y.date));
-  const n = Math.min(a.length, b.length);
-  if (n < 2) return [];
-  const as = a.slice(-n);
-  const bs = b.slice(-n);
-  return as.map((row, i) => ({
-    dayIndex: i + 1,
-    spend: row.spend,
-    cpa: row.cpa,
-    spendPrev: bs[i]!.spend,
-    cpaPrev: bs[i]!.cpa,
-  }));
+  if (a.length < 2 || b.length < 1) return [];
+  return a.map((row, i) => {
+    const prevIdx = b.length - (a.length - i);
+    const p = prevIdx >= 0 && prevIdx < b.length ? b[prevIdx]! : null;
+    return {
+      dayIndex: i + 1,
+      spend: row.spend,
+      cpa: row.cpa,
+      spendPrev: p?.spend ?? 0,
+      cpaPrev: p?.cpa ?? 0,
+    };
+  });
+}
+
+function buildDailyCalendar(startIso: string, stopIso: string): string[] {
+  const out: string[] = [];
+  const d = new Date(`${startIso}T00:00:00Z`);
+  const stop = new Date(`${stopIso}T00:00:00Z`);
+  while (d.getTime() <= stop.getTime()) {
+    out.push(d.toISOString().slice(0, 10));
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return out;
+}
+
+function densifySeries(
+  rows: ConversionTimeseriesRow[],
+  startIso: string,
+  stopIso: string,
+): ConversionTimeseriesRow[] {
+  const byDate = new Map(rows.map((r) => [r.date, r] as const));
+  return buildDailyCalendar(startIso, stopIso).map((date) => {
+    const found = byDate.get(date);
+    if (found) return found;
+    return {
+      date,
+      spend: 0,
+      cpa: 0,
+      conversions: 0,
+      conversations_started: 0,
+      revenue: 0,
+      replied: 0,
+      depth2: 0,
+    };
+  });
 }
 
 function KpiTile({ label, value, sub, tooltip }: { label: string; value: string; sub?: string; tooltip: string }) {
@@ -74,20 +112,61 @@ export default function RetentionModule({
   comparisonSeries,
   comparisonLoading,
   showAttributionDiscontinuity,
+  currentPeriod,
+  previousPeriod,
 }: RetentionModuleProps) {
   const rows = data ?? [];
   const compareRows = comparisonSeries ?? [];
-  const mergedCompare = useMemo(
-    () => (compareRows.length >= 2 && rows.length >= 2 ? alignTrailingSeries(rows, compareRows) : []),
-    [rows, compareRows],
-  );
+  const { mergedCompare, compareLengthMismatch, loadedCurrentDays, loadedPreviousDays, totalCurrentDays } = useMemo(() => {
+    if (compareRows.length < 2 || rows.length < 2) {
+      return {
+        mergedCompare: [] as ReturnType<typeof alignComparisonToCurrentPeriod>,
+        compareLengthMismatch: false,
+        loadedCurrentDays: rows.length,
+        loadedPreviousDays: compareRows.length,
+        totalCurrentDays: rows.length,
+      };
+    }
+    if (currentPeriod && previousPeriod) {
+      const denseCurr = densifySeries(rows, currentPeriod.dateStart, currentPeriod.dateStop);
+      const densePrev = densifySeries(compareRows, previousPeriod.dateStart, previousPeriod.dateStop);
+      const n = Math.min(denseCurr.length, densePrev.length);
+      return {
+        mergedCompare: denseCurr.slice(0, n).map((row, i) => {
+          const prev = densePrev[i]!;
+          return {
+            dayIndex: i + 1,
+            spend: row.spend,
+            cpa: row.cpa,
+            spendPrev: prev.spend,
+            cpaPrev: prev.cpa,
+          };
+        }),
+        compareLengthMismatch:
+          rows.length !== denseCurr.length || compareRows.length !== densePrev.length,
+        loadedCurrentDays: rows.length,
+        loadedPreviousDays: compareRows.length,
+        totalCurrentDays: denseCurr.length,
+      };
+    }
+    const a = [...rows].sort((x, y) => x.date.localeCompare(y.date));
+    const b = [...compareRows].sort((x, y) => x.date.localeCompare(y.date));
+    return {
+      mergedCompare: alignComparisonToCurrentPeriod(rows, compareRows),
+      compareLengthMismatch: b.length !== a.length,
+      loadedCurrentDays: rows.length,
+      loadedPreviousDays: compareRows.length,
+      totalCurrentDays: a.length,
+    };
+  }, [rows, compareRows, currentPeriod, previousPeriod]);
 
   // Totales para KPI cards
   const totalSpend = rows.reduce((s, r) => s + r.spend, 0);
   const totalConversions = rows.reduce((s, r) => s + r.conversions, 0);
+  const totalConversationsStarted = rows.reduce((s, r) => s + (r.conversations_started ?? 0), 0);
   const totalReplied = rows.reduce((s, r) => s + (r.replied ?? 0), 0);
   const avgCpa = totalConversions > 0 ? totalSpend / totalConversions : 0;
-  const replyRate = totalConversions > 0 ? (totalReplied / totalConversions) * 100 : 0;
+  const replyRate = totalConversationsStarted > 0 ? (totalReplied / totalConversationsStarted) * 100 : 0;
 
   const fmt = (n: number) => `$${n.toFixed(2)}`;
 
@@ -120,10 +199,10 @@ export default function RetentionModule({
               tooltip="Costo promedio por conversión (lead, mensaje iniciado o compra). Se calcula: Gasto total ÷ Total de conversiones del período."
             />
             <KpiTile
-              label="Tasa de Respuesta"
+              label="Tasa de Respuesta (Insights)"
               value={replyRate > 0 ? `${replyRate.toFixed(1)}%` : "—"}
-              sub="Conversaciones con respuesta"
-              tooltip="Porcentaje de conversaciones donde el prospecto respondió activamente. Se calcula: Conversaciones con respuesta ÷ Conversaciones iniciadas × 100. Mide la calidad del lead."
+              sub="Serie diaria agregada"
+              tooltip="Definición distinta a la tarjeta «Tasa de primera respuesta» del embudo. Aquí: suma de acciones messaging_conversation_replied_7d ÷ suma de conversaciones iniciadas de la misma serie diaria. Agregado de Insights de pauta, no el embudo de página."
             />
             <KpiTile
               label="Conversiones"
@@ -132,10 +211,10 @@ export default function RetentionModule({
               tooltip="Total de conversiones del período: leads generados, mensajes de WhatsApp o Messenger iniciados, o compras. Fuente: campo actions de la API, filtrado por tipos de conversión configurados."
             />
             <KpiTile
-              label="Primeras Respuestas"
+              label="Primeras Respuestas (Insights)"
               value={totalReplied > 0 ? totalReplied.toFixed(0) : "—"}
-              sub="Personas que respondieron"
-              tooltip="Número de conversaciones donde el prospecto respondió al mensaje. Indica interés real del lead. Fuente: acción onsite_conversion.messaging_conversation_replied_7d de Meta."
+              sub="Suma replied en la serie"
+              tooltip="Suma de la métrica replied de la serie de conversiones (misma ventana y filtro que el gráfico). No es «first_replies» del embudo Meta; úsalo junto al KPI de tasa Insights arriba."
             />
           </div>
         </TooltipProvider>
@@ -146,11 +225,18 @@ export default function RetentionModule({
           <CardTitle className="text-base">
             {useComparisonChart ? "Gasto y CPA — actual vs periodo anterior" : "Gasto diario vs CPA"}
           </CardTitle>
-          <p className="text-muted-foreground text-sm">
-            {useComparisonChart
-              ? "Eje X = día relativo al final del periodo (alineado 1:1 con el periodo previo de igual duración). Barras = gasto actual · línea continua = CPA actual · líneas discontinuas = periodo anterior."
-              : "Barras = Gasto ($) · Línea = CPA ($)"}
-          </p>
+          <div className="text-muted-foreground space-y-1 text-sm">
+            <p>
+              {useComparisonChart
+                ? "Eje X = D1…DM (calendario completo del periodo actual). Barras = gasto actual · línea CPA actual · discontinuas = anterior en su día calendario equivalente del periodo previo."
+                : "Barras = Gasto ($) · Línea = CPA ($)"}
+            </p>
+            {useComparisonChart && compareLengthMismatch ? (
+              <p className="text-xs">
+                Cobertura de datos Meta: actual {loadedCurrentDays}/{totalCurrentDays} días cargados · anterior {loadedPreviousDays}/{totalCurrentDays}. Días sin fila en Meta se completan en 0 para mantener comparabilidad de calendario.
+              </p>
+            ) : null}
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading || (comparisonLoading && useComparisonChart) ? (
@@ -189,7 +275,7 @@ export default function RetentionModule({
                     if (String(name).includes("CPA")) return [`$${v.toFixed(2)}`, name as string];
                     return [v, name as string];
                   }}
-                  labelFormatter={(label) => `Día relativo: ${label}`}
+                  labelFormatter={(label) => `Día relativo (desde inicio periodo actual): ${label}`}
                 />
                 <Legend />
                 <Bar yAxisId="spend" dataKey="spend" name="Gasto (actual)" opacity={0.7} radius={[3, 3, 0, 0]}>
@@ -197,6 +283,16 @@ export default function RetentionModule({
                     <Cell key={`c-${i}`} fill={barColorAt(i, String(i))} />
                   ))}
                 </Bar>
+                <Area
+                  yAxisId="cpa"
+                  type="monotone"
+                  dataKey="cpaPrev"
+                  name="Banda CPA anterior"
+                  fill={dashboardChartColor(0)}
+                  fillOpacity={0.12}
+                  stroke="none"
+                  isAnimationActive={false}
+                />
                 <Line
                   yAxisId="cpa"
                   type="monotone"

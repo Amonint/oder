@@ -90,6 +90,13 @@ def get_geo_metadata(
     scope: Literal["account", "ad"],
     ad_id: str | None,
     total_rows: int,
+    *,
+    complete_coverage: bool = True,
+    objective_metric: str | None = None,
+    objective_results_total: float | None = None,
+    objective_results_breakdown_total: float | None = None,
+    objective_breakdown_complete: bool | None = None,
+    warning: str | None = None,
 ) -> dict[str, Any]:
     """
     Construye metadata para respuesta geográfica.
@@ -117,6 +124,11 @@ def get_geo_metadata(
         "scope": scope,
         "ad_id": ad_id if scope == "ad" else None,
         "total_rows": total_rows,
-        "complete_coverage": True,  # Indica que Meta devolvió todos los datos disponibles
+        "complete_coverage": complete_coverage,
+        "objective_metric": objective_metric,
+        "objective_results_total": objective_results_total,
+        "objective_results_breakdown_total": objective_results_breakdown_total,
+        "objective_breakdown_complete": objective_breakdown_complete,
+        "warning": warning,
         "note": note,
     }

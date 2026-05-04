@@ -31,7 +31,10 @@ OBJECTIVE_METRIC_TO_ACTION_TYPES = {
     "messaging_conversation_started": [
         "onsite_conversion.messaging_conversation_started_7d"
     ],
-    "messaging_first_reply": ["messaging_first_reply"],
+    "messaging_first_reply": [
+        "messaging_first_reply",
+        "onsite_conversion.messaging_first_reply",
+    ],
     "lead": ["lead", "onsite_conversion.lead_grouped", "leadgen_other"],
 }
 
@@ -76,6 +79,21 @@ def _sum_actions_by_types(
         if action_type in accepted:
             total += _to_float(item.get("value"))
     return total
+
+
+def _matching_cost_per_action(
+    entries: list[dict[str, object]],
+    action_types: list[str],
+) -> float | None:
+    accepted = set(action_types)
+    for item in entries:
+        action_type = str(item.get("action_type") or "")
+        if action_type not in accepted:
+            continue
+        value = _to_float(item.get("value"))
+        if value > 0:
+            return value
+    return None
 
 
 def _sum_purchase_action_values(entries: list[dict[str, object]]) -> float:
@@ -134,19 +152,29 @@ async def get_account_dashboard(
 
     try:
         if cid:
+            use_local_maximum_filter = effective_date_preset == "maximum" and effective_time_range is None
+            request_fields = FIELDS
+            if use_local_maximum_filter:
+                request_fields = f"{FIELDS},campaign_id,campaign_name,date_start,date_stop"
             rows = await fetch_insights_all_pages(
                 base_url=base,
                 access_token=access_token,
                 ad_account_id=normalized_id,
-                fields=FIELDS,
+                fields=request_fields,
                 level="campaign",
                 date_preset=effective_date_preset,
                 time_range=effective_time_range,
-                filtering=[
+                filtering=None if use_local_maximum_filter else [
                     {"field": "campaign.id", "operator": "IN", "value": [cid]}
                 ],
                 max_pages=10,
             )
+            if use_local_maximum_filter:
+                rows = [
+                    row
+                    for row in rows
+                    if str(row.get("campaign_id") or row.get("id") or "").strip() == cid
+                ]
         else:
             rows = await fetch_account_insights(
                 base_url=base,
@@ -216,9 +244,8 @@ async def get_account_dashboard(
     spend = summary.get("spend", 0.0)
     objective_action_types = OBJECTIVE_METRIC_TO_ACTION_TYPES[objective_key]
     results = _sum_actions_by_types(actions, objective_action_types)
-    # Meta suele mandar 0 en `cost_per_result` en agregados largos / mezcla de objetivos; el CPA útil cae al fallback.
-    cost_per_result = summary.get("cost_per_result", 0.0)
-    cpa = cost_per_result if cost_per_result > 0 else (spend / results if results > 0 else None)
+    matched_cost = _matching_cost_per_action(cost_per_action_type, objective_action_types)
+    cpa = matched_cost if matched_cost is not None else (spend / results if results > 0 else None)
     purchase_roas = _to_float(row.get("purchase_roas"))
     roas_derived = (_sum_purchase_action_values(action_values) / spend) if spend > 0 else 0.0
     roas = purchase_roas if purchase_roas > 0 else (roas_derived if roas_derived > 0 else None)

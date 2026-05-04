@@ -3,27 +3,107 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
+export type ChoroplethMetric =
+  | "spend"
+  | "impressions"
+  | "clicks"
+  | "reach"
+  | "results"
+  | "cpa";
+
+export interface ChoroplethMapRow {
+  region_name: string;
+  spend: number;
+  impressions?: number;
+  clicks?: number;
+  reach?: number;
+  results?: number;
+  cpa?: number | null;
+}
+
 interface ChoroplethMapProps {
-  data: Array<{ region_name: string; spend: number; impressions?: number }>;
-  metric?: "spend" | "impressions";
+  data: ChoroplethMapRow[];
+  metric?: ChoroplethMetric;
 }
 
+/** Nombre de región desde API/backend → NAME_1 del GeoJSON (GADM Ecuador). */
 function toGadmName(regionName: string): string {
+  const raw = regionName.trim();
   const MAP: Record<string, string> = {
-    "Manabí": "Manabí",
+    Manabí: "Manabí",
     "Los Ríos": "Los Ríos",
-    "Bolívar": "Bolívar",
-    "Cañar": "Cañar",
-    "Sucumbíos": "Sucumbíos",
-    "Galápagos": "Galápagos",
+    Bolívar: "Bolívar",
+    Cañar: "Cañar",
+    Sucumbíos: "Sucumbíos",
+    Galápagos: "Galápagos",
     "Morona Santiago": "Morona-Santiago",
+    "Morona-Santiago Province": "Morona-Santiago",
+    "Morona Santiago Province": "Morona-Santiago",
     "Zamora Chinchipe": "Zamora-Chinchipe",
+    "Zamora-Chinchipe": "Zamora-Chinchipe",
+    "Zamora Chinchipe Province": "Zamora-Chinchipe",
+    "Zamora-Chinchipe Province": "Zamora-Chinchipe",
+    "Provincia Zamora Chinchipe": "Zamora-Chinchipe",
+    "Provincia de Zamora Chinchipe": "Zamora-Chinchipe",
+    "Provincia de Zamora-Chinchipe": "Zamora-Chinchipe",
     "Santo Domingo": "Santo Domingo de los Tsáchilas",
+    "Santo Domingo de los Tsáchilas Province":
+      "Santo Domingo de los Tsáchilas",
   };
-  return MAP[regionName] ?? regionName;
+  return MAP[raw] ?? raw;
 }
 
-export default function ChoroplethMap({ data, metric = "spend" }: ChoroplethMapProps) {
+function metricValue(row: ChoroplethMapRow, metric: ChoroplethMetric): number {
+  switch (metric) {
+    case "spend":
+      return row.spend;
+    case "impressions":
+      return row.impressions ?? 0;
+    case "clicks":
+      return row.clicks ?? 0;
+    case "reach":
+      return row.reach ?? 0;
+    case "results":
+      return row.results ?? 0;
+    case "cpa": {
+      const c = row.cpa;
+      return c != null && Number.isFinite(c) ? c : 0;
+    }
+    default:
+      return 0;
+  }
+}
+
+function metricTitle(metric: ChoroplethMetric): string {
+  switch (metric) {
+    case "spend":
+      return "Gasto";
+    case "impressions":
+      return "Impresiones";
+    case "clicks":
+      return "Clics";
+    case "reach":
+      return "Alcance";
+    case "results":
+      return "Resultados";
+    case "cpa":
+      return "CPA";
+    default:
+      return "Métrica";
+  }
+}
+
+function formatPopup(metric: ChoroplethMetric, val: number): string {
+  if (metric === "spend" || metric === "cpa") {
+    return `${metricTitle(metric)}: $${val.toFixed(2)}`;
+  }
+  return `${metricTitle(metric)}: ${val.toLocaleString("es")}`;
+}
+
+export default function ChoroplethMap({
+  data,
+  metric = "spend",
+}: ChoroplethMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const mapReadyRef = useRef(false);
@@ -75,7 +155,7 @@ export default function ChoroplethMap({ data, metric = "spend" }: ChoroplethMapP
       const lookup: Record<string, number> = {};
       for (const row of data) {
         const name = toGadmName(row.region_name);
-        lookup[name] = metric === "spend" ? row.spend : (row.impressions ?? 0);
+        lookup[name] = metricValue(row, metric);
       }
       const values = Object.values(lookup);
       const maxVal = values.length > 0 ? Math.max(Math.max(...values), 0.01) : 1;
@@ -97,11 +177,17 @@ export default function ChoroplethMap({ data, metric = "spend" }: ChoroplethMapP
             source: "ecuador",
             paint: {
               "fill-color": [
-                "interpolate", ["linear"], ["get", "_value"],
-                0, "#e0f2fe",
-                maxVal * 0.25, "#7dd3fc",
-                maxVal * 0.6, "#2563eb",
-                maxVal, "#1e3a8a",
+                "interpolate",
+                ["linear"],
+                ["get", "_value"],
+                0,
+                "#e0f2fe",
+                maxVal * 0.25,
+                "#7dd3fc",
+                maxVal * 0.6,
+                "#2563eb",
+                maxVal,
+                "#1e3a8a",
               ],
               "fill-opacity": 0.75,
             },
@@ -125,12 +211,7 @@ export default function ChoroplethMap({ data, metric = "spend" }: ChoroplethMapP
             const val = Number(props._value ?? 0);
             popup
               .setLngLat(e.lngLat)
-              .setHTML(
-                `<strong>${name}</strong><br/>` +
-                (metric === "spend"
-                  ? `Gasto: $${val.toFixed(2)}`
-                  : `Impresiones: ${val.toLocaleString("es")}`),
-              )
+              .setHTML(`<strong>${name}</strong><br/>` + formatPopup(metric, val))
               .addTo(map);
           };
 
@@ -168,7 +249,7 @@ export default function ChoroplethMap({ data, metric = "spend" }: ChoroplethMapP
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Mapa de {metric === "spend" ? "Gasto" : "Impresiones"} por Provincia</CardTitle>
+        <CardTitle>Mapa de {metricTitle(metric)} por provincia</CardTitle>
       </CardHeader>
       <CardContent className="p-0">
         <div ref={mapContainer} className="h-80 w-full rounded-b-lg" />

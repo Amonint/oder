@@ -9,7 +9,7 @@ import {
   Cell,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { GeoInsightRow, GeoMetadata } from "@/api/client";
 import { barColorAt } from "@/lib/dashboardColors";
 import { AdReferenceLink } from "@/components/AdReferenceLink";
@@ -98,9 +98,13 @@ function buildChartData(
       const value = insufficient ? 0 : Number(row.cpa);
       return { region, value, insufficient, row };
     }
+    if (metric === "results") {
+      const unavailable = row.results == null;
+      const value = unavailable ? 0 : Number(row.results ?? 0);
+      return { region, value, insufficient: unavailable, row };
+    }
     let value: number;
     if (metric === "spend") value = spendUsd(row);
-    else if (metric === "results") value = Number(row.results ?? 0);
     else if (metric === "impressions") value = Number(row.impressions ?? 0);
     else if (metric === "clicks") value = Number(row.clicks ?? 0);
     else value = Number(row.reach ?? 0);
@@ -186,6 +190,12 @@ export default function GeoMap({
           {alignmentNote}
           {extraCaption ? ` ${extraCaption}` : null}
         </p>
+        {metadata.warning ? (
+          <Alert className="mt-3">
+            <AlertTitle>Breakdown incompleto</AlertTitle>
+            <AlertDescription>{metadata.warning}</AlertDescription>
+          </Alert>
+        ) : null}
         {metadata.scope === "ad" ? (
           <AdReferenceLink href={adReferenceUrl ?? null} />
         ) : null}
