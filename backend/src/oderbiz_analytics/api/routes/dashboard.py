@@ -115,6 +115,14 @@ async def get_account_dashboard(
         None,
         description="Si se indica, el resumen es solo de esa campaña (Meta level=campaign).",
     ),
+    adset_id: str | None = Query(
+        None,
+        description="Si se indica, el resumen es solo de ese conjunto (Meta level=adset).",
+    ),
+    ad_id: str | None = Query(
+        None,
+        description="Si se indica, el resumen es solo de ese anuncio (Meta level=ad).",
+    ),
     objective_metric: str = Query(
         "messaging_conversation_started",
         description="Metrica objetivo homogenea para resultados/CPA derivado.",
@@ -123,10 +131,9 @@ async def get_account_dashboard(
     access_token: str = Depends(get_meta_access_token),
 ):
     """
-    Insights para KPIs del resumen: nivel cuenta o una campaña concreta.
+    Insights para KPIs del resumen: nivel cuenta, campaña, conjunto o anuncio.
 
-    Sin `campaign_id`: agregado de cuenta (`act_*` nivel account).
-    Con `campaign_id`: agregado de esa campaña (`level=campaign` + filtering).
+    Jerarquía: ad_id > adset_id > campaign_id > cuenta completa.
 
     When Graph returns no insight rows, `insights_empty` is true, numeric KPIs in
     `summary` are zero, `actions` / `cost_per_action_type` are empty lists, and
@@ -135,7 +142,27 @@ async def get_account_dashboard(
     normalized_id = normalize_ad_account_id(ad_account_id)
     base = f"https://graph.facebook.com/{settings.meta_graph_version}".rstrip("/")
 
+    aid = (ad_id or "").strip()
+    sid = (adset_id or "").strip()
     cid = (campaign_id or "").strip()
+
+    # Resolve level + filtering field following the same hierarchy as other endpoints
+    if aid:
+        level = "ad"
+        filter_field: str | None = "ad.id"
+        entity_id = aid
+    elif sid:
+        level = "adset"
+        filter_field = "adset.id"
+        entity_id = sid
+    elif cid:
+        level = "campaign"
+        filter_field = "campaign.id"
+        entity_id = cid
+    else:
+        level = "account"
+        filter_field = None
+        entity_id = normalized_id
 
     ds = (date_start or "").strip()
     de = (date_stop or "").strip()
@@ -151,31 +178,7 @@ async def get_account_dashboard(
         effective_date_preset = None
 
     try:
-        if cid:
-            use_local_maximum_filter = effective_date_preset == "maximum" and effective_time_range is None
-            request_fields = FIELDS
-            if use_local_maximum_filter:
-                request_fields = f"{FIELDS},campaign_id,campaign_name,date_start,date_stop"
-            rows = await fetch_insights_all_pages(
-                base_url=base,
-                access_token=access_token,
-                ad_account_id=normalized_id,
-                fields=request_fields,
-                level="campaign",
-                date_preset=effective_date_preset,
-                time_range=effective_time_range,
-                filtering=None if use_local_maximum_filter else [
-                    {"field": "campaign.id", "operator": "IN", "value": [cid]}
-                ],
-                max_pages=10,
-            )
-            if use_local_maximum_filter:
-                rows = [
-                    row
-                    for row in rows
-                    if str(row.get("campaign_id") or row.get("id") or "").strip() == cid
-                ]
-        else:
+        if level == "account":
             rows = await fetch_account_insights(
                 base_url=base,
                 access_token=access_token,
@@ -184,6 +187,35 @@ async def get_account_dashboard(
                 time_range=effective_time_range,
                 fields=FIELDS,
             )
+        else:
+            use_local_maximum_filter = effective_date_preset == "maximum" and effective_time_range is None
+            request_fields = FIELDS
+            if use_local_maximum_filter:
+                extra_fields = {
+                    "campaign": "campaign_id,campaign_name",
+                    "adset": "adset_id,adset_name,campaign_id",
+                    "ad": "ad_id,ad_name,campaign_id",
+                }.get(level, "")
+                request_fields = f"{FIELDS},{extra_fields},date_start,date_stop"
+            rows = await fetch_insights_all_pages(
+                base_url=base,
+                access_token=access_token,
+                ad_account_id=normalized_id,
+                fields=request_fields,
+                level=level,
+                date_preset=effective_date_preset,
+                time_range=effective_time_range,
+                filtering=None if use_local_maximum_filter else [
+                    {"field": filter_field, "operator": "IN", "value": [entity_id]}
+                ],
+                max_pages=10,
+            )
+            if use_local_maximum_filter:
+                id_key = {"campaign": "campaign_id", "adset": "adset_id", "ad": "ad_id"}.get(level, "id")
+                rows = [
+                    row for row in rows
+                    if str(row.get(id_key) or row.get("id") or "").strip() == entity_id
+                ]
     except httpx.HTTPStatusError:
         raise HTTPException(
             status_code=502,
@@ -202,12 +234,12 @@ async def get_account_dashboard(
             "ad_account_id": normalized_id,
             "date_preset": date_preset,
             "campaign_id": cid or None,
-            "scope": "campaign" if cid else "account",
+            "scope": level,
             "insights_empty": True,
             "summary": empty_summary,
             "context": {
-                "level": "campaign" if cid else "account",
-                "entity_id": cid or normalized_id,
+                "level": level,
+                "entity_id": entity_id,
                 "date_start": None,
                 "date_stop": None,
                 "attribution_window": None,
@@ -254,11 +286,11 @@ async def get_account_dashboard(
         "ad_account_id": normalized_id,
         "date_preset": date_preset,
         "campaign_id": cid or None,
-        "scope": "campaign" if cid else "account",
+        "scope": level,
         "insights_empty": False,
         "context": {
-            "level": "campaign" if cid else "account",
-            "entity_id": cid or normalized_id,
+            "level": level,
+            "entity_id": entity_id,
             "date_start": row.get("date_start"),
             "date_stop": row.get("date_stop"),
             "attribution_window": None,

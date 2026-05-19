@@ -3,6 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import InfoTooltip from "@/components/InfoTooltip";
 import type { PageFunnelResponse } from "@/api/client";
+import { buildMessagingFunnelSteps } from "@/lib/pageDashboardDecisions";
 
 interface ConversionFunnelCardProps {
   data: PageFunnelResponse | undefined;
@@ -31,7 +32,7 @@ export default function ConversionFunnelCard({ data, isLoading }: ConversionFunn
   if (isLoading) {
     return (
       <section className="space-y-3">
-        <h2 className="text-foreground text-lg font-semibold">Embudo de Conversión</h2>
+        <h2 className="text-foreground text-lg font-semibold">Embudo de Adquisición</h2>
         <Card>
           <CardContent className="p-6">
             <Skeleton className="h-28 w-full" />
@@ -44,7 +45,7 @@ export default function ConversionFunnelCard({ data, isLoading }: ConversionFunn
   if (!data || data.impressions === 0) {
     return (
       <section className="space-y-3">
-        <h2 className="text-foreground text-lg font-semibold">Embudo de Conversión</h2>
+        <h2 className="text-foreground text-lg font-semibold">Embudo de Adquisición</h2>
         <Card>
           <CardContent className="p-4">
             <p className="text-muted-foreground text-sm">Sin datos de embudo en el periodo seleccionado.</p>
@@ -54,53 +55,35 @@ export default function ConversionFunnelCard({ data, isLoading }: ConversionFunn
     );
   }
 
-  const steps: FunnelStep[] = [
-    {
-      label: "Impresiones",
-      value: data.impressions,
-      sub: "Veces mostrado",
-      tooltip: "Total de veces que el anuncio fue mostrado en pantalla (Facebook + Instagram). Una persona puede generar múltiples impresiones.",
-    },
-    {
-      label: "Alcance",
-      value: data.reach,
-      sub: "Personas únicas",
-      tooltip: "Número de personas distintas que vieron el anuncio al menos una vez. Cada persona se cuenta una sola vez en el período.",
-    },
-    {
-      label: "Clics únicos",
-      value: data.unique_clicks,
-      sub: "Clics distintos",
-      tooltip: "Personas que hicieron clic al menos una vez en el anuncio. Incluye clics en enlace, foto y otros elementos. Fuente: campo unique_clicks de Meta.",
-    },
-    {
-      label: "Conversaciones",
-      value: data.conversations_started,
-      sub: "Mensajes iniciados",
-      tooltip: "Personas que iniciaron una conversación por Messenger o WhatsApp dentro de los 7 días de ver el anuncio. Fuente: acción messaging_conversation_started_7d.",
-    },
-    {
-      label: "Respuestas",
-      value: data.first_replies,
-      sub: "Primera respuesta",
-      tooltip: "Personas que respondieron activamente al primer mensaje de la conversación. Indica leads de mayor calidad. Fuente: acción messaging_first_reply de Meta.",
-    },
-  ];
+  const steps: FunnelStep[] = buildMessagingFunnelSteps(data).map((step) => ({
+    ...step,
+    tooltip:
+      step.label === "Impresiones"
+        ? "Total de veces que el anuncio fue mostrado en pantalla."
+        : step.label === "Clics únicos"
+        ? "Personas únicas que hicieron clic en el anuncio (botón de mensaje, enlace u otro). Incluye clics al CTA de mensajería."
+        : step.label === "Conversaciones"
+        ? "Conversaciones iniciadas atribuidas por Meta (ventana 7d)."
+        : step.label === "1ª Respuesta"
+        ? "Conversaciones donde hubo al menos una primera respuesta del negocio."
+        : step.label === "Profundidad 2"
+        ? "Conversaciones con 2 o más mensajes enviados — señal de interés."
+        : step.label === "Profundidad 3"
+        ? "Conversaciones con 3+ mensajes — interés real del prospecto."
+        : "Conversaciones con 5+ mensajes — perfil de lead calificado.",
+  }));
 
-  const conversions = [
-    pct(data.impressions, data.reach),
-    pct(data.reach, data.unique_clicks),
-    pct(data.unique_clicks, data.conversations_started),
-    pct(data.conversations_started, data.first_replies),
-  ];
+  const convRates = steps.slice(0, -1).map((step, i) =>
+    pct(step.value, steps[i + 1]?.value ?? 0),
+  );
 
   return (
     <section className="space-y-3">
-      <h2 className="text-foreground text-lg font-semibold">Embudo de Conversión</h2>
+      <h2 className="text-foreground text-lg font-semibold">Embudo de Adquisición</h2>
       <Card>
         <CardHeader>
           <CardTitle className="text-sm text-muted-foreground font-normal">
-            Cada flecha muestra qué porcentaje avanzó al siguiente paso.
+            Flujo de pauta: exposición, clic prioritario y conversación iniciada.
           </CardTitle>
         </CardHeader>
         <CardContent className="pb-6">
@@ -120,7 +103,7 @@ export default function ConversionFunnelCard({ data, isLoading }: ConversionFunn
                 {/* Arrow + rate */}
                 {i < steps.length - 1 && (
                   <div className="flex flex-col items-center min-w-[44px]">
-                    <span className="text-muted-foreground text-[10px] font-medium">{conversions[i]}</span>
+                    <span className="text-muted-foreground text-[10px] font-medium">{convRates[i]}</span>
                     <span className="text-muted-foreground text-base leading-none">→</span>
                   </div>
                 )}

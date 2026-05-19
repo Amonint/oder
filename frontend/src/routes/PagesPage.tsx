@@ -39,7 +39,6 @@ export default function PagesPage() {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["pages", accountId, datePreset],
     queryFn: () => fetchPages(accountId, { datePreset }),
-    staleTime: 5 * 60 * 1000,
   });
 
   return (

@@ -436,7 +436,7 @@ class TestGetPageGeo:
         assert adset_reqs[0].url.params.get("fields") == "promoted_object"
 
     @respx.mock
-    def test_page_geo_marks_objective_breakdown_unavailable_when_meta_omits_results(self, client):
+    def test_page_geo_keeps_rows_when_meta_omits_objective_results(self, client):
         respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
         route = respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
             side_effect=[
@@ -493,7 +493,8 @@ class TestGetPageGeo:
         assert route.call_count == 2
         assert body["metadata"]["complete_coverage"] is False
         assert body["metadata"]["objective_breakdown_complete"] is False
-        assert body["data"][0]["results"] is None
+        assert body["metadata"]["warning"] is None
+        assert body["data"][0]["results"] == 0
         assert body["data"][0]["cpa"] is None
 
     @respx.mock
@@ -676,6 +677,203 @@ class TestGetPageFunnel:
         body = r.json()
         assert body["conversations_started"] == 8
         assert body["first_replies"] == 3
+
+
+class TestGetPageAdDiagnostics:
+    @respx.mock
+    def test_page_ad_diagnostics_ranks_by_cost_per_result_when_enough_objective_results(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
+        insights_route = respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
+            side_effect=[
+                httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {
+                                "ad_id": "ad_b",
+                                "ad_name": "Anuncio B",
+                                "impressions": "1000",
+                                "spend": "40.00",
+                                "frequency": "1.20",
+                                "inline_link_clicks": "8",
+                                "inline_link_click_ctr": "0.80",
+                                "outbound_clicks": [],
+                                "actions": [
+                                    {
+                                        "action_type": "onsite_conversion.messaging_conversation_started_7d",
+                                        "value": "4",
+                                    }
+                                ],
+                                "cost_per_action_type": [
+                                    {
+                                        "action_type": "onsite_conversion.messaging_conversation_started_7d",
+                                        "value": "10.00",
+                                    }
+                                ],
+                            },
+                            {
+                                "ad_id": "ad_c",
+                                "ad_name": "Anuncio C",
+                                "impressions": "900",
+                                "spend": "30.00",
+                                "frequency": "1.15",
+                                "inline_link_clicks": "6",
+                                "inline_link_click_ctr": "0.67",
+                                "outbound_clicks": [],
+                                "actions": [
+                                    {
+                                        "action_type": "onsite_conversion.messaging_conversation_started_7d",
+                                        "value": "3",
+                                    }
+                                ],
+                                "cost_per_action_type": [
+                                    {
+                                        "action_type": "onsite_conversion.messaging_conversation_started_7d",
+                                        "value": "10.00",
+                                    }
+                                ],
+                            },
+                            {
+                                "ad_id": "ad_a",
+                                "ad_name": "Anuncio A",
+                                "impressions": "1100",
+                                "spend": "50.00",
+                                "frequency": "1.30",
+                                "inline_link_clicks": "5",
+                                "inline_link_click_ctr": "0.45",
+                                "outbound_clicks": [],
+                                "actions": [
+                                    {
+                                        "action_type": "onsite_conversion.messaging_conversation_started_7d",
+                                        "value": "2",
+                                    }
+                                ],
+                                "cost_per_action_type": [
+                                    {
+                                        "action_type": "onsite_conversion.messaging_conversation_started_7d",
+                                        "value": "25.00",
+                                    }
+                                ],
+                            },
+                        ]
+                    },
+                ),
+                httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {"ad_id": "ad_b", "date_start": "2025-01-01", "spend": "20.00"},
+                            {"ad_id": "ad_b", "date_start": "2025-01-02", "spend": "20.00"},
+                            {"ad_id": "ad_c", "date_start": "2025-01-01", "spend": "15.00"},
+                            {"ad_id": "ad_c", "date_start": "2025-01-02", "spend": "15.00"},
+                            {"ad_id": "ad_a", "date_start": "2025-01-01", "spend": "25.00"},
+                            {"ad_id": "ad_a", "date_start": "2025-01-02", "spend": "25.00"},
+                        ]
+                    },
+                ),
+            ]
+        )
+
+        r = client.get(
+            "/api/v1/accounts/act_123/pages/page_456/ad-diagnostics",
+            params={
+                "date_preset": "last_30d",
+                "objective_metric": "messaging_conversation_started",
+            },
+            headers={"Authorization": "Bearer test_tok"},
+        )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert [row["ad_id"] for row in body["data"][:3]] == ["ad_b", "ad_c", "ad_a"]
+        assert body["data"][0]["ranking_basis"] == "objective_result"
+        assert body["data"][0]["results"] == 4.0
+        assert body["data"][0]["cost_per_result"] == 10.0
+        assert body["data"][0]["primary_click_metric"] == "inline_link_click"
+        assert body["data"][0]["primary_click_cost"] == 5.0
+        assert body["data"][0]["frequency"] == 1.2
+        assert insights_route.call_count == 2
+
+    @respx.mock
+    def test_page_ad_diagnostics_falls_back_to_click_efficiency_when_results_are_missing(self, client):
+        respx.get("https://graph.facebook.com/v25.0/act_123/adsets").mock(return_value=_ADSETS_MOCK)
+        respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
+            side_effect=[
+                httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {
+                                "ad_id": "ad_c",
+                                "ad_name": "Anuncio C",
+                                "impressions": "1000",
+                                "spend": "20.00",
+                                "frequency": "1.20",
+                                "inline_link_clicks": "0",
+                                "inline_link_click_ctr": "0.00",
+                                "outbound_clicks": [{"action_type": "outbound_click", "value": "25"}],
+                                "actions": [],
+                                "cost_per_action_type": [],
+                            },
+                            {
+                                "ad_id": "ad_b",
+                                "ad_name": "Anuncio B",
+                                "impressions": "1000",
+                                "spend": "20.00",
+                                "frequency": "1.60",
+                                "inline_link_clicks": "0",
+                                "inline_link_click_ctr": "0.00",
+                                "outbound_clicks": [{"action_type": "outbound_click", "value": "25"}],
+                                "actions": [],
+                                "cost_per_action_type": [],
+                            },
+                            {
+                                "ad_id": "ad_a",
+                                "ad_name": "Anuncio A",
+                                "impressions": "1000",
+                                "spend": "24.00",
+                                "frequency": "1.40",
+                                "inline_link_clicks": "0",
+                                "inline_link_click_ctr": "0.00",
+                                "outbound_clicks": [{"action_type": "outbound_click", "value": "20"}],
+                                "actions": [],
+                                "cost_per_action_type": [],
+                            },
+                        ]
+                    },
+                ),
+                httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {"ad_id": "ad_c", "date_start": "2025-01-01", "spend": "10.00"},
+                            {"ad_id": "ad_c", "date_start": "2025-01-02", "spend": "10.00"},
+                            {"ad_id": "ad_b", "date_start": "2025-01-01", "spend": "10.00"},
+                            {"ad_id": "ad_b", "date_start": "2025-01-02", "spend": "10.00"},
+                            {"ad_id": "ad_a", "date_start": "2025-01-01", "spend": "12.00"},
+                            {"ad_id": "ad_a", "date_start": "2025-01-02", "spend": "12.00"},
+                        ]
+                    },
+                ),
+            ]
+        )
+
+        r = client.get(
+            "/api/v1/accounts/act_123/pages/page_456/ad-diagnostics",
+            params={
+                "date_preset": "last_30d",
+                "objective_metric": "messaging_conversation_started",
+            },
+            headers={"Authorization": "Bearer test_tok"},
+        )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert [row["ad_id"] for row in body["data"][:3]] == ["ad_c", "ad_b", "ad_a"]
+        assert all(row["ranking_basis"] == "click_efficiency" for row in body["data"][:3])
+        assert body["data"][0]["primary_click_metric"] == "outbound_click"
+        assert body["data"][0]["primary_ctr"] == 2.5
+        assert body["data"][0]["primary_click_cost"] == 0.8
 
 
 class TestGetPageDemographics:

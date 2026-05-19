@@ -34,6 +34,8 @@ const DEMOGRAPHICS_MIN_SPEND_USD = 25;
 interface DemographicsPanelProps {
   /** Si se pasa, sustituye el título de sección (p. ej. dashboard de página). */
   sectionTitle?: string;
+  objectiveLabel?: string;
+  strictObjectiveCpa?: boolean;
   data: DemographicsRow[] | undefined;
   isLoading: boolean;
   isError: boolean;
@@ -68,15 +70,6 @@ function segmentLabel(row: DemographicsRow, bd: "age" | "gender"): string {
   return g.charAt(0).toUpperCase() + g.slice(1).toLowerCase();
 }
 
-function firstNumericCostPerAction(items: InsightActionItem[] | undefined): number | null {
-  if (!items?.length) return null;
-  for (const item of items) {
-    const v = Number(item.value ?? NaN);
-    if (Number.isFinite(v) && v > 0) return v;
-  }
-  return null;
-}
-
 function sumConversionActions(actions: InsightActionItem[] | undefined): number {
   if (!actions?.length) return 0;
   let s = 0;
@@ -88,11 +81,28 @@ function sumConversionActions(actions: InsightActionItem[] | undefined): number 
   return s;
 }
 
-function segmentCpa(row: DemographicsRow): number | null {
+function sumObjectiveActions(
+  actions: InsightActionItem[] | undefined,
+  objectiveActionTypes: string[] | undefined,
+): number {
+  if (!actions?.length || !objectiveActionTypes?.length) return 0;
+  const accepted = new Set(objectiveActionTypes);
+  let total = 0;
+  for (const item of actions) {
+    if (!accepted.has(String(item.action_type ?? ""))) continue;
+    total += Number(item.value ?? 0) || 0;
+  }
+  return total;
+}
+
+function segmentCpa(row: DemographicsRow, strictObjectiveCpa = false): number | null {
   if (typeof row.cpa === "number" && Number.isFinite(row.cpa) && row.cpa > 0) return row.cpa;
-  const fromMeta = firstNumericCostPerAction(row.cost_per_action_type);
-  if (fromMeta != null) return fromMeta;
   const spend = parseFloat(String(row.spend ?? "0"));
+  if (strictObjectiveCpa) {
+    const objectiveResults = sumObjectiveActions(row.actions, row.objective_action_types);
+    if (spend > 0 && objectiveResults > 0) return spend / objectiveResults;
+    return null;
+  }
   const conv = sumConversionActions(row.actions);
   if (spend > 0 && conv > 0) return spend / conv;
   return null;
@@ -107,11 +117,15 @@ type DemographicsBarRow = {
   insufficient: boolean;
 };
 
-function buildBarRows(rows: DemographicsRow[], bd: "age" | "gender"): DemographicsBarRow[] {
+function buildBarRows(
+  rows: DemographicsRow[],
+  bd: "age" | "gender",
+  strictObjectiveCpa = false,
+): DemographicsBarRow[] {
   return rows
     .map((row) => {
       const spend = parseFloat(String(row.spend ?? "0")) || 0;
-      const cpa = segmentCpa(row);
+      const cpa = segmentCpa(row, strictObjectiveCpa);
       return {
         label: segmentLabel(row, bd),
         spend,
@@ -147,9 +161,13 @@ function DemographicsSpendTooltip({
 function DemographicsCpaTooltip({
   active,
   payload,
+  objectiveLabel,
+  strictObjectiveCpa,
 }: {
   active?: boolean;
   payload?: { payload: DemographicsBarRow }[];
+  objectiveLabel: string;
+  strictObjectiveCpa: boolean;
 }) {
   if (!active || !payload?.length) return null;
   const row = payload[0].payload;
@@ -160,18 +178,28 @@ function DemographicsCpaTooltip({
         <p className="text-muted-foreground mt-1">Datos insuficientes</p>
       )}
       <p className="tabular-nums">
-        CPA: {row.cpa != null ? `$${row.cpa.toFixed(2)}` : "—"}
+        Costo: {row.cpa != null ? `$${row.cpa.toFixed(2)}` : "—"}
       </p>
       <p className="text-muted-foreground mt-0.5">
         {typeof row.cpa === "number"
-          ? "Alineado con el objetivo activo del dashboard."
-          : "Primer cost_per_action_type numérico de Meta, o gasto ÷ suma de conversiones (lead, compra, mensaje iniciado, píxel)."}
+          ? `Alineado con ${objectiveLabel.toLowerCase()}.`
+          : strictObjectiveCpa
+            ? "Sin resultado objetivo suficiente en Meta para este segmento."
+            : "Derivado desde acciones de conversión del segmento."}
       </p>
     </div>
   );
 }
 
-function DemographicsAgeGenderHeatmap({ rows }: { rows: DemographicsRow[] }) {
+function DemographicsAgeGenderHeatmap({
+  rows,
+  strictObjectiveCpa,
+  objectiveLabel,
+}: {
+  rows: DemographicsRow[];
+  strictObjectiveCpa: boolean;
+  objectiveLabel: string;
+}) {
   const [colorBy, setColorBy] = useState<"spend" | "cpa">("cpa");
 
   const model = useMemo(() => {
@@ -190,7 +218,7 @@ function DemographicsAgeGenderHeatmap({ rows }: { rows: DemographicsRow[] }) {
       const prevSpend = spendMap.get(k) ?? 0;
       const add = parseFloat(String(r.spend ?? "0")) || 0;
       spendMap.set(k, prevSpend + add);
-      if (prevSpend === 0) cpaMap.set(k, segmentCpa(r));
+      if (prevSpend === 0) cpaMap.set(k, segmentCpa(r, strictObjectiveCpa));
       else cpaMap.set(k, null);
     }
 
@@ -202,7 +230,7 @@ function DemographicsAgeGenderHeatmap({ rows }: { rows: DemographicsRow[] }) {
     }
     const max = colorBy === "spend" ? (maxSpend > 0 ? maxSpend : 1) : (maxCpa > 0 ? maxCpa : 1);
     return { ages, genders, spendMap, cpaMap, max };
-  }, [rows, colorBy]);
+  }, [rows, colorBy, strictObjectiveCpa]);
 
   if (model.ages.length === 0 || model.genders.length === 0) {
     return (
@@ -216,7 +244,7 @@ function DemographicsAgeGenderHeatmap({ rows }: { rows: DemographicsRow[] }) {
     <div className="border-border space-y-2 border-t px-4 py-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-foreground text-sm font-semibold">
-          Mapa de calor — {colorBy === "cpa" ? "CPA por celda" : "Gasto (edad × género)"}
+          Mapa de calor — {colorBy === "cpa" ? `Costo por ${objectiveLabel.toLowerCase()}` : "Gasto (edad × género)"}
         </h3>
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground text-xs">Colorear por</span>
@@ -225,7 +253,7 @@ function DemographicsAgeGenderHeatmap({ rows }: { rows: DemographicsRow[] }) {
             value={colorBy}
             onChange={(e) => setColorBy(e.target.value as "spend" | "cpa")}
           >
-            <option value="cpa">CPA (decisiones)</option>
+            <option value="cpa">Costo por resultado</option>
             <option value="spend">Gasto</option>
           </select>
           <Badge variant="outline" className="text-xs font-normal text-muted-foreground">
@@ -276,7 +304,7 @@ function DemographicsAgeGenderHeatmap({ rows }: { rows: DemographicsRow[] }) {
                       }}
                       title={
                         `${age} · ${g}: gasto $${spend.toFixed(2)}` +
-                        (cpa != null ? ` · CPA $${cpa.toFixed(2)}` : "")
+                        (cpa != null ? ` · costo $${cpa.toFixed(2)}` : "")
                       }
                     >
                       {display}
@@ -294,6 +322,8 @@ function DemographicsAgeGenderHeatmap({ rows }: { rows: DemographicsRow[] }) {
 
 export default function DemographicsPanel({
   sectionTitle,
+  objectiveLabel = "resultado objetivo",
+  strictObjectiveCpa = false,
   data,
   isLoading,
   isError,
@@ -309,8 +339,8 @@ export default function DemographicsPanel({
     breakdown === "age" || breakdown === "gender" ? breakdown : null;
 
   const barRows = useMemo(
-    () => (barBreakdown ? buildBarRows(data ?? [], barBreakdown) : []),
-    [data, barBreakdown],
+    () => (barBreakdown ? buildBarRows(data ?? [], barBreakdown, strictObjectiveCpa) : []),
+    [data, barBreakdown, strictObjectiveCpa],
   );
 
   const chartHeight = Math.max(barRows.length * 36, 120);
@@ -347,7 +377,8 @@ export default function DemographicsPanel({
               : "Cruce edad + género"}
           </CardTitle>
           <CardDescription>
-            Gasto, impresiones, CTR, CPM y CPC por segmento demográfico.
+            Gasto, impresiones, CTR, CPM y CPC por segmento demográfico. El coste por resultado solo se muestra si puede
+            alinearse al objetivo activo sin mezclar acciones incompatibles.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -413,7 +444,11 @@ export default function DemographicsPanel({
               </div>
 
               {breakdown === "age,gender" && rows.length > 0 ? (
-                <DemographicsAgeGenderHeatmap rows={rows} />
+                <DemographicsAgeGenderHeatmap
+                  rows={rows}
+                  strictObjectiveCpa={strictObjectiveCpa}
+                  objectiveLabel={objectiveLabel}
+                />
               ) : null}
 
               {barBreakdown && barRows.length > 0 && (
@@ -446,7 +481,9 @@ export default function DemographicsPanel({
                   </div>
 
                   <div>
-                    <h3 className="text-foreground mb-2 text-sm font-semibold">CPA por segmento</h3>
+                    <h3 className="text-foreground mb-2 text-sm font-semibold">
+                      Costo por {objectiveLabel.toLowerCase()} por segmento
+                    </h3>
                     <ResponsiveContainer width="100%" height={chartHeight}>
                       <BarChart data={barRows} layout="vertical" margin={{ left: 8, right: 24, top: 4, bottom: 4 }}>
                         <XAxis
@@ -456,7 +493,15 @@ export default function DemographicsPanel({
                           domain={[0, "dataMax"]}
                         />
                         <YAxis type="category" dataKey="label" width={100} tick={{ fontSize: 11 }} />
-                        <Tooltip content={<DemographicsCpaTooltip />} cursor={{ fill: "hsl(var(--muted) / 0.35)" }} />
+                        <Tooltip
+                          content={
+                            <DemographicsCpaTooltip
+                              objectiveLabel={objectiveLabel}
+                              strictObjectiveCpa={strictObjectiveCpa}
+                            />
+                          }
+                          cursor={{ fill: "hsl(var(--muted) / 0.35)" }}
+                        />
                         <Bar dataKey="cpaValue" radius={[0, 4, 4, 0]}>
                           {barRows.map((r, i) => (
                             <Cell

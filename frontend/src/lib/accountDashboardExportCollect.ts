@@ -173,6 +173,7 @@ export async function collectAccountDashboardExport(
   const placementOpts: Parameters<typeof fetchPlacementInsights>[1] = {
     ...effective,
     includeDeviceBreakdowns: true,
+    objectiveMetric: ACCOUNT_DASHBOARD_OBJECTIVE_METRIC,
   };
   if (input.selectedAdId) placementOpts.adId = input.selectedAdId;
   else if (input.adsetSelect !== ALL) placementOpts.adsetId = input.adsetSelect;

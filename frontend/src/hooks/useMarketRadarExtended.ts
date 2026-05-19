@@ -14,7 +14,6 @@ export function useMarketRadarExtended({ pageId }: UseMarketRadarExtendedOptions
       return fetchMarketRadarExtended(pageId);
     },
     enabled: !!pageId,
-    staleTime: 10 * 60 * 1000, // 10 minutes
     retry: 2,
   });
 }

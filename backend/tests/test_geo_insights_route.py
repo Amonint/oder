@@ -147,7 +147,7 @@ def test_geo_insights_aligns_results_and_cpa_to_objective_metric(client):
 
 
 @respx.mock
-def test_geo_insights_marks_objective_breakdown_unavailable_when_meta_omits_results(client):
+def test_geo_insights_keeps_rows_when_meta_omits_objective_results(client):
     route = respx.get("https://graph.facebook.com/v25.0/act_123/insights").mock(
         side_effect=[
             httpx.Response(
@@ -207,6 +207,6 @@ def test_geo_insights_marks_objective_breakdown_unavailable_when_meta_omits_resu
     assert body["metadata"]["objective_breakdown_complete"] is False
     assert body["metadata"]["objective_results_total"] == 3.0
     assert body["metadata"]["objective_results_breakdown_total"] == 0.0
-    assert body["metadata"]["warning"]
-    assert body["data"][0]["results"] is None
+    assert body["metadata"]["warning"] is None
+    assert body["data"][0]["results"] == 0
     assert body["data"][0]["cpa"] is None

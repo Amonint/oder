@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     meta_access_token: str = ""
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    ad_validation_min_calibration: float = 0.75
+    ad_validation_min_points: int = 120
+    ad_validation_min_duration_ms: int = 5000
+    ad_validation_min_valid_sessions: int = 5
+    ad_validation_heatmap_grid_size: int = 32
+    ad_validation_storage_dir: str = "/data/ad-validation"
 
     @model_validator(mode="after")
     def _site_auth_cookie_combo(self) -> "Settings":

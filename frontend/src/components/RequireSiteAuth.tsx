@@ -11,7 +11,6 @@ export default function RequireSiteAuth() {
     queryKey: ["siteAuthMe"],
     queryFn: fetchSiteAuthMe,
     retry: 1,
-    staleTime: 30_000,
   });
 
   if (isLoading) {

@@ -111,6 +111,7 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
       ...init,
       headers,
       credentials: "include",
+      cache: "no-store",
     });
   } catch (e) {
     // Red/proxy/backend caído: el navegador lanza TypeError, no hay Response.
@@ -127,9 +128,21 @@ async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
 
 async function readErrorMessage(r: Response): Promise<string> {
   const text = await r.text();
+  const formatTokenError = (): string =>
+    "El token de Meta es inválido o expiró. Vuelve a conectarte desde la pantalla inicial.";
   try {
     const j = JSON.parse(text) as { detail?: unknown };
     if (typeof j.detail === "string") {
+      const detail = j.detail.trim();
+      const lowered = detail.toLowerCase();
+      if (
+        lowered.includes("access token") ||
+        lowered.includes("error validating access token") ||
+        lowered.includes("session has expired")
+      ) {
+        clearMetaAccessToken();
+        return formatTokenError();
+      }
       if (r.status === 404 && j.detail === "Not Found") {
         return (
           "Ruta no encontrada (404). En local: deja sin definir VITE_API_BASE_URL y usa el proxy " +
@@ -137,7 +150,7 @@ async function readErrorMessage(r: Response): Promise<string> {
           "Comprueba que el backend esté en marcha."
         );
       }
-      return j.detail;
+      return detail;
     }
     if (Array.isArray(j.detail)) {
       const first = j.detail[0] as { msg?: string } | undefined;
@@ -146,7 +159,18 @@ async function readErrorMessage(r: Response): Promise<string> {
   } catch {
     /* not JSON */
   }
-  if (text.length > 0 && text.length < 400) return text;
+  if (text.length > 0 && text.length < 400) {
+    const lowered = text.toLowerCase();
+    if (
+      lowered.includes("access token") ||
+      lowered.includes("error validating access token") ||
+      lowered.includes("session has expired")
+    ) {
+      clearMetaAccessToken();
+      return formatTokenError();
+    }
+    return text;
+  }
   return r.statusText || "Error al llamar a la API";
 }
 
@@ -410,6 +434,8 @@ export async function fetchAccountDashboard(
   datePreset: string,
   opts?: {
     campaignId?: string | null;
+    adsetId?: string | null;
+    adId?: string | null;
     dateStart?: string;
     dateStop?: string;
     objectiveMetric?: "messaging_conversation_started" | "messaging_first_reply" | "lead";
@@ -423,6 +449,8 @@ export async function fetchAccountDashboard(
     q.set("date_preset", datePreset);
   }
   if (opts?.campaignId) q.set("campaign_id", opts.campaignId);
+  if (opts?.adsetId) q.set("adset_id", opts.adsetId);
+  if (opts?.adId) q.set("ad_id", opts.adId);
   if (opts?.objectiveMetric) q.set("objective_metric", opts.objectiveMetric);
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/dashboard?${q}`;
   const r = await apiFetch(path);
@@ -496,6 +524,7 @@ export interface PlacementInsightsResponse {
   time_range: { since: string; until: string } | null;
   time_increment?: number | null;
   breakdowns: string[];
+  objective_metric?: string | null;
 }
 
 export interface EntitySummaryRow {
@@ -533,6 +562,7 @@ export async function fetchEntitySummary(
     dateStop?: string;
     campaignId?: string;
     adsetId?: string;
+    adId?: string;
     objectiveMetric?: "messaging_conversation_started" | "messaging_first_reply" | "lead";
     attributionWindow?:
       | "click_1d"
@@ -548,6 +578,7 @@ export async function fetchEntitySummary(
   if (opts.dateStop) q.set("date_stop", opts.dateStop);
   if (opts.campaignId) q.set("campaign_id", opts.campaignId);
   if (opts.adsetId) q.set("adset_id", opts.adsetId);
+  if (opts.adId) q.set("ad_id", opts.adId);
   if (opts.objectiveMetric) q.set("objective_metric", opts.objectiveMetric);
   if (opts.attributionWindow) q.set("attribution_window", opts.attributionWindow);
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/entity-summary?${q}`;
@@ -610,6 +641,7 @@ export async function fetchPlacementInsights(
     adId?: string;
     timeIncrement?: number;
     includeDeviceBreakdowns?: boolean;
+    objectiveMetric?: "messaging_conversation_started" | "messaging_first_reply" | "lead";
   }
 ): Promise<PlacementInsightsResponse> {
   const q = new URLSearchParams();
@@ -621,6 +653,7 @@ export async function fetchPlacementInsights(
   if (opts.adId) q.set("ad_id", opts.adId);
   if (opts.timeIncrement != null) q.set("time_increment", String(opts.timeIncrement));
   if (opts.includeDeviceBreakdowns) q.set("include_device_breakdowns", "true");
+  if (opts.objectiveMetric) q.set("objective_metric", opts.objectiveMetric);
   const path = `/api/v1/accounts/${encodeURIComponent(adAccountId)}/insights/placements?${q}`;
   const r = await apiFetch(path);
   if (!r.ok) throw new Error(await readErrorMessage(r));
@@ -730,6 +763,8 @@ export interface PageKpiRow {
   reach?: string;
   frequency?: string;
   cpm?: string;
+  cpc?: string;
+  cpp?: string;
   ctr?: string;
   inline_link_click_ctr?: string;
   inline_link_clicks?: string;
@@ -988,12 +1023,17 @@ export async function fetchAdLabelsPerformance(
 export interface ConversionTimeseriesRow {
   date: string;
   spend: number;
-  cpa: number;
+  cpa: number | null;
   conversions: number;
   conversations_started: number;
   revenue: number;
   replied: number;
   depth2: number;
+  depth3: number;
+  depth5: number;
+  cpm?: number | null;
+  cpc?: number | null;
+  cpp?: number | null;
 }
 
 export interface ConversionTimeseriesResponse {
@@ -1078,12 +1118,24 @@ export interface AdDiagnosticsRow {
   ad_name_source?: "meta_ad_name" | "creative_name" | "story_id" | "ad_id_fallback";
   impressions: number;
   spend: number;
+  frequency: number;
   ctr: number;
   cpm: number;
-  engagement_rate: number;
+  engagement_rate?: number;
+  results: number;
+  cost_per_result?: number | null;
   cpa?: number | null;
+  primary_click_metric: "outbound_click" | "inline_link_click" | "all_click";
+  primary_clicks: number;
+  primary_ctr: number;
+  primary_click_cost?: number | null;
+  ranking_basis: "objective_result" | "click_efficiency";
   /** Gasto diario en orden cronológico (Insights time_increment=1); vacío si falla la serie. */
   daily_spend?: number[];
+  video_plays?: number;
+  video_p100?: number;
+  video_thruplay?: number;
+  video_avg_watch_sec?: number;
 }
 
 export interface AdDiagnosticsResponse {
@@ -1115,6 +1167,18 @@ export interface PageFunnelResponse {
   outbound_clicks: number;
   conversations_started: number;
   first_replies: number;
+  depth2: number;
+  depth3: number;
+  depth5: number;
+  conv_replied: number;
+  video_plays?: number;
+  video_views?: number;
+  video_p25?: number;
+  video_p50?: number;
+  video_p75?: number;
+  video_p100?: number;
+  video_thruplay?: number;
+  video_avg_watch_sec?: number;
   page_id: string;
   date_preset: string;
 }

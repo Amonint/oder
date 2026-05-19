@@ -23,9 +23,6 @@ import {
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 
 export default function AccountsPage() {
@@ -36,14 +33,12 @@ export default function AccountsPage() {
     queryKey: ["accounts"],
     queryFn: fetchAdAccounts,
     enabled: hasToken,
-    staleTime: 5 * 60 * 1000,
   });
 
   const portfolioQuery = useQuery({
     queryKey: ["business-portfolio"],
     queryFn: fetchBusinessPortfolio,
     enabled: hasToken,
-    staleTime: 10 * 60 * 1000,
   });
 
   const emptyAccounts =
@@ -161,86 +156,6 @@ export default function AccountsPage() {
           </AlertDescription>
         </Alert>
       ) : null}
-
-      {portfolioQuery.data && portfolioQuery.data.data.length > 0 ? (
-        <div className="space-y-4">
-          <h2 className="text-lg font-semibold tracking-tight">
-            Por negocio (Meta Business)
-          </h2>
-          <p className="text-muted-foreground text-sm">
-            Cada fila es un <strong>negocio</strong> en Business Manager; dentro,
-            las cuentas publicitarias que ese negocio tiene asignadas. Una misma
-            cuenta puede aparecer en la lista plana de abajo si también te la
-            devuelve <code className="text-xs">/me/adaccounts</code>.
-          </p>
-          {portfolioQuery.data.data.map((biz) => (
-            <Card key={biz.business_id}>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">{biz.business_name}</CardTitle>
-                <CardDescription className="font-mono text-xs">
-                  {biz.business_id}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {biz.ad_accounts.length === 0 ? (
-                  <p className="text-muted-foreground text-sm">
-                    Sin cuentas publicitarias listadas para este negocio (permisos o
-                    vacío en Graph).
-                  </p>
-                ) : (
-                  <div className="rounded-md border">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Nombre</TableHead>
-                          <TableHead>ID</TableHead>
-                          <TableHead>Moneda</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {biz.ad_accounts.map((a: AdAccount) => (
-                          <TableRow
-                            key={`${biz.business_id}-${a.id}`}
-                            className="cursor-pointer hover:bg-muted/50"
-                            onClick={() =>
-                              navigate(`/accounts/${encodeURIComponent(a.id)}/pages`)
-                            }
-                          >
-                            <TableCell className="font-medium">{a.name}</TableCell>
-                            <TableCell>
-                              <code className="text-xs">{a.id}</code>
-                            </TableCell>
-                            <TableCell>
-                              {a.currency ? (
-                                <Badge variant="secondary">{a.currency}</Badge>
-                              ) : (
-                                "—"
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      ) : null}
-
-      {!portfolioQuery.isLoading &&
-        !portfolioQuery.isError &&
-        portfolioQuery.data?.data != null &&
-        portfolioQuery.data.data.length === 0 && (
-          <Card>
-            <CardContent className="py-8 text-center">
-              <p className="text-muted-foreground text-sm">
-                No hay cuentas de negocio disponibles para este token.
-              </p>
-            </CardContent>
-          </Card>
-        )}
 
       {data && !isLoading && data.data.length > 0 ? (
         <>

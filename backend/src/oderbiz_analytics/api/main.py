@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from oderbiz_analytics.api.middleware_site_auth import SiteAuthMiddleware
+from oderbiz_analytics.adapters.duckdb.ad_validation_repo import init_ad_validation_tables
 from oderbiz_analytics.adapters.duckdb.client import init_db
 from oderbiz_analytics.utils.db import init_competitors_tables
 from oderbiz_analytics.api.routes.accounts import router as accounts_router
@@ -32,6 +33,8 @@ from oderbiz_analytics.api.routes.entity_insights import router as entity_insigh
 from oderbiz_analytics.api.routes.learning_insights import router as learning_insights_router
 from oderbiz_analytics.api.routes.business_questions import router as business_questions_router
 from oderbiz_analytics.api.routes.auth_site import router as auth_site_router
+from oderbiz_analytics.api.routes.ad_validation_public import router as ad_validation_public_router
+from oderbiz_analytics.api.routes.ad_validation_admin import router as ad_validation_admin_router
 from oderbiz_analytics.config import get_settings
 
 
@@ -40,6 +43,7 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     init_db(settings.duckdb_path)
     init_competitors_tables(settings.duckdb_path)
+    init_ad_validation_tables(settings.duckdb_path)
     yield
 
 
@@ -63,6 +67,8 @@ app.add_middleware(
     ],
 )
 app.include_router(auth_site_router, prefix="/api/v1")
+app.include_router(ad_validation_public_router, prefix="/api/v1")
+app.include_router(ad_validation_admin_router, prefix="/api/v1")
 app.include_router(accounts_router, prefix="/api/v1")
 app.include_router(business_portfolio_router, prefix="/api/v1")
 app.include_router(entities_router, prefix="/api/v1")

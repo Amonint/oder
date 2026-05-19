@@ -23,6 +23,7 @@ import { AdReferenceLink } from "@/components/AdReferenceLink";
 
 interface LeadsPanelProps {
   accountId?: string;
+  adReferenceUrlById?: Map<string, string>;
   data: MessagingResponse | undefined;
   previousData?: MessagingResponse | undefined;
   isLoading: boolean;
@@ -102,7 +103,33 @@ function deltaPct(current: number | null, prev: number | null): number | null {
   return ((current - prev) / prev) * 100;
 }
 
-export default function LeadsPanel({ accountId, data, previousData, isLoading, isError, errorMessage }: LeadsPanelProps) {
+function renderReferenceLinks(
+  row: MessagingRowExt,
+  accountId?: string,
+  adReferenceUrlById?: Map<string, string>,
+) {
+  const campaignHref = adsManagerUrlFromCampaign(row.campaign_id ?? null, accountId ?? null);
+  const adHref = adReferenceUrlById?.get(String(row.ad_id ?? "")) ?? null;
+
+  if (!campaignHref && !adHref) return null;
+
+  return (
+    <div className="mt-1 flex flex-wrap gap-2">
+      {adHref ? <AdReferenceLink href={adHref} compact /> : null}
+      {campaignHref ? <AdReferenceLink href={campaignHref} compact label="Ver campaña" /> : null}
+    </div>
+  );
+}
+
+export default function LeadsPanel({
+  accountId,
+  adReferenceUrlById,
+  data,
+  previousData,
+  isLoading,
+  isError,
+  errorMessage,
+}: LeadsPanelProps) {
   const rows = data?.data ?? [];
   const summary = data?.summary;
   const previousSummary = previousData?.summary;
@@ -321,8 +348,11 @@ export default function LeadsPanel({ accountId, data, previousData, isLoading, i
             ) : (
               topScale.map((r, i) => (
                 <div key={`scale-${r.campaign_id ?? i}`} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
-                  <span className="truncate max-w-[70%]">{safeName(r.campaign_name ?? null, r.campaign_id ?? null, "Campaña")}</span>
-                  <Badge>{r.commercial_score}</Badge>
+                  <div className="min-w-0 max-w-[70%]">
+                    <p className="truncate">{safeName(r.campaign_name ?? null, r.campaign_id ?? null, "Campaña")}</p>
+                    {renderReferenceLinks(r, accountId, adReferenceUrlById)}
+                  </div>
+                  <Badge className="shrink-0">{r.commercial_score}</Badge>
                 </div>
               ))
             )}
@@ -338,8 +368,11 @@ export default function LeadsPanel({ accountId, data, previousData, isLoading, i
             ) : (
               topPause.map((r, i) => (
                 <div key={`pause-${r.campaign_id ?? i}`} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
-                  <span className="truncate max-w-[70%]">{safeName(r.campaign_name ?? null, r.campaign_id ?? null, "Campaña")}</span>
-                  <Badge variant="secondary">{r.commercial_score}</Badge>
+                  <div className="min-w-0 max-w-[70%]">
+                    <p className="truncate">{safeName(r.campaign_name ?? null, r.campaign_id ?? null, "Campaña")}</p>
+                    {renderReferenceLinks(r, accountId, adReferenceUrlById)}
+                  </div>
+                  <Badge variant="secondary" className="shrink-0">{r.commercial_score}</Badge>
                 </div>
               ))
             )}
@@ -367,15 +400,13 @@ export default function LeadsPanel({ accountId, data, previousData, isLoading, i
           ) : (
             <div className="overflow-x-auto">
                 <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Campaña</TableHead>
-                      <TableHead className="text-right">Conversaciones</TableHead>
-                      <TableHead className="text-right">1ras respuestas</TableHead>
-                      <TableHead className="text-right">Tasa 1ra resp.</TableHead>
-                      <TableHead className="text-right">Gasto</TableHead>
-                      <TableHead className="text-right">Costo / conversación</TableHead>
-                      <TableHead className="text-right">Score</TableHead>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Campaña</TableHead>
+                        <TableHead className="text-right">Conversaciones</TableHead>
+                        <TableHead className="text-right">Gasto</TableHead>
+                        <TableHead className="text-right">Costo / conversación</TableHead>
+                        <TableHead className="text-right">Score</TableHead>
                       <TableHead className="text-right">Confianza</TableHead>
                       <TableHead className="text-right">Acción</TableHead>
                     </TableRow>
@@ -384,17 +415,15 @@ export default function LeadsPanel({ accountId, data, previousData, isLoading, i
                     {rowsExtended.map((row, idx) => (
                       <TableRow key={row.campaign_id ?? idx}>
                         <TableCell className="font-medium text-sm max-w-[240px] truncate">
-                          <AdReferenceLink href={adsManagerUrlFromCampaign(row.campaign_id ?? null, accountId ?? null)} compact />
-                          {safeName(row.campaign_name ?? null, row.campaign_id ?? null, "Campaña")}
+                          <div className="flex flex-col">
+                            <span className="truncate">
+                              {safeName(row.campaign_name ?? null, row.campaign_id ?? null, "Campaña")}
+                            </span>
+                            {renderReferenceLinks(row, accountId, adReferenceUrlById)}
+                          </div>
                         </TableCell>
                         <TableCell className="text-right tabular-nums text-sm font-medium">
                           {row.conversations_started.toLocaleString("es")}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-sm">
-                          {row.first_replies.toLocaleString("es")}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-sm">
-                          {row.first_reply_rate != null ? `${(row.first_reply_rate * 100).toFixed(1)}%` : "—"}
                         </TableCell>
                         <TableCell className="text-right tabular-nums text-sm">
                           ${Number(row.spend ?? 0).toFixed(2)}

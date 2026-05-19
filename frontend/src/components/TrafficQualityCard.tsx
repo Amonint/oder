@@ -48,6 +48,21 @@ export default function TrafficQualityCard({ data, isLoading }: TrafficQualityCa
   const cpc = data?.cost_per_outbound_click ?? 0;
   const uniqueCtr = data?.unique_ctr ?? 0;
 
+  if (outbound < 10) {
+    return (
+      <section className="space-y-3">
+        <h2 className="text-foreground text-lg font-semibold">Clics y coste (Ads)</h2>
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-muted-foreground text-sm">
+              Esta campaña dirige a conversaciones directas en Meta — los clics salientes son mínimos ({outbound}) y no representan el objetivo principal. El rendimiento se evalúa por conversaciones iniciadas y profundidad de chat.
+            </p>
+          </CardContent>
+        </Card>
+      </section>
+    );
+  }
+
   return (
     <TooltipProvider delayDuration={300}>
       <section className="space-y-3">
@@ -60,14 +75,14 @@ export default function TrafficQualityCard({ data, isLoading }: TrafficQualityCa
           <MetricTile
             label="Clics Salientes"
             value={outbound.toLocaleString("es")}
-            description="Personas que salieron hacia tu sitio web"
-            tooltip="Clics que llevaron al usuario fuera de Meta hacia tu sitio web o landing page. No confundir con clics en el anuncio en general — solo cuenta salidas reales de Meta. Fuente: campo outbound_clicks de la API de Insights."
+            description="Clics que salieron de Meta hacia tu destino"
+            tooltip="Campo outbound_clicks de Meta Insights. Cuenta clics que llevaron tráfico fuera de Meta hacia web o landing. No significa personas únicas."
           />
           <MetricTile
             label="Costo por Clic Saliente"
             value={cpc > 0 ? `$${cpc.toFixed(2)}` : "—"}
-            description="Costo de llevar a alguien fuera de Meta"
-            tooltip="Gasto promedio para llevar a una persona a tu sitio web. Se calcula: Gasto total ÷ Clics salientes. Un CPC saliente bajo indica que el anuncio es eficiente para generar tráfico externo."
+            description="Costo medio por outbound click"
+            tooltip="Métrica de costo ligada a outbound_clicks. Meta la expone como cost_per_outbound_click; si no viene, no la inventamos."
           />
           <MetricTile
             label="CTR Único"

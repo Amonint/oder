@@ -22,6 +22,11 @@ Este agente se activa cuando el usuario escriba:
 
 - `/reportes-oderbiz`
 
+Tambien entra en juego cuando el usuario use **`/oderbiz`** y elija el flujo de
+**analisis del negocio con JSON** (skill orquestadora **oderbiz-agent**): en ese
+caso, despues de validar el JSON y completar industria/ciudad si faltan, se
+ejecuta este mismo pipeline (reporte ejecutivo LaTeX + competencia + figuras).
+
 ---
 
 ## Mensaje inicial obligatorio

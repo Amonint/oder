@@ -9,7 +9,7 @@ import {
   Cell,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { GeoInsightRow, GeoMetadata } from "@/api/client";
 import { barColorAt } from "@/lib/dashboardColors";
 import { AdReferenceLink } from "@/components/AdReferenceLink";
@@ -190,12 +190,6 @@ export default function GeoMap({
           {alignmentNote}
           {extraCaption ? ` ${extraCaption}` : null}
         </p>
-        {metadata.warning ? (
-          <Alert className="mt-3">
-            <AlertTitle>Breakdown incompleto</AlertTitle>
-            <AlertDescription>{metadata.warning}</AlertDescription>
-          </Alert>
-        ) : null}
         {metadata.scope === "ad" ? (
           <AdReferenceLink href={adReferenceUrl ?? null} />
         ) : null}

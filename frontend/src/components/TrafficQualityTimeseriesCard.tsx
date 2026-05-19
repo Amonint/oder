@@ -12,6 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import type { TrafficQualityTimeseriesRow } from "@/api/client";
 import { dashboardChartColor } from "@/lib/dashboardColors";
+import { shouldShowTrafficQualityTimeseries } from "@/lib/pageDashboardDecisions";
 
 interface TrafficQualityTimeseriesCardProps {
   data: TrafficQualityTimeseriesRow[] | undefined;
@@ -39,12 +40,12 @@ export default function TrafficQualityTimeseriesCard({
   }
 
   const rows = [...(data ?? [])].sort((a, b) => a.date.localeCompare(b.date));
-  if (rows.length < 2) {
+  if (!shouldShowTrafficQualityTimeseries(rows)) {
     return (
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Calidad de tráfico en el tiempo</CardTitle>
-          <CardDescription>Sin suficientes días para dibujar la serie.</CardDescription>
+          <CardDescription>Sin suficiente volumen de clic saliente para una serie útil.</CardDescription>
         </CardHeader>
       </Card>
     );

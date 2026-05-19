@@ -7,7 +7,12 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:ad-validation:client": "npx tsx src/lib/__tests__/adValidationClient.test.ts",
+    "test:ad-validation:calibration": "npx tsx src/lib/__tests__/calibration.test.ts",
+    "test:ad-validation:heatmap": "npx tsx src/lib/__tests__/heatmapRenderer.test.ts",
+    "test:ad-validation:webgazer": "npx tsx src/lib/__tests__/webgazerClient.test.ts",
+    "test:ad-validation": "npm run test:ad-validation:client && npm run test:ad-validation:calibration && npm run test:ad-validation:heatmap && npm run test:ad-validation:webgazer"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.8",

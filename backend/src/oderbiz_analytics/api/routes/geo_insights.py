@@ -132,29 +132,12 @@ def _objective_breakdown_status(
         2,
     )
     complete = aggregate_results <= 0 or abs(breakdown_results - aggregate_results) <= 0.01
-    warning = None
-    if not complete:
-        warning = (
-            "Meta no devolvió resultados del objetivo completos en este breakdown geográfico. "
-            "Se ocultan resultados y CPA por región para evitar interpretar ceros como reales."
-        )
     return {
         "objective_metric": objective_key,
         "objective_results_total": round(aggregate_results, 2),
         "objective_results_breakdown_total": breakdown_results,
         "objective_breakdown_complete": complete,
-        "warning": warning,
     }
-
-
-def _mask_unavailable_objective_breakdown(rows: list[dict]) -> list[dict]:
-    masked: list[dict] = []
-    for row in rows:
-        item = dict(row)
-        item["results"] = None
-        item["cpa"] = None
-        masked.append(item)
-    return masked
 
 GEO_FIELDS = "impressions,clicks,spend,reach,actions,cost_per_action_type"
 
@@ -270,8 +253,6 @@ async def get_geo_insights(
             aggregate_row,
             objective_metric=objective_metric,
         )
-        if objective_status and not bool(objective_status["objective_breakdown_complete"]):
-            enriched_rows = _mask_unavailable_objective_breakdown(enriched_rows)
 
     # Metadata de cobertura completa y alcance
     metadata = get_geo_metadata(
@@ -301,7 +282,7 @@ async def get_geo_insights(
             if objective_status is not None
             else None
         ),
-        warning=str(objective_status["warning"]) if objective_status and objective_status["warning"] else None,
+        warning=None,
     )
 
     return {

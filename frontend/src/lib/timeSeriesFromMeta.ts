@@ -4,8 +4,15 @@ export interface DailyInsightPoint {
   date: string;
   spend: number;
   impressions: number;
+  clicks: number;
+  reach: number;
+  frequency: number;
   ctr: number;
   cpm: number;
+  /** Derivado: (spend / reach) * 1000 */
+  cpp: number;
+  /** Derivado: spend / results (null si sin resultados). */
+  cpa: number | null;
   /** Primer valor de acción no trivial (misma idea que el dashboard). */
   results: number;
   /** Suma de action_values con tipo que contiene "purchase". */
@@ -107,22 +114,50 @@ export function parseTimeInsightRows(
   rows: Record<string, unknown>[],
   objectiveActionTypes: string[] = [],
 ): DailyInsightPoint[] {
-  const out: DailyInsightPoint[] = [];
+  // Aggregate by date — Meta returns 1 row/date at account level, but defensive
+  // against edge cases where the same date appears in multiple rows.
+  const byDate = new Map<string, {
+    spend: number; impressions: number; clicks: number; reach: number;
+    results: number; purchaseValue: number; metaRoas: number;
+  }>();
+
   for (const row of rows) {
     const date = String(row.date_start ?? row.date_stop ?? "").trim();
     if (!date) continue;
     const spend = Number.parseFloat(String(row.spend ?? "0")) || 0;
     const impressions = Number.parseFloat(String(row.impressions ?? "0")) || 0;
-    const ctr = Number.parseFloat(String(row.ctr ?? "0")) || 0;
-    const cpm = Number.parseFloat(String(row.cpm ?? "0")) || 0;
+    const clicks = Number.parseFloat(String(row.clicks ?? "0")) || 0;
+    const reach = Number.parseFloat(String(row.reach ?? "0")) || 0;
     const results = objectiveActionTypes.length > 0
       ? sumActionsByTypes(row.actions, objectiveActionTypes)
       : firstNonTrivialActionValue(row.actions);
     const purchaseValue = sumPurchaseValues(row.action_values);
-    const fromMeta = combinedPurchaseRoasFromRow(row);
-    const derivedRoas = spend > 0 && purchaseValue > 0 ? purchaseValue / spend : null;
-    const roas = spend > 0 && fromMeta > 0 ? fromMeta : derivedRoas;
-    out.push({ date, spend, impressions, ctr, cpm, results, purchaseValue, roas });
+    const metaRoas = combinedPurchaseRoasFromRow(row);
+    const prev = byDate.get(date);
+    if (!prev) {
+      byDate.set(date, { spend, impressions, clicks, reach, results, purchaseValue, metaRoas });
+    } else {
+      prev.spend += spend;
+      prev.impressions += impressions;
+      prev.clicks += clicks;
+      prev.reach += reach;
+      prev.results += results;
+      prev.purchaseValue += purchaseValue;
+      if (metaRoas > 0) prev.metaRoas = Math.max(prev.metaRoas, metaRoas);
+    }
+  }
+
+  const out: DailyInsightPoint[] = [];
+  for (const [date, v] of byDate) {
+    // Re-derive rate metrics from volume totals — more accurate than averaging per-row rates.
+    const ctr = v.impressions > 0 ? (v.clicks / v.impressions) * 100 : 0;
+    const cpm = v.impressions > 0 ? (v.spend / v.impressions) * 1000 : 0;
+    const frequency = v.reach > 0 ? v.impressions / v.reach : 0;
+    const cpp = v.reach > 0 ? (v.spend / v.reach) * 1000 : 0;
+    const cpa = v.results > 0 ? v.spend / v.results : null;
+    const derivedRoas = v.spend > 0 && v.purchaseValue > 0 ? v.purchaseValue / v.spend : null;
+    const roas = v.spend > 0 && v.metaRoas > 0 ? v.metaRoas : derivedRoas;
+    out.push({ date, spend: v.spend, impressions: v.impressions, clicks: v.clicks, reach: v.reach, frequency, ctr, cpm, cpp, cpa, results: v.results, purchaseValue: v.purchaseValue, roas });
   }
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -132,12 +167,20 @@ const TRIVIAL_HOURLY = new Set(["post_engagement", "page_engagement", "photo_vie
 function hourFromHourlyBreakdown(raw: unknown): number | null {
   const s = String(raw ?? "").trim();
   if (!s) return null;
-  const m = s.match(/^(\d{1,2}):/);
+  // Prefer explicit hour:MM patterns (e.g. "14:00", "14:00:00")
+  let m = s.match(/(\d{1,2}):\d{2}(?::\d{2})?/);
   if (m) {
     const h = parseInt(m[1], 10);
     if (h >= 0 && h <= 23) return h;
   }
-  const tail = s.match(/(\d{1,2})\s*$/);
+  // ISO-like timestamps (e.g. 2023-09-01T14:00:00) — capture after 'T'
+  m = s.match(/T(\d{1,2}):\d{2}/);
+  if (m) {
+    const h = parseInt(m[1], 10);
+    if (h >= 0 && h <= 23) return h;
+  }
+  // Trailing hour number (e.g. "14" or "14 h")
+  const tail = s.match(/(\d{1,2})\s*(?:h(?:ours?)?)?$/i);
   if (tail) {
     const h = parseInt(tail[1], 10);
     if (h >= 0 && h <= 23) return h;
@@ -153,6 +196,37 @@ export function isoWeekdayMon0(isoDate: string): number | null {
   return w === 0 ? 6 : w - 1;
 }
 
+function hourlyBreakdownRaw(row: Record<string, unknown>): unknown {
+  return (
+    row.hourly_start_time ??
+    row.hourly_stats_aggregated_by_advertiser_time_zone ??
+    row.hourly_stats_aggregated_by_audience_time_zone
+  );
+}
+
+function hourlyBreakdownDate(raw: unknown): string | null {
+  const slot = String(raw ?? "").trim();
+  if (!slot) return null;
+  const stamp = slot.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}):/);
+  return stamp ? stamp[1] : null;
+}
+
+function dayHourFromHourlyRow(row: Record<string, unknown>): { dow: number; hour: number } | null {
+  const raw = hourlyBreakdownRaw(row);
+  const stampedDate = hourlyBreakdownDate(raw);
+  if (stampedDate) {
+    const dow = isoWeekdayMon0(stampedDate);
+    const hour = hourFromHourlyBreakdown(raw);
+    if (dow != null && hour != null) return { dow, hour };
+  }
+
+  const date = String(row.date_start ?? row.date_stop ?? "").trim();
+  const hour = hourFromHourlyBreakdown(raw);
+  const dow = isoWeekdayMon0(date);
+  if (!date || hour == null || dow == null) return null;
+  return { dow, hour };
+}
+
 export type HourlyHeatmapCell = {
   dow: number;
   hour: number;
@@ -161,35 +235,80 @@ export type HourlyHeatmapCell = {
   cpa: number | null;
 };
 
+export type HourlyOnlyCell = {
+  hour: number;
+  spend: number;
+  results: number;
+  cpa: number | null;
+};
+
+export type HourlyOpportunityPoint = {
+  hour: number;
+  spend: number;
+  results: number;
+  cpa: number | null;
+  hasData: boolean;
+  spendWithoutResults: boolean;
+  reliable: boolean;
+};
+
+export type HourlyDecisionReadiness = {
+  ready: boolean;
+  failedBy: "active_hours" | "total_results" | "both" | null;
+};
+
+function hourlyCellData(
+  row: Record<string, unknown>,
+  accepted: Set<string>,
+): { hour: number; spend: number; results: number } | null {
+  const hour = hourFromHourlyBreakdown(hourlyBreakdownRaw(row));
+  if (hour == null) return null;
+  const spend = Number.parseFloat(String(row.spend ?? "0")) || 0;
+  let results = 0;
+  const actions = row.actions;
+  if (Array.isArray(actions)) {
+    for (const raw of actions) {
+      if (!raw || typeof raw !== "object") continue;
+      const a = raw as { action_type?: string; value?: string | number };
+      const at = String(a.action_type ?? "");
+      if (TRIVIAL_HOURLY.has(at) || !accepted.has(at)) continue;
+      const v = Number(a.value ?? 0);
+      if (Number.isFinite(v)) results += v;
+    }
+  }
+  return { hour, spend, results };
+}
+
+export function shouldUseHourlyOnlyView(rows: Record<string, unknown>[]): boolean {
+  if (rows.length === 0) return false;
+  let hasHourlyRows = false;
+  for (const row of rows) {
+    const raw = hourlyBreakdownRaw(row);
+    if (hourFromHourlyBreakdown(raw) == null) continue;
+    hasHourlyRows = true;
+    if (hourlyBreakdownDate(raw)) return false;
+  }
+  return hasHourlyRows;
+}
+
 /** Agrega filas `/insights/time` con breakdown horario para mapa día×hora. */
-export function buildHourlyCpaHeatmapCells(rows: Record<string, unknown>[]): HourlyHeatmapCell[] {
+export function buildHourlyCpaHeatmapCells(
+  rows: Record<string, unknown>[],
+  objectiveActionTypes: string[] = [],
+): HourlyHeatmapCell[] {
+  if (objectiveActionTypes.length !== 1) return [];
+  const accepted = new Set(objectiveActionTypes);
   const map = new Map<string, { spend: number; results: number }>();
   for (const row of rows) {
-    const date = String(row.date_start ?? row.date_stop ?? "").trim();
-    const hourRaw = row.hourly_stats_aggregated_by_advertiser_time_zone;
-    const hour = hourFromHourlyBreakdown(hourRaw);
-    const dow = isoWeekdayMon0(date);
-    if (!date || hour == null || dow == null) continue;
+    const slot = dayHourFromHourlyRow(row);
+    if (!slot) continue;
+    const { dow, hour } = slot;
     const k = `${dow}\t${hour}`;
-    const spend = Number.parseFloat(String(row.spend ?? "0")) || 0;
-    let results = 0;
-    const actions = row.actions;
-    if (Array.isArray(actions)) {
-      for (const raw of actions) {
-        if (!raw || typeof raw !== "object") continue;
-        const a = raw as { action_type?: string; value?: string | number };
-        const at = String(a.action_type ?? "");
-        if (TRIVIAL_HOURLY.has(at)) continue;
-        const v = Number(a.value ?? 0);
-        if (Number.isFinite(v)) {
-          results = v;
-          break;
-        }
-      }
-    }
+    const cell = hourlyCellData(row, accepted);
+    if (!cell) continue;
     const prev = map.get(k) ?? { spend: 0, results: 0 };
-    prev.spend += spend;
-    prev.results += results;
+    prev.spend += cell.spend;
+    prev.results += cell.results;
     map.set(k, prev);
   }
   const out: HourlyHeatmapCell[] = [];
@@ -197,8 +316,70 @@ export function buildHourlyCpaHeatmapCells(rows: Record<string, unknown>[]): Hou
     const [ds, hs] = k.split("\t");
     const dow = parseInt(ds, 10);
     const hour = parseInt(hs, 10);
-    const cpa = v.results > 0 && v.spend > 0 ? v.spend / v.results : null;
+    const cpa = v.results > 0 ? v.spend / v.results : null;
     out.push({ dow, hour, spend: v.spend, results: v.results, cpa });
   }
   return out;
+}
+
+export function buildHourlyCpaByHour(
+  rows: Record<string, unknown>[],
+  objectiveActionTypes: string[] = [],
+): HourlyOnlyCell[] {
+  if (objectiveActionTypes.length !== 1) return [];
+  const accepted = new Set(objectiveActionTypes);
+  const map = new Map<number, { spend: number; results: number }>();
+  for (const row of rows) {
+    const cell = hourlyCellData(row, accepted);
+    if (!cell) continue;
+    const prev = map.get(cell.hour) ?? { spend: 0, results: 0 };
+    prev.spend += cell.spend;
+    prev.results += cell.results;
+    map.set(cell.hour, prev);
+  }
+  return [...map.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([hour, value]) => ({
+      hour,
+      spend: value.spend,
+      results: value.results,
+      cpa: value.results > 0 ? value.spend / value.results : null,
+    }));
+}
+
+export function buildHourlyOpportunityPoints(
+  rows: Record<string, unknown>[],
+  objectiveActionTypes: string[] = [],
+  minResultsForConfidence = 2,
+): HourlyOpportunityPoint[] {
+  const hourly = buildHourlyCpaByHour(rows, objectiveActionTypes);
+  const map = new Map<number, HourlyOnlyCell>();
+  for (const point of hourly) map.set(point.hour, point);
+  return Array.from({ length: 24 }, (_, hour) => {
+    const point = map.get(hour);
+    const spend = point?.spend ?? 0;
+    const results = point?.results ?? 0;
+    return {
+      hour,
+      spend,
+      results,
+      cpa: point?.cpa ?? null,
+      hasData: spend > 0 || results > 0,
+      spendWithoutResults: spend > 0 && results <= 0,
+      reliable: results >= minResultsForConfidence,
+    };
+  });
+}
+
+export function evaluateHourlyDecisionReadiness(input: {
+  activeHours: number;
+  totalResults: number;
+  minActiveHours: number;
+  minTotalResults: number;
+}): HourlyDecisionReadiness {
+  const activeHoursOk = input.activeHours >= input.minActiveHours;
+  const totalResultsOk = input.totalResults >= input.minTotalResults;
+  if (activeHoursOk && totalResultsOk) return { ready: true, failedBy: null };
+  if (!activeHoursOk && !totalResultsOk) return { ready: false, failedBy: "both" };
+  return { ready: false, failedBy: activeHoursOk ? "total_results" : "active_hours" };
 }

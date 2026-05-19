@@ -127,6 +127,17 @@ docker-compose.yml        entorno con web + api + job opcional de ingesta
 - `GET /competitor/market-radar-extended`
 - `GET /competitor/market-radar-temporal`
 
+### Validación de anuncios (eye tracking)
+
+- `POST /ad-validation/studies`
+- `GET /ad-validation/studies`
+- `GET /ad-validation/studies/{study_id}/dashboard`
+- `GET /ad-validation/studies/{study_id}/export.csv`
+- `GET /ad-validation/public/{token}/study`
+- `POST /ad-validation/public/{token}/sessions/start`
+- `POST /ad-validation/public/sessions/{session_id}/events`
+- `POST /ad-validation/public/sessions/{session_id}/complete`
+
 ### Salud
 
 - `GET /health`
@@ -140,6 +151,9 @@ docker-compose.yml        entorno con web + api + job opcional de ingesta
 - `/accounts/:accountId/dashboard` dashboard de cuenta
 - `/accounts/:accountId/pages` listado de paginas asociadas
 - `/accounts/:accountId/pages/:pageId/dashboard` dashboard de pagina
+- `/ad-validation` admin de estudios de validación
+- `/ad-validation/studies/:studyId` dashboard con heatmap agregado
+- `/ad-validation/public/:token` flujo participante sin login de app
 
 ---
 
@@ -233,13 +247,21 @@ npm run dev
 Desde la raiz:
 
 ```bash
-docker compose up --build
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
 Servicios:
 
 - `web` en `http://localhost:5173`
 - `api` en `http://localhost:8000`
+
+Para iteracion diaria (sin rebuild), usa:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+```
+
+Con este modo, cambios en `frontend/` y `backend/` se aplican por hot reload sin reiniciar contenedores.
 
 Job opcional de ingesta diaria:
 
@@ -258,12 +280,20 @@ cd backend
 python3 -m pytest -q
 ```
 
+Frontend (utilidades MVP de ad-validation):
+
+```bash
+cd frontend
+npm run test:ad-validation
+```
+
 ---
 
 ## Comandos utiles
 
 - Salud API: `curl -s http://127.0.0.1:8000/health`
-- Rebuild API Docker: `docker compose build api && docker compose up -d api`
+- Config renderizada de dev: `docker compose -f docker-compose.yml -f docker-compose.dev.yml config`
+- Logs API: `docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f api`
 
 ---
 
@@ -288,4 +318,3 @@ python3 -m pytest -q
 
 - Nunca commitear tokens, `.env` ni credenciales.
 - Rotar cualquier token que se haya expuesto en logs, screenshots o chats.
-

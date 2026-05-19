@@ -36,6 +36,37 @@ def test_time_insights_accepts_monthly_increment(client, monkeypatch):
     assert calls[0]["time_increment"] == "monthly"
 
 
+def test_time_insights_hourly_uses_all_pages(client, monkeypatch):
+    calls: list[dict] = []
+
+    async def _fake_fetch_insights_all_pages(**kwargs):
+        calls.append(kwargs)
+        return []
+
+    async def _unexpected_fetch_insights(**kwargs):
+        raise AssertionError("hourly should paginate through fetch_insights_all_pages")
+
+    monkeypatch.setattr(
+        "oderbiz_analytics.api.routes.time_insights.fetch_insights_all_pages",
+        _fake_fetch_insights_all_pages,
+    )
+    monkeypatch.setattr(
+        "oderbiz_analytics.api.routes.time_insights.fetch_insights",
+        _unexpected_fetch_insights,
+    )
+
+    r = client.get(
+        "/api/v1/accounts/act_123/insights/time",
+        params={"time_increment": "hourly"},
+        headers={"Authorization": "Bearer test_tok"},
+    )
+    assert r.status_code == 200
+    assert calls
+    assert calls[0]["breakdowns"] == ["hourly_stats_aggregated_by_advertiser_time_zone"]
+    assert calls[0]["time_increment"] is None
+    assert calls[0]["limit"] == 500
+
+
 def test_time_insights_rejects_invalid_increment(client):
     r = client.get(
         "/api/v1/accounts/act_123/insights/time",

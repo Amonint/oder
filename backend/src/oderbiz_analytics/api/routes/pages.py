@@ -237,7 +237,12 @@ def _page_filtering(
     if adset_id.strip():
         return [{"field": "adset.id", "operator": "IN", "value": [adset_id.strip()]}]
     if campaign_id.strip():
-        return [{"field": "campaign.id", "operator": "IN", "value": [campaign_id.strip()]}]
+        # AND-combine: filtra por campaña Y por los adsets de esta página específica
+        # Evita contaminar la vista de página con datos de otras páginas del mismo campaign.
+        filters: list[dict] = [{"field": "campaign.id", "operator": "IN", "value": [campaign_id.strip()]}]
+        if adset_ids:
+            filters.append({"field": "adset.id", "operator": "IN", "value": adset_ids})
+        return filters
     if not adset_ids:
         return []
     return [{"field": "adset.id", "operator": "IN", "value": adset_ids}]
@@ -303,7 +308,7 @@ def _extract_cpa(rows: list[dict]) -> list[dict]:
                 conversions += val
             if at == "onsite_conversion.messaging_conversation_started_7d":
                 conversations_started += val
-            if at == "onsite_conversion.messaging_conversation_replied_7d":
+            if at in {"onsite_conversion.messaging_first_reply", "messaging_first_reply"}:
                 replied += val
             if at == "onsite_conversion.messaging_user_depth_2_message_send":
                 depth2 += val
@@ -352,6 +357,10 @@ def _safe_float(value: object) -> float:
         return float(value or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _video_views_from(items: list) -> int:
+    return int(float(next((a.get("value", 0) for a in items if a.get("action_type") == "video_view"), 0) or 0))
 
 
 def _sum_outbound_clicks(row: dict) -> int:
@@ -964,7 +973,7 @@ async def get_page_conversion_timeseries(
 
     cache_key = _make_cache_key(
         normalized_id,
-        "page_conv_ts_v4",
+        "page_conv_ts_v6",
         page_id=page_id,
         date_preset=effective_preset,
         campaign_id=cid,
@@ -1213,7 +1222,7 @@ async def get_page_ad_diagnostics(
     if ds and de:
         effective_time_range = {"since": ds, "until": de}
 
-    cache_key = _make_cache_key(normalized_id, "page_ad_diag_spark_v2", page_id=page_id,
+    cache_key = _make_cache_key(normalized_id, "page_ad_diag_spark_v3", page_id=page_id,
         date_preset=effective_preset, campaign_id=cid,
         objective_metric=(objective_metric or "").strip(),
         date_start=ds if effective_time_range else "", date_stop=de if effective_time_range else "")
@@ -1234,7 +1243,9 @@ async def get_page_ad_diagnostics(
             fields=(
                 "ad_id,ad_name,impressions,spend,frequency,ctr,cpm,clicks,"
                 "inline_link_clicks,inline_link_click_ctr,outbound_clicks,"
-                "actions,cost_per_action_type"
+                "actions,cost_per_action_type,"
+                "video_play_actions,video_p100_watched_actions,"
+                "video_thruplay_watched_actions,video_avg_time_watched_actions"
             ),
             date_preset=effective_preset if not effective_time_range else None,
             time_range=effective_time_range,
@@ -1345,6 +1356,10 @@ async def get_page_ad_diagnostics(
             ),
             "ranking_basis": ranking_basis,
             "daily_spend": daily_spend,
+            "video_plays": _video_views_from(r.get("video_play_actions") or []),
+            "video_p100": _video_views_from(r.get("video_p100_watched_actions") or []),
+            "video_thruplay": _video_views_from(r.get("video_thruplay_watched_actions") or []),
+            "video_avg_watch_sec": _video_views_from(r.get("video_avg_time_watched_actions") or []),
         })
 
     result = {"data": enriched, "page_id": page_id, "date_preset": effective_preset}
@@ -1376,7 +1391,7 @@ async def get_page_funnel(
     if ds and de:
         effective_time_range = {"since": ds, "until": de}
 
-    cache_key = _make_cache_key(normalized_id, "page_funnel_v4", page_id=page_id,
+    cache_key = _make_cache_key(normalized_id, "page_funnel_v5", page_id=page_id,
         date_preset=effective_preset, campaign_id=cid,
         date_start=ds if effective_time_range else "", date_stop=de if effective_time_range else "")
     cached = get_cache(settings.duckdb_path, cache_key)
@@ -1387,7 +1402,8 @@ async def get_page_funnel(
         "impressions": 0, "reach": 0, "unique_clicks": 0,
         "outbound_clicks": 0, "conversations_started": 0, "first_replies": 0,
         "depth2": 0, "depth3": 0, "depth5": 0, "conv_replied": 0,
-        "video_views": 0, "video_p25": 0, "video_p50": 0, "video_p75": 0, "video_p100": 0,
+        "video_plays": 0, "video_views": 0, "video_p25": 0, "video_p50": 0, "video_p75": 0, "video_p100": 0,
+        "video_thruplay": 0, "video_avg_watch_sec": 0,
         "page_id": page_id, "date_preset": effective_preset,
     }
 
@@ -1400,7 +1416,7 @@ async def get_page_funnel(
     try:
         rows = await fetch_insights_all_pages(
             base_url=base, access_token=access_token, ad_account_id=normalized_id,
-            fields="impressions,reach,unique_clicks,outbound_clicks,actions,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p100_watched_actions",
+            fields="impressions,reach,unique_clicks,outbound_clicks,actions,video_play_actions,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p100_watched_actions,video_thruplay_watched_actions,video_avg_time_watched_actions",
             date_preset=effective_preset if not effective_time_range else None,
             time_range=effective_time_range,
             level="account", filtering=filtering,
@@ -1409,9 +1425,6 @@ async def get_page_funnel(
         raise HTTPException(status_code=502, detail="Error al obtener datos del embudo.") from None
     except httpx.RequestError:
         raise HTTPException(status_code=502, detail="No se pudo contactar a Meta.") from None
-
-    def _video_views_from(items: list) -> int:
-        return int(float(next((a.get("value", 0) for a in items if a.get("action_type") == "video_view"), 0) or 0))
 
     total_impressions = 0
     total_reach = 0
@@ -1423,20 +1436,26 @@ async def get_page_funnel(
     total_depth3 = 0
     total_depth5 = 0
     total_conv_replied = 0
+    total_video_plays = 0
     total_video_views = 0
     total_video_p25 = 0
     total_video_p50 = 0
     total_video_p75 = 0
     total_video_p100 = 0
+    total_video_thruplay = 0
+    total_video_avg_watch_sec = 0
 
     for row in rows:
         total_impressions += int(float(row.get("impressions", 0) or 0))
         total_reach += int(float(row.get("reach", 0) or 0))
         total_unique_clicks += int(float(row.get("unique_clicks", 0) or 0))
+        total_video_plays += _video_views_from(row.get("video_play_actions") or [])
         total_video_p25 += _video_views_from(row.get("video_p25_watched_actions") or [])
         total_video_p50 += _video_views_from(row.get("video_p50_watched_actions") or [])
         total_video_p75 += _video_views_from(row.get("video_p75_watched_actions") or [])
         total_video_p100 += _video_views_from(row.get("video_p100_watched_actions") or [])
+        total_video_thruplay += _video_views_from(row.get("video_thruplay_watched_actions") or [])
+        total_video_avg_watch_sec += _video_views_from(row.get("video_avg_time_watched_actions") or [])
         for oc in (row.get("outbound_clicks") or []):
             if oc.get("action_type") == "outbound_click":
                 total_outbound += int(float(oc.get("value", 0) or 0))
@@ -1469,11 +1488,14 @@ async def get_page_funnel(
         "depth3": total_depth3,
         "depth5": total_depth5,
         "conv_replied": total_conv_replied,
+        "video_plays": total_video_plays,
         "video_views": total_video_views,
         "video_p25": total_video_p25,
         "video_p50": total_video_p50,
         "video_p75": total_video_p75,
         "video_p100": total_video_p100,
+        "video_thruplay": total_video_thruplay,
+        "video_avg_watch_sec": total_video_avg_watch_sec,
         "page_id": page_id,
         "date_preset": effective_preset,
     }

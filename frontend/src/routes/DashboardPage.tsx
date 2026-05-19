@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import DateRangePickerModal from "@/components/DateRangePickerModal";
 import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from "recharts";
 import AdCreatividadEfficiencyBarCharts from "@/components/AdCreatividadEfficiencyBarCharts";
@@ -21,7 +21,6 @@ import {
   fetchCreativeFatigue,
   fetchTimeInsights,
   fetchEntitySummary,
-  fetchAdsetsLearningSummary,
   getMetaAccessToken,
   type AdPerformanceRow,
 } from "@/api/client";
@@ -34,7 +33,8 @@ import CreativeSaturationScatter from "@/components/CreativeSaturationScatter";
 import FunnelLevelTable, { type FunnelLevelRow } from "@/components/FunnelLevelTable";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import GeoMap, { compareGeoInsightRowsForMetric, type GeoMapMetric } from "@/components/GeoMap";
+import { compareGeoInsightRowsForMetric, type GeoMapMetric } from "@/components/GeoMap";
+import EcuadorProvinceMap from "@/components/EcuadorProvinceMap";
 import PlacementEfficiencyBarChart from "@/components/PlacementEfficiencyBarChart";
 import TargetingPanel from "@/components/TargetingPanel";
 import {
@@ -109,13 +109,13 @@ import { ctrNumber, enrichAdRankingRows, toFloat } from "@/lib/adRankingDerived"
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import HourlyCpaHeatmapSection from "@/components/HourlyCpaHeatmapSection";
+import KpiTrendMiniCharts from "@/components/KpiTrendMiniCharts";
 import HorizontalAdEfficiencyBars from "@/components/HorizontalAdEfficiencyBars";
 import EntityCpaRoasBarsCard from "@/components/EntityCpaRoasBarsCard";
 import PlacementTreemapAndMix from "@/components/PlacementTreemapAndMix";
 import GeoRegionalEfficiencyBars from "@/components/GeoRegionalEfficiencyBars";
 import CreativeFatigueCpaScatter from "@/components/CreativeFatigueCpaScatter";
 import PlacementDeviceGroupedBars from "@/components/PlacementDeviceGroupedBars";
-import LearningStageSpendChart from "@/components/LearningStageSpendChart";
 import OutboundMessagingFunnelCard from "@/components/OutboundMessagingFunnelCard";
 import PurchaseVsMessagingScatterCard from "@/components/PurchaseVsMessagingScatterCard";
 import DashboardContextStrip from "@/components/DashboardContextStrip";
@@ -202,6 +202,18 @@ function sumFirstReplyActions(
 ): number {
   return (actions ?? [])
     .filter((a) => isFirstReplyActionType(a.action_type))
+    .reduce((s, a) => s + Number(a.value ?? 0), 0);
+}
+
+function isConversationStartedActionType(actionType: unknown): boolean {
+  return String(actionType ?? "").includes("messaging_conversation_started");
+}
+
+function sumConversationStartedActions(
+  actions: Array<{ action_type?: unknown; value?: unknown }> | null | undefined,
+): number {
+  return (actions ?? [])
+    .filter((a) => isConversationStartedActionType(a.action_type))
     .reduce((s, a) => s + Number(a.value ?? 0), 0);
 }
 
@@ -475,13 +487,14 @@ export default function DashboardPage() {
   const [audienceCategory, setAudienceCategory] = useState<
     "all" | "interests" | "behaviors" | "education_majors" | "family_statuses" | "life_events" | "work_positions"
   >("all");
-  const [audienceMinSpend, setAudienceMinSpend] = useState<number>(10);
+  const [audienceMinSpend, setAudienceMinSpend] = useState<number>(0);
   const [attributionWindow, setAttributionWindow] = useState<AdsAttributionWindow>("click_7d");
   const [isExportingReport, setIsExportingReport] = useState(false);
   const useUnifiedDashboard = String(import.meta.env.VITE_UNIFIED_DASHBOARD ?? "").toLowerCase() === "true";
   const hasToken = Boolean(getMetaAccessToken());
   const id = accountId ? decodeURIComponent(accountId) : "";
   const campaignKey = campaignSelect !== ALL ? campaignSelect : null;
+  const adsetKey = adsetSelect !== ALL ? adsetSelect : null;
 
   const effectiveDateParams = useMemo(() => {
     if (datePreset === "today") {
@@ -495,15 +508,25 @@ export default function DashboardPage() {
   }, [datePreset, customDateStart, customDateStop]);
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ["dashboard", id, datePreset, campaignKey, customDateStart, customDateStop],
+    queryKey: [
+      "dashboard",
+      id,
+      datePreset,
+      campaignKey,
+      adsetKey,
+      selectedAdId,
+      customDateStart,
+      customDateStop,
+    ],
     queryFn: () =>
       fetchAccountDashboard(id, datePreset, {
-        campaignId: campaignKey ?? undefined,
+        campaignId: selectedAdId || adsetKey ? undefined : campaignKey ?? undefined,
+        adsetId: selectedAdId ? undefined : adsetKey ?? undefined,
+        adId: selectedAdId ?? undefined,
         objectiveMetric: ACCOUNT_DASHBOARD_OBJECTIVE_METRIC,
         ...effectiveDateParams,
       }),
     enabled: hasToken && Boolean(id),
-    staleTime: 5 * 60 * 1000,
   });
 
   const prevPeriod = useMemo(() => {
@@ -515,16 +538,17 @@ export default function DashboardPage() {
   }, [data?.date_start, data?.date_stop, datePreset]);
 
   const prevDashboardQuery = useQuery({
-    queryKey: ["dashboard-prev", id, prevPeriod?.dateStart, prevPeriod?.dateStop, campaignKey],
+    queryKey: ["dashboard-prev", id, prevPeriod?.dateStart, prevPeriod?.dateStop, campaignKey, adsetKey, selectedAdId],
     queryFn: () =>
       fetchAccountDashboard(id, "last_30d", {
-        campaignId: campaignKey ?? undefined,
+        campaignId: selectedAdId || adsetKey ? undefined : campaignKey ?? undefined,
+        adsetId: selectedAdId ? undefined : adsetKey ?? undefined,
+        adId: selectedAdId ?? undefined,
         objectiveMetric: ACCOUNT_DASHBOARD_OBJECTIVE_METRIC,
         dateStart: prevPeriod!.dateStart,
         dateStop: prevPeriod!.dateStop,
       }),
     enabled: hasToken && Boolean(id) && Boolean(prevPeriod),
-    staleTime: 5 * 60 * 1000,
   });
 
   const showAttributionDiscontinuity = useMemo(() => {
@@ -631,6 +655,7 @@ export default function DashboardPage() {
         opts.campaignId = campaignKey;
       }
       opts.includeDeviceBreakdowns = true;
+      opts.objectiveMetric = ACCOUNT_DASHBOARD_OBJECTIVE_METRIC;
       return fetchPlacementInsights(id, opts);
     },
     enabled: hasToken && Boolean(id) && mainTab === "audiencia",
@@ -649,6 +674,7 @@ export default function DashboardPage() {
       customDateStart,
       customDateStop,
       campaignKey,
+      adsetSelect,
     ],
     queryFn: () =>
       fetchGeoInsights(id, {
@@ -664,15 +690,6 @@ export default function DashboardPage() {
       Boolean(id) &&
       (geoScope === "account" || Boolean(selectedAdId) || adsetSelect !== ALL || Boolean(campaignKey)),
   });
-
-  useEffect(() => {
-    if (
-      geoQuery.data?.metadata?.objective_breakdown_complete === false &&
-      (geoMetric === "cpa" || geoMetric === "results")
-    ) {
-      setGeoMetric("spend");
-    }
-  }, [geoMetric, geoQuery.data?.metadata?.objective_breakdown_complete]);
 
   const targetingQuery = useQuery({
     queryKey: ["targeting", id, selectedAdId],
@@ -701,7 +718,6 @@ export default function DashboardPage() {
       objectiveMetric: ACCOUNT_DASHBOARD_OBJECTIVE_METRIC,
     }),
     enabled: hasToken && Boolean(id) && mainTab === "audiencia",
-    staleTime: 5 * 60 * 1000,
   });
 
   const audiencePerformanceQuery = useQuery({
@@ -728,7 +744,6 @@ export default function DashboardPage() {
         adId: selectedAdId ?? undefined,
       }),
     enabled: hasToken && Boolean(id) && mainTab === "audiencia",
-    staleTime: 5 * 60 * 1000,
   });
 
   const attributionQuery = useQuery({
@@ -751,7 +766,6 @@ export default function DashboardPage() {
       adId: selectedAdId ?? undefined,
     }),
     enabled: hasToken && Boolean(id) && mainTab === "avanzado",
-    staleTime: 5 * 60 * 1000,
   });
 
   const leadsQuery = useQuery({
@@ -764,7 +778,6 @@ export default function DashboardPage() {
       adId: selectedAdId ?? undefined,
     }),
     enabled: hasToken && Boolean(id) && mainTab === "comercial",
-    staleTime: 5 * 60 * 1000,
   });
 
   const leadsPrevQuery = useQuery({
@@ -786,7 +799,6 @@ export default function DashboardPage() {
       adId: selectedAdId ?? undefined,
     }),
     enabled: hasToken && Boolean(id) && mainTab === "comercial" && Boolean(prevPeriod),
-    staleTime: 5 * 60 * 1000,
   });
 
 
@@ -798,7 +810,6 @@ export default function DashboardPage() {
       adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
     }),
     enabled: hasToken && Boolean(id) && mainTab === "creatividades",
-    staleTime: 5 * 60 * 1000,
   });
 
 
@@ -825,7 +836,6 @@ export default function DashboardPage() {
         attributionWindow,
       }),
     enabled: hasToken && Boolean(id) && mainTab === "resumen",
-    staleTime: 5 * 60 * 1000,
   });
 
   const dailyTimePoints = useMemo(
@@ -860,7 +870,6 @@ export default function DashboardPage() {
         attributionWindow,
       }),
     enabled: hasToken && Boolean(id) && mainTab === "resumen",
-    staleTime: 5 * 60 * 1000,
   });
 
   const entityCampaignSummaryQuery = useQuery({
@@ -881,11 +890,11 @@ export default function DashboardPage() {
         ...effectiveDateParams,
         campaignId: campaignKey ?? undefined,
         adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
+        adId: selectedAdId ?? undefined,
         objectiveMetric: ACCOUNT_DASHBOARD_OBJECTIVE_METRIC,
         attributionWindow,
       }),
     enabled: hasToken && Boolean(id) && mainTab === "resumen",
-    staleTime: 5 * 60 * 1000,
   });
 
   const entityAdsetSummaryQuery = useQuery({
@@ -906,31 +915,11 @@ export default function DashboardPage() {
         ...effectiveDateParams,
         campaignId: campaignKey ?? undefined,
         adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
+        adId: selectedAdId ?? undefined,
         objectiveMetric: ACCOUNT_DASHBOARD_OBJECTIVE_METRIC,
         attributionWindow,
       }),
     enabled: hasToken && Boolean(id) && mainTab === "resumen",
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const learningSummaryQuery = useQuery({
-    queryKey: [
-      "learning-summary",
-      id,
-      datePreset,
-      customDateStart,
-      customDateStop,
-      campaignKey,
-      adsetSelect,
-    ],
-    queryFn: () =>
-      fetchAdsetsLearningSummary(id, {
-        ...effectiveDateParams,
-        campaignId: campaignKey ?? undefined,
-        adsetId: adsetSelect !== ALL ? adsetSelect : undefined,
-      }),
-    enabled: hasToken && Boolean(id) && mainTab === "resumen",
-    staleTime: 5 * 60 * 1000,
   });
 
   const datePresetLabelEs = useMemo(
@@ -1051,6 +1040,13 @@ export default function DashboardPage() {
     ? isInferredSource(adNameSourceMap.get(selectedAdId))
     : false;
   const selectedAdSource = selectedAdId ? adNameSourceMap.get(selectedAdId) : undefined;
+  const effectiveScopeLabel = selectedAdId
+    ? "Anuncio"
+    : adsetSelect !== ALL
+      ? "Conjunto"
+      : campaignKey
+        ? "Campaña"
+        : "Cuenta";
 
   const categoryChartData = useMemo(() => {
     const actions = data?.actions ?? [];
@@ -1320,7 +1316,7 @@ export default function DashboardPage() {
             Ya estás viendo la cuenta{" "}
             <span className="font-medium text-foreground">{accountLabel}</span>. Si eliges una{" "}
             <strong>campaña</strong>, todos los números y gráficos del resumen, el ranking y la mensajería se limitan a
-            esa campaña. Conjunto y anuncio sirven para acercarte aún más a un creativo concreto.
+            esa campaña. Conjunto y anuncio acotan el alcance al nivel más específico activo.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -1416,6 +1412,9 @@ export default function DashboardPage() {
             <span className="text-muted-foreground text-xs">Filtros activos:</span>
             <Badge variant="secondary" className="gap-1 pr-1 font-normal">
               Cuenta: {accountLabel}
+            </Badge>
+            <Badge variant="outline" className="font-normal">
+              Alcance efectivo: {effectiveScopeLabel}
             </Badge>
             {campaignKey ? (
               <Badge variant="secondary" className="gap-1 pr-1 font-normal">
@@ -1773,6 +1772,11 @@ export default function DashboardPage() {
                 </div>
               </TooltipProvider>
 
+              <KpiTrendMiniCharts
+                points={dailyTimePoints}
+                isLoading={timeInsightsQuery.isLoading}
+              />
+
               <div className="space-y-3">
                 <Card>
                   <CardHeader className="pb-2">
@@ -1800,6 +1804,7 @@ export default function DashboardPage() {
                 />
                 <HourlyCpaHeatmapSection
                   rows={(hourlyTimeInsightsQuery.data?.data ?? []) as Record<string, unknown>[]}
+                  objectiveActionTypes={data?.derived?.objective_action_types ?? []}
                   isLoading={hourlyTimeInsightsQuery.isLoading}
                   isError={hourlyTimeInsightsQuery.isError}
                   errorMessage={
@@ -1831,14 +1836,7 @@ export default function DashboardPage() {
                   }
                 />
               </div>
-              <LearningStageSpendChart
-                data={learningSummaryQuery.data}
-                isLoading={learningSummaryQuery.isLoading}
-                isError={learningSummaryQuery.isError}
-                errorMessage={
-                  learningSummaryQuery.error instanceof Error ? learningSummaryQuery.error.message : undefined
-                }
-              />
+              {/* LearningStageSpendChart removed per request */}
 
               {datePreset === "maximum" ? (
                 <Alert>
@@ -1880,9 +1878,7 @@ export default function DashboardPage() {
                     : null;
 
                 // Costo por conversación iniciada
-                const convsStarted = actions
-                  .filter((a) => String(a.action_type) === "onsite_conversion.messaging_conversation_started_7d")
-                  .reduce((s, a) => s + Number(a.value ?? 0), 0);
+                const convsStarted = sumConversationStartedActions(actions);
                 const costPerConvStarted = convsStarted > 0 ? spend / convsStarted : null;
 
                 // Costo por conversación respondida
@@ -2459,8 +2455,7 @@ export default function DashboardPage() {
             <CardHeader>
               <CardTitle>Campañas</CardTitle>
               <CardDescription>
-                Objetivo, presupuestos y fechas según Meta. «Activo» solo indica que la campaña no está en pausa; no
-                garantiza que esté gastando hoy (puede haber conjuntos pausados, presupuesto agotado u otras limitaciones).
+                Objetivo, presupuestos y fechas según Meta.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -2473,7 +2468,6 @@ export default function DashboardPage() {
                       <TableRow>
                         <TableHead>Nombre</TableHead>
                         <TableHead>Objetivo</TableHead>
-                        <TableHead>Estado</TableHead>
                         <TableHead className="text-right">Presupuesto día</TableHead>
                         <TableHead>Inicio</TableHead>
                       </TableRow>
@@ -2481,7 +2475,7 @@ export default function DashboardPage() {
                     <TableBody>
                       {(campaignsQuery.data?.data ?? []).length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={5} className="text-center text-muted-foreground">
+                          <TableCell colSpan={4} className="text-center text-muted-foreground">
                             Sin campañas.
                           </TableCell>
                         </TableRow>
@@ -2493,9 +2487,6 @@ export default function DashboardPage() {
                               {c.name}
                             </TableCell>
                             <TableCell className="text-xs">{c.objective ?? "—"}</TableCell>
-                            <TableCell className="text-xs">
-                              {metaObjectStatusLabelEs(c.effective_status ?? c.status)}
-                            </TableCell>
                             <TableCell className="text-right text-xs tabular-nums">
                               {c.daily_budget ?? c.lifetime_budget ?? "—"}
                             </TableCell>
@@ -2772,12 +2763,8 @@ export default function DashboardPage() {
               <SelectContent>
                 <SelectItem value="impressions">Por impresiones</SelectItem>
                 <SelectItem value="spend">Por gasto</SelectItem>
-                {geoQuery.data?.metadata?.objective_breakdown_complete !== false ? (
-                  <>
-                    <SelectItem value="cpa">Por CPA</SelectItem>
-                    <SelectItem value="results">Por resultados</SelectItem>
-                  </>
-                ) : null}
+                <SelectItem value="cpa">Por CPA</SelectItem>
+                <SelectItem value="results">Por resultados</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -2873,33 +2860,23 @@ export default function DashboardPage() {
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Mapa geográfico</CardTitle>
-                  <CardDescription>
-                    Distribución interactiva — métrica: {geoMetric}.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {geoQuery.data ? (
-                    <GeoMap
-                      data={geoQuery.data.data}
-                      metadata={geoQuery.data.metadata}
-                      metric={geoMetric}
-                      adReferenceUrl={
-                        geoQuery.data.metadata?.scope === "ad" && geoQuery.data.metadata?.ad_id
-                          ? (adReferenceUrlById.get(String(geoQuery.data.metadata.ad_id)) ?? null)
-                          : null
-                      }
-                      extraCaption={
-                        geoMetric === "cpa"
-                          ? `CPA por región alineado con el mismo criterio de resultados que el resumen (referencia: ${attributionWindowLabelEs(data?.context?.attribution_window) ?? "ventana predeterminada Meta"}).`
-                          : undefined
-                      }
-                    />
-                  ) : null}
-                </CardContent>
-              </Card>
+              {geoQuery.data ? (
+                <EcuadorProvinceMap
+                  data={geoQuery.data.data}
+                  metadata={geoQuery.data.metadata}
+                  metric={geoMetric}
+                  adReferenceUrl={
+                    geoQuery.data.metadata?.scope === "ad" && geoQuery.data.metadata?.ad_id
+                      ? (adReferenceUrlById.get(String(geoQuery.data.metadata.ad_id)) ?? null)
+                      : null
+                  }
+                  extraCaption={
+                    geoMetric === "cpa"
+                      ? `CPA por región alineado con el mismo criterio de resultados que el resumen (referencia: ${attributionWindowLabelEs(data?.context?.attribution_window) ?? "ventana predeterminada Meta"}).`
+                      : undefined
+                  }
+                />
+              ) : null}
               <GeoRegionalEfficiencyBars rows={geoQuery.data?.data ?? []} mapMetric={geoMetric} />
             </>
           ) : null}
@@ -3049,6 +3026,7 @@ export default function DashboardPage() {
           <h3 className="text-foreground text-lg font-semibold">Comercial (Mensajería)</h3>
           <LeadsPanel
             accountId={id}
+            adReferenceUrlById={adReferenceUrlById}
             data={leadsQuery.data}
             previousData={leadsPrevQuery.data}
             isLoading={leadsQuery.isLoading}
@@ -3056,12 +3034,6 @@ export default function DashboardPage() {
             errorMessage={leadsQuery.error instanceof Error ? leadsQuery.error.message : undefined}
           />
           <Separator className="my-4" />
-          <Alert>
-            <AlertTitle>Métricas CRM removidas</AlertTitle>
-            <AlertDescription>
-              Esta vista conserva solo métricas derivadas de Meta. Los módulos que dependían de CRM/carga manual fueron retirados.
-            </AlertDescription>
-          </Alert>
 
           <div className="space-y-3">
             <div className="flex items-center gap-3">
@@ -3090,9 +3062,7 @@ export default function DashboardPage() {
                     impressions: Number(row.impressions ?? 0),
                     reach: Number(row.reach ?? 0),
                     clicks: Number(row.unique_clicks ?? row.clicks ?? 0),
-                    conversations_started: rowActions
-                      .filter((a) => String(a.action_type) === "onsite_conversion.messaging_conversation_started_7d")
-                      .reduce((s, a) => s + Number(a.value ?? 0), 0),
+                    conversations_started: sumConversationStartedActions(rowActions),
                     first_replies: sumFirstReplyActions(rowActions),
                     spend: Number(row.spend ?? 0),
                   };
@@ -3120,10 +3090,8 @@ export default function DashboardPage() {
                 entry.reach += Number(row.reach ?? 0);
                 entry.clicks += Number(row.unique_clicks ?? row.clicks ?? 0);
                 entry.spend += Number(row.spend ?? 0);
+                entry.conversations_started += sumConversationStartedActions(row.actions);
                 for (const a of row.actions ?? []) {
-                  if (String(a.action_type) === "onsite_conversion.messaging_conversation_started_7d") {
-                    entry.conversations_started += Number(a.value ?? 0);
-                  }
                   if (isFirstReplyActionType(a.action_type)) {
                     entry.first_replies += Number(a.value ?? 0);
                   }

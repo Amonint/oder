@@ -28,15 +28,20 @@ export default function FunnelReplyGaugeCard({ funnel, insightsRow, isLoading }:
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-base flex items-center gap-1">
-          Tasa de primera respuesta
+          Gestión de conversaciones
           <InfoTooltip text="Embudo Meta (mismo periodo): first_replies ÷ conversations_started. Es distinto del KPI «Tasa de Respuesta (Insights)» de Rentabilidad, que suma messaging_conversation_replied_7d en la serie diaria de conversiones. Uno mide el paso embudo; el otro métricas agregadas de pauta." />
         </CardTitle>
         <CardDescription>
-          Coste aproximado por conversación iniciada:{" "}
+          Tasa de primera respuesta:{" "}
+          <span className="font-semibold text-foreground">
+            {rate.toFixed(1)}%
+          </span>
+          {" · "}
+          Coste por conversación iniciada (Meta):{" "}
           <span className="font-semibold text-foreground">
             {costPerConv != null ? `$${costPerConv.toFixed(2)}` : "—"}
           </span>{" "}
-          (gasto total de KPIs ÷ conversaciones del embudo).
+          (gasto total ÷ conversaciones iniciadas del embudo Meta).
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -52,9 +57,6 @@ export default function FunnelReplyGaugeCard({ funnel, insightsRow, isLoading }:
               style={{ width: `${rate}%` }}
             />
           </div>
-          <p className="text-muted-foreground text-xs">
-            {replies.toLocaleString("es")} respuestas sobre {conv.toLocaleString("es")} conversaciones iniciadas.
-          </p>
         </div>
       </CardContent>
     </Card>

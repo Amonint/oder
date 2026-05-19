@@ -11,15 +11,16 @@ import {
   fetchPageDemographics,
   fetchPageInsights,
   fetchPageConversionTimeseries,
-  fetchPageStability,
   fetchPageTrafficQuality,
   fetchPageTrafficQualityTimeseries,
   fetchPageAdDiagnostics,
   fetchPageFunnel,
-  fetchPageTimeseries,
+  fetchTimeInsights,
   getMetaAccessToken,
   type GeoInsightRow,
   type GeoMetadata,
+  type ConversionTimeseriesRow,
+  type DemographicsRow,
 } from "@/api/client";
 import CompetitorPanel from "@/components/CompetitorPanel";
 import { useCompetitorResolve } from "@/hooks/useCompetitorResolve";
@@ -27,11 +28,15 @@ import type { CompetitorResolvedSuggestion } from "@/api/client";
 import RetentionModule from "@/components/RetentionModule";
 import TrafficQualityCard from "@/components/TrafficQualityCard";
 import TrafficQualityTimeseriesCard from "@/components/TrafficQualityTimeseriesCard";
-import PerformanceControlChartCard from "@/components/PerformanceControlChartCard";
 import ConversionCpaControlChartCard from "@/components/ConversionCpaControlChartCard";
 import AdDiagnosticsTable from "@/components/AdDiagnosticsTable";
+import HourlyCpaHeatmapSection from "@/components/HourlyCpaHeatmapSection";
 import ConversionFunnelCard from "@/components/ConversionFunnelCard";
+import VideoRetentionFunnelCard from "@/components/VideoRetentionFunnelCard";
+import ConversationDepthCpaCard from "@/components/ConversationDepthCpaCard";
 import FunnelReplyGaugeCard from "@/components/FunnelReplyGaugeCard";
+import MediaCostTimeseriesCard from "@/components/MediaCostTimeseriesCard";
+import ConversationQualityCard from "@/components/ConversationQualityCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,25 +57,34 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import KpiGrid from "@/components/KpiGrid";
-import GeoMap from "@/components/GeoMap";
-import ChoroplethMap, { type ChoroplethMetric } from "@/components/ChoroplethMap";
+import EcuadorProvinceMap from "@/components/EcuadorProvinceMap";
 import GeoRegionalEfficiencyBars from "@/components/GeoRegionalEfficiencyBars";
+import type { GeoMapMetric } from "@/components/GeoMap";
 import DemographicsPanel from "@/components/DemographicsPanel";
-import SpendSparkline from "@/components/SpendSparkline";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { computePrevPeriod, unionCrossesMetaAttributionChange } from "@/lib/periodCompare";
 import { buildPageDashboardSnapshot } from "@/lib/dashboardExportPage";
 import { collectPageDashboardExport } from "@/lib/pageDashboardExportCollect";
 import { resolveAdReference } from "@/lib/adReference";
+import { resolvePageDateFilter } from "@/lib/pageDateFilter";
 
 const ALL = "__all__";
 const PAGE_BREAKDOWN_OBJECTIVE_METRIC = "messaging_conversation_started" as const;
+const GEO_CPA_MIN_SPEND_USD = 25;
+const PAGE_MESSAGING_OBJECTIVE_TYPES = [
+  "onsite_conversion.messaging_conversation_started_7d",
+];
+
+function hasValidCpa(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function filterSeriesByCpa(rows: ConversionTimeseriesRow[] | undefined): ConversionTimeseriesRow[] {
+  return (rows ?? []).filter((row) => hasValidCpa(row.cpa));
+}
+
+function filterDemographicsByCpa(rows: DemographicsRow[] | undefined): DemographicsRow[] {
+  return (rows ?? []).filter((row) => hasValidCpa(row.cpa));
+}
 
 const DATE_PRESETS = [
   { value: "today", label: "Hoy" },
@@ -80,16 +94,6 @@ const DATE_PRESETS = [
   { value: "custom", label: "Personalizado" },
   { value: "maximum", label: "Máximo disponible" },
 ] as const;
-
-function isoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
-function shiftDays(baseIso: string, days: number): string {
-  const d = new Date(`${baseIso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return isoDate(d);
-}
 
 const EMPTY_PUBLICATION_RE = /^(?:publicaci[oó]n:\s*)?["“”'`]\s*["“”'`]$/i;
 function safeCampaignName(name: string | null | undefined, id: string | null | undefined): string {
@@ -120,11 +124,7 @@ export default function PageDashboardPage() {
   const [pageDemographicsBreakdown, setPageDemographicsBreakdown] = useState<
     "age" | "gender" | "age,gender"
   >("age");
-  const [pageGeoMetric, setPageGeoMetric] = useState<
-    "impressions" | "spend" | "cpa" | "results"
-  >("impressions");
-  const [choroplethProvinceMetric, setChoroplethProvinceMetric] =
-    useState<ChoroplethMetric>("impressions");
+  const [pageGeoMetric, setPageGeoMetric] = useState<GeoMapMetric>("clicks");
   const [isExportingReport, setIsExportingReport] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
 
@@ -156,33 +156,17 @@ export default function PageDashboardPage() {
   if (!id) return <Navigate to="/accounts" replace />;
   if (!pid) return <Navigate to={`/accounts/${encodeURIComponent(id)}/pages`} replace />;
 
-  const explicitDateWindow = useMemo(() => {
-    if (datePreset === "today") {
-      const today = isoDate(new Date());
-      return { dateStart: today, dateStop: today };
-    }
-    if (datePreset === "custom" && customDateStart && customDateStop) {
-      return { dateStart: customDateStart, dateStop: customDateStop };
-    }
-    if (datePreset === "last_7d") {
-      const stop = isoDate(new Date());
-      return { dateStart: shiftDays(stop, -6), dateStop: stop };
-    }
-    if (datePreset === "last_30d") {
-      const stop = isoDate(new Date());
-      return { dateStart: shiftDays(stop, -29), dateStop: stop };
-    }
-    if (datePreset === "last_90d") {
-      const stop = isoDate(new Date());
-      return { dateStart: shiftDays(stop, -89), dateStop: stop };
-    }
-    return null;
-  }, [datePreset, customDateStart, customDateStop]);
-
-  const effectiveDateParams = useMemo(() => {
-    if (explicitDateWindow) return explicitDateWindow;
-    return { datePreset };
-  }, [explicitDateWindow, datePreset]);
+  const pageDateFilter = useMemo(
+    () =>
+      resolvePageDateFilter({
+        datePreset,
+        customDateStart,
+        customDateStop,
+      }),
+    [datePreset, customDateStart, customDateStop],
+  );
+  const effectiveDateParams = pageDateFilter.requestParams;
+  const explicitDateWindow = pageDateFilter.calendarWindow;
 
   function handleDatePresetChange(value: string) {
     if (value === "custom") {
@@ -231,7 +215,6 @@ export default function PageDashboardPage() {
           campaign_id: campaignId ?? null,
           campaign_name: selectedCampaignName,
           geo_metric_selected_ui: pageGeoMetric,
-          choropleth_metric_selected_ui: choroplethProvinceMetric,
           demographics_breakdown: pageDemographicsBreakdown,
           competitor: selectedCompetitor
             ? { page_id: selectedCompetitor.id, name: selectedCompetitor.name }
@@ -263,27 +246,23 @@ export default function PageDashboardPage() {
   };
 
   const insightsQuery = useQuery({
-    queryKey: ["page-insights", id, pid, datePreset, customDateStart, customDateStop, campaignId],
+    queryKey: ["page-insights-v2", id, pid, datePreset, customDateStart, customDateStop, campaignId],
     queryFn: () => fetchPageInsights(id, pid, opts),
-    staleTime: 5 * 60 * 1000,
   });
 
   const geoQuery = useQuery({
     queryKey: ["page-geo", id, pid, datePreset, customDateStart, customDateStop, campaignId],
     queryFn: () => fetchPageGeo(id, pid, opts),
-    staleTime: 5 * 60 * 1000,
   });
 
   const campaignsQuery = useQuery({
     queryKey: ["campaigns", id],
     queryFn: () => fetchCampaigns(id),
-    staleTime: 10 * 60 * 1000,
   });
 
   const accountsQuery = useQuery({
     queryKey: ["accounts"],
     queryFn: fetchAdAccounts,
-    staleTime: 10 * 60 * 1000,
   });
 
   const pagesQuery = useQuery({
@@ -294,7 +273,6 @@ export default function PageDashboardPage() {
         dateStart: (effectiveDateParams as { dateStart?: string }).dateStart,
         dateStop: (effectiveDateParams as { dateStop?: string }).dateStop,
       }),
-    staleTime: 10 * 60 * 1000,
   });
 
   const adsListQuery = useQuery({
@@ -303,7 +281,6 @@ export default function PageDashboardPage() {
       if (campaignId) return fetchAdsList(id, { campaignId });
       return fetchAdsList(id);
     },
-    staleTime: 10 * 60 * 1000,
   });
 
   const adReferenceUrlById = useMemo(() => {
@@ -322,57 +299,40 @@ export default function PageDashboardPage() {
   }, [adsListQuery.data?.data, id]);
 
   const conversionTsQuery = useQuery({
-    queryKey: ["page-conv-ts", id, pid, datePreset, customDateStart, customDateStop, campaignId],
+    queryKey: ["page-conv-ts-v4", id, pid, datePreset, customDateStart, customDateStop, campaignId],
     queryFn: () => fetchPageConversionTimeseries(id, pid, opts),
-    staleTime: 5 * 60 * 1000,
   });
 
   const trafficQualityQuery = useQuery({
     queryKey: ["page-traffic-quality", id, pid, datePreset, customDateStart, customDateStop, campaignId],
     queryFn: () => fetchPageTrafficQuality(id, pid, opts),
-    staleTime: 5 * 60 * 1000,
   });
 
   const trafficQualityTsQuery = useQuery({
     queryKey: ["page-traffic-quality-ts", id, pid, datePreset, customDateStart, customDateStop, campaignId],
     queryFn: () => fetchPageTrafficQualityTimeseries(id, pid, opts),
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const pageStabilityQuery = useQuery({
-    queryKey: ["page-stability", id, pid, campaignId],
-    queryFn: () => fetchPageStability(id, pid, { campaignId }),
-    staleTime: 5 * 60 * 1000,
   });
 
   const adDiagnosticsQuery = useQuery({
     queryKey: ["page-ad-diagnostics", id, pid, datePreset, customDateStart, customDateStop, campaignId],
     queryFn: () => fetchPageAdDiagnostics(id, pid, opts),
-    staleTime: 5 * 60 * 1000,
+  });
+
+  const hourlyPageInsightsQuery = useQuery({
+    queryKey: ["page-hourly", id, pid, datePreset, customDateStart, customDateStop, campaignId],
+    queryFn: () =>
+      fetchTimeInsights(id, {
+        ...effectiveDateParams,
+        campaignId,
+        timeIncrement: "hourly",
+      }),
+    enabled: hasToken && Boolean(id),
   });
 
   const funnelQuery = useQuery({
-    queryKey: ["page-funnel", id, pid, datePreset, customDateStart, customDateStop, campaignId],
+    queryKey: ["page-funnel-v2", id, pid, datePreset, customDateStart, customDateStop, campaignId],
     queryFn: () => fetchPageFunnel(id, pid, opts),
-    staleTime: 5 * 60 * 1000,
   });
-
-  const pageTimeseriesQuery = useQuery({
-    queryKey: ["page-timeseries", id, pid, datePreset, customDateStart, customDateStop, campaignId],
-    queryFn: () => fetchPageTimeseries(id, pid, opts),
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const pageSpendDaily = useMemo(() => {
-    const raw = pageTimeseriesQuery.data?.data ?? [];
-    const pts: { date: string; spend: number }[] = [];
-    for (const r of raw) {
-      const d = String(r.date_start ?? r.date_stop ?? "").trim();
-      if (!d) continue;
-      pts.push({ date: d, spend: parseFloat(String(r.spend ?? "0")) || 0 });
-    }
-    return pts.sort((a, b) => a.date.localeCompare(b.date));
-  }, [pageTimeseriesQuery.data]);
 
   const pageDemographicsQuery = useQuery({
     queryKey: [
@@ -390,7 +350,6 @@ export default function PageDashboardPage() {
         ...opts,
         breakdown: pageDemographicsBreakdown,
       }),
-    staleTime: 5 * 60 * 1000,
   });
 
   const pageConvBounds = useMemo(() => {
@@ -400,14 +359,20 @@ export default function PageDashboardPage() {
     return { start: sorted[0]!.date, stop: sorted[sorted.length - 1]!.date };
   }, [conversionTsQuery.data?.data]);
 
+  const conversionRowsCpa = useMemo(
+    () => filterSeriesByCpa(conversionTsQuery.data?.data),
+    [conversionTsQuery.data?.data],
+  );
+  const conversionRowsRawCount = conversionTsQuery.data?.data?.length ?? 0;
+
   const prevPageConvPeriod = useMemo(() => {
-    if (datePreset === "maximum") return null;
+    if (!pageDateFilter.compareAgainstPreviousPeriod) return null;
     if (explicitDateWindow) {
       return computePrevPeriod(explicitDateWindow.dateStart, explicitDateWindow.dateStop);
     }
     if (!pageConvBounds) return null;
     return computePrevPeriod(pageConvBounds.start, pageConvBounds.stop);
-  }, [datePreset, explicitDateWindow, pageConvBounds]);
+  }, [pageDateFilter.compareAgainstPreviousPeriod, explicitDateWindow, pageConvBounds]);
 
   const pageConvDiscontinuity = useMemo(() => {
     if (!prevPageConvPeriod) return false;
@@ -425,6 +390,7 @@ export default function PageDashboardPage() {
   const pageConversionPrevQuery = useQuery({
     queryKey: [
       "page-conv-ts-prev",
+      "v3",
       id,
       pid,
       campaignId,
@@ -440,8 +406,12 @@ export default function PageDashboardPage() {
     enabled: Boolean(
       id && pid && prevPageConvPeriod && (conversionTsQuery.data?.data?.length ?? 0) >= 2,
     ),
-    staleTime: 5 * 60 * 1000,
   });
+
+  const conversionPrevRowsCpa = useMemo(
+    () => pageConversionPrevQuery.data?.data ?? [],
+    [pageConversionPrevQuery.data?.data],
+  );
 
   const geoRows: GeoInsightRow[] = (geoQuery.data?.data ?? []).map((r) => {
     const clicksRaw = r.clicks;
@@ -465,19 +435,22 @@ export default function PageDashboardPage() {
       spend: r.spend ?? "0",
       reach: parseInt(String(r.reach ?? "0"), 10) || 0,
       results,
-      cpa: Number.isFinite(cpa) ? cpa : null,
+      cpa: Number.isFinite(cpa) && (cpa as number) > 0 ? cpa : null,
     };
-  });
+  }).filter((row) => row.clicks > 0 || row.impressions > 0 || parseFloat(String(row.spend)) > 0);
+  const geoRowsRawCount = geoQuery.data?.data?.length ?? 0;
 
-  const choroplethRows = geoRows.map((r) => ({
-    region_name: r.region_name,
-    spend: parseFloat(String(r.spend ?? "0")) || 0,
-    impressions: r.impressions,
-    clicks: r.clicks,
-    reach: r.reach,
-    results: r.results,
-    cpa: r.cpa,
-  }));
+  useEffect(() => {
+    if (pageGeoMetric === "cpa" && geoRows.length > 0 && !geoRows.some((r) => r.cpa !== null)) {
+      setPageGeoMetric("clicks");
+    }
+  }, [geoRows, pageGeoMetric]);
+
+  const demographicsRowsCpa = useMemo(
+    () => filterDemographicsByCpa(pageDemographicsQuery.data?.data),
+    [pageDemographicsQuery.data?.data],
+  );
+  const demographicsRowsRawCount = pageDemographicsQuery.data?.data?.length ?? 0;
 
   const geoMeta: GeoMetadata = geoQuery.data?.metadata ?? {
     scope: "account",
@@ -489,14 +462,17 @@ export default function PageDashboardPage() {
     warning: null,
     note: `Página: ${pid}`,
   };
-
-  useEffect(() => {
-    if (geoMeta.objective_breakdown_complete === false && (pageGeoMetric === "cpa" || pageGeoMetric === "results")) {
-      setPageGeoMetric("spend");
-    }
-  }, [geoMeta.objective_breakdown_complete, pageGeoMetric]);
+  const geoMetaFiltered: GeoMetadata = {
+    ...geoMeta,
+    total_rows: geoRows.length,
+  };
 
   const primaryError = insightsQuery.error ?? null;
+  const totalConversations = funnelQuery.data?.conversations_started ?? 0;
+  const totalFirstReplies = funnelQuery.data?.first_replies ?? 0;
+  const totalSpend = parseFloat(insightsQuery.data?.data?.[0]?.spend ?? "0") || 0;
+  const aggregateCpa =
+    totalConversations > 0 ? Math.round((totalSpend / totalConversations) * 100) / 100 : null;
 
   const mainContent = (
     <div className="w-full space-y-6">
@@ -513,47 +489,34 @@ export default function PageDashboardPage() {
       ) : null}
 
       {/* KPIs */}
-      {insightsQuery.isLoading ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <Skeleton key={i} className="h-24 w-full rounded-xl" />
-          ))}
-        </div>
-      ) : (
-        <KpiGrid
-          data={insightsQuery.data?.data}
-          isLoading={insightsQuery.isLoading}
-        />
-      )}
+      <KpiGrid
+        data={insightsQuery.data?.data}
+        isLoading={insightsQuery.isLoading}
+        conversations={totalConversations}
+        cpa={aggregateCpa}
+        firstReplies={totalFirstReplies}
+      />
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Gasto diario (pauta asociada a la página)</CardTitle>
-          <CardDescription>
-            Serie diaria desde Meta para el mismo periodo y filtro de campaña. Útil para ver ritmo de inversión.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {pageTimeseriesQuery.isLoading ? (
-            <Skeleton className="h-12 w-full rounded-md" />
-          ) : pageTimeseriesQuery.isError ? (
-            <p className="text-muted-foreground text-sm">
-              No se pudo cargar la serie temporal de gasto.
-            </p>
-          ) : (
-            <SpendSparkline
-              data={pageSpendDaily}
-              legend="Gasto diario de pauta asociado a la página"
-            />
-          )}
-        </CardContent>
-      </Card>
+      <MediaCostTimeseriesCard
+        data={conversionTsQuery.data?.data}
+        isLoading={conversionTsQuery.isLoading}
+      />
 
       {/* Módulo 1: Rentabilidad y Adquisición */}
+      {!conversionTsQuery.isLoading && conversionRowsRawCount > 0 && conversionRowsCpa.length === 0 ? (
+        <Alert>
+          <AlertTitle>Sin CPA válido para rentabilidad</AlertTitle>
+          <AlertDescription>
+            Llegaron {conversionRowsRawCount} filas, pero ninguna trae CPA &gt; 0 para “conversación iniciada”.
+            Revisa objetivo/atribución en Meta o periodo con más señal.
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <RetentionModule
         data={conversionTsQuery.data?.data}
         isLoading={conversionTsQuery.isLoading}
-        comparisonSeries={pageConversionPrevQuery.data?.data}
+        objectiveLabel="conversaciones iniciadas"
+        comparisonSeries={conversionPrevRowsCpa}
         comparisonLoading={pageConversionPrevQuery.isLoading}
         showAttributionDiscontinuity={pageConvDiscontinuity}
         currentPeriod={
@@ -569,14 +532,34 @@ export default function PageDashboardPage() {
             : undefined
         }
       />
-      <ConversionCpaControlChartCard
-        data={conversionTsQuery.data?.data}
-        isLoading={conversionTsQuery.isLoading}
-      />
       {/* Módulo 2: Embudo de Conversión */}
       <ConversionFunnelCard
         data={funnelQuery.data}
         isLoading={funnelQuery.isLoading}
+      />
+      <VideoRetentionFunnelCard
+        data={funnelQuery.data}
+        isLoading={funnelQuery.isLoading}
+      />
+      <ConversationDepthCpaCard
+        data={conversionTsQuery.data?.data}
+        isLoading={conversionTsQuery.isLoading}
+      />
+      <ConversationQualityCard
+        data={conversionTsQuery.data?.data}
+        isLoading={conversionTsQuery.isLoading}
+      />
+      <ConversionCpaControlChartCard
+        data={conversionRowsCpa}
+        isLoading={conversionTsQuery.isLoading}
+        metricLabel="costo por conversación iniciada"
+        currentPeriod={
+          explicitDateWindow
+            ? { dateStart: explicitDateWindow.dateStart, dateStop: explicitDateWindow.dateStop }
+            : pageConvBounds
+              ? { dateStart: pageConvBounds.start, dateStop: pageConvBounds.stop }
+              : undefined
+        }
       />
       <FunnelReplyGaugeCard
         funnel={funnelQuery.data}
@@ -598,53 +581,40 @@ export default function PageDashboardPage() {
         }
       />
 
-      <PerformanceControlChartCard
-        data={pageStabilityQuery.data}
-        isLoading={pageStabilityQuery.isLoading}
-        isError={pageStabilityQuery.isError}
-        errorMessage={pageStabilityQuery.error instanceof Error ? pageStabilityQuery.error.message : undefined}
-        title="Estabilidad CAC (Página)"
-      />
-
       {/* Distribución geográfica */}
       {geoQuery.isLoading ? (
         <Skeleton className="h-64 w-full rounded-xl" />
       ) : geoRows.length > 0 ? (
         <div className="space-y-6">
           <div>
-            <h2 className="text-foreground mb-3 text-base font-semibold">
-              Distribución geográfica
-            </h2>
-            <div className="mb-3 flex flex-wrap items-center gap-3">
-              <span className="text-muted-foreground text-sm">Métrica del mapa</span>
-              <Select
-                value={pageGeoMetric}
-                onValueChange={(v) =>
-                  setPageGeoMetric(v as "impressions" | "spend" | "cpa" | "results")
-                }
-              >
-                <SelectTrigger className="w-[220px]">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+              <h2 className="text-foreground text-base font-semibold">
+                Distribución geográfica
+              </h2>
+              <Select value={pageGeoMetric} onValueChange={(v) => setPageGeoMetric(v as GeoMapMetric)}>
+                <SelectTrigger className="w-[160px]">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="impressions">Por impresiones</SelectItem>
-                  <SelectItem value="spend">Por gasto</SelectItem>
-                  {geoMeta.objective_breakdown_complete !== false ? (
-                    <>
-                      <SelectItem value="cpa">Por CPA</SelectItem>
-                      <SelectItem value="results">Por resultados</SelectItem>
-                    </>
-                  ) : null}
+                  <SelectItem value="clicks">Clics</SelectItem>
+                  <SelectItem value="impressions">Impresiones</SelectItem>
+                  <SelectItem value="reach">Alcance</SelectItem>
+                  <SelectItem value="spend">Gasto</SelectItem>
+                  <SelectItem value="results">Resultados</SelectItem>
+                  {geoRows.some((r) => r.cpa !== null) && (
+                    <SelectItem value="cpa">CPA</SelectItem>
+                  )}
                 </SelectContent>
               </Select>
             </div>
-            <GeoMap
+            <EcuadorProvinceMap
               data={geoRows}
-              metadata={geoMeta}
+              metadata={geoMetaFiltered}
               metric={pageGeoMetric}
+              minSpendUsd={GEO_CPA_MIN_SPEND_USD}
               extraCaption={
                 pageGeoMetric === "cpa"
-                  ? "CPA por región alineado al objetivo activo de resultados cuando Meta sí lo devuelve en este desglose."
+                  ? "Costo por conversación iniciada por región."
                   : undefined
               }
             />
@@ -655,41 +625,34 @@ export default function PageDashboardPage() {
               </p>
             ) : null}
           </div>
-          {geoQuery.data && geoQuery.data.data.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="text-muted-foreground text-sm">
-                  Métrica del coropleta (provincias)
-                </span>
-                <Select
-                  value={choroplethProvinceMetric}
-                  onValueChange={(v) => setChoroplethProvinceMetric(v as ChoroplethMetric)}
-                >
-                  <SelectTrigger className="w-[220px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="impressions">Impresiones</SelectItem>
-                    <SelectItem value="spend">Gasto</SelectItem>
-                    <SelectItem value="clicks">Clics</SelectItem>
-                    <SelectItem value="reach">Alcance</SelectItem>
-                    <SelectItem value="results">Resultados</SelectItem>
-                    <SelectItem value="cpa">CPA</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <ChoroplethMap data={choroplethRows} metric={choroplethProvinceMetric} />
-            </div>
-          )}
-          {geoRows.length > 0 ? (
-            <GeoRegionalEfficiencyBars rows={geoRows} mapMetric={pageGeoMetric} />
-          ) : null}
+          <GeoRegionalEfficiencyBars
+            rows={geoRows}
+            mapMetric={pageGeoMetric}
+            minSpendUsd={GEO_CPA_MIN_SPEND_USD}
+          />
         </div>
+      ) : geoRowsRawCount > 0 ? (
+        <Alert>
+          <AlertTitle>Sin datos geográficos</AlertTitle>
+          <AlertDescription>
+            Se recibieron {geoRowsRawCount} regiones, pero ninguna tiene actividad registrada en el período.
+          </AlertDescription>
+        </Alert>
       ) : null}
 
+      {!pageDemographicsQuery.isLoading && demographicsRowsRawCount > 0 && demographicsRowsCpa.length === 0 ? (
+        <Alert>
+          <AlertTitle>Sin segmentos demográficos con CPA válido</AlertTitle>
+          <AlertDescription>
+            Llegaron {demographicsRowsRawCount} filas demográficas, pero ninguna trae CPA &gt; 0.
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <DemographicsPanel
         sectionTitle="Audiencia de pauta (demografía)"
-        data={pageDemographicsQuery.data?.data}
+        objectiveLabel="conversación iniciada"
+        strictObjectiveCpa
+        data={demographicsRowsCpa}
         isLoading={pageDemographicsQuery.isLoading}
         isError={pageDemographicsQuery.isError}
         errorMessage={
@@ -699,6 +662,20 @@ export default function PageDashboardPage() {
         }
         breakdown={pageDemographicsBreakdown}
         onBreakdownChange={setPageDemographicsBreakdown}
+      />
+
+      {/* Oportunidad horaria */}
+      <HourlyCpaHeatmapSection
+        rows={(hourlyPageInsightsQuery.data?.data ?? []) as Record<string, unknown>[]}
+        objectiveActionTypes={PAGE_MESSAGING_OBJECTIVE_TYPES}
+        overrideObjectiveLabel="Conversaciones iniciadas"
+        isLoading={hourlyPageInsightsQuery.isLoading}
+        isError={hourlyPageInsightsQuery.isError}
+        errorMessage={
+          hourlyPageInsightsQuery.error instanceof Error
+            ? hourlyPageInsightsQuery.error.message
+            : undefined
+        }
       />
 
       {/* Módulo 3: Diagnóstico de Creatividades */}
@@ -796,14 +773,6 @@ export default function PageDashboardPage() {
           </Button>
         </div>
       </div>
-
-      <Alert className="mt-4">
-        <AlertTitle>Estás viendo: Página</AlertTitle>
-        <AlertDescription>
-          Aquí ves el rendimiento de una página específica.
-          Si quieres ver el panorama completo de anuncios, cambia a <strong>Cuenta</strong>.
-        </AlertDescription>
-      </Alert>
 
       {/* Filtro de campaña + Inteligencia competitiva */}
       <div className="flex flex-wrap items-end gap-3 mt-6">

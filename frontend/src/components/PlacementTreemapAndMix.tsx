@@ -23,19 +23,30 @@ interface PlacementTreemapAndMixProps {
 
 type TreemapDatum = { name: string; value: number; fill?: string };
 
+type MixAggregate = {
+  spend: number;
+  cpaSpend: number;
+  cpaWeight: number;
+};
+
 const COLORS = ["#56048C", "#D91480", "#0EA5E9", "#22C55E", "#EAB308", "#F97316"];
 
 export default function PlacementTreemapAndMix({ rows, isLoading }: PlacementTreemapAndMixProps) {
   const { treeData, mixRows } = useMemo(() => {
     const list = rows ?? [];
-    const byKey = new Map<string, { spend: number }>();
+    const byKey = new Map<string, MixAggregate>();
     for (const r of list) {
       const plat = String(r.publisher_platform ?? "—");
       const pos = String(r.platform_position ?? "—");
       const key = `${plat} / ${pos}`;
       const spend = toFloat(r.spend);
-      const prev = byKey.get(key) ?? { spend: 0 };
+      const cpa = r.cpa_derived != null && Number.isFinite(r.cpa_derived) && r.cpa_derived > 0 ? r.cpa_derived : null;
+      const prev = byKey.get(key) ?? { spend: 0, cpaSpend: 0, cpaWeight: 0 };
       prev.spend += spend;
+      if (cpa != null) {
+        prev.cpaSpend += cpa * spend;
+        prev.cpaWeight += spend;
+      }
       byKey.set(key, prev);
     }
     const sorted = [...byKey.entries()].sort((a, b) => b[1].spend - a[1].spend);
@@ -45,11 +56,7 @@ export default function PlacementTreemapAndMix({ rows, isLoading }: PlacementTre
       fill: COLORS[i % COLORS.length],
     }));
     const mixRows = sorted.slice(0, 10).map(([k, v], i) => {
-      const match = list.find(
-        (r) =>
-          `${String(r.publisher_platform ?? "—")} / ${String(r.platform_position ?? "—")}` === k
-      );
-      const cpaRaw = match?.cpa_derived;
+      const cpaRaw = v.cpaWeight > 0 ? v.cpaSpend / v.cpaWeight : null;
       return {
         label: k.length > 36 ? `${k.slice(0, 34)}…` : k,
         spend: v.spend,

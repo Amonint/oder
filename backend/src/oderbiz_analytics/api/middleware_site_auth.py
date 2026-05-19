@@ -35,6 +35,8 @@ def _is_public_path(path: str) -> bool:
         return True
     if path.startswith(("/docs", "/redoc", "/openapi.json")):
         return True
+    if path.startswith("/api/v1/ad-validation/public/"):
+        return True
     return False
 
 

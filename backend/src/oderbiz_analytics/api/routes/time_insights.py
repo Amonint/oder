@@ -95,7 +95,7 @@ async def get_time_insights(
     attrib = _insights_attribution_windows(attribution_window)
     try:
         if time_increment == "hourly":
-            rows = await fetch_insights(
+            rows = await fetch_insights_all_pages(
                 base_url=base,
                 access_token=access_token,
                 ad_account_id=object_id,
@@ -107,6 +107,7 @@ async def get_time_insights(
                 time_increment=None,
                 action_attribution_windows=attrib,
                 limit=500,
+                max_pages=100,
             )
         else:
             rows = await fetch_insights_all_pages(
@@ -137,4 +138,3 @@ async def get_time_insights(
         "attribution_window_requested": attribution_window,
         "attribution_windows_sent": attrib,
     }
-

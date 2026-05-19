@@ -9,7 +9,6 @@ export default function SiteAuthMenu() {
   const { data } = useQuery({
     queryKey: ["siteAuthMe"],
     queryFn: fetchSiteAuthMe,
-    staleTime: 30_000,
   });
 
   if (data?.kind !== "in") {

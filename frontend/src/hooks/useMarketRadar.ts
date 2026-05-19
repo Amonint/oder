@@ -7,6 +7,5 @@ export function useMarketRadar(pageId: string | null) {
     queryKey: ["market-radar", pageId],
     queryFn: () => fetchMarketRadar(pageId!),
     enabled: pageId !== null,
-    staleTime: 10 * 60 * 1000, // 10 minutos
   });
 }

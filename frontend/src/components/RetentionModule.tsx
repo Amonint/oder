@@ -19,11 +19,13 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import InfoTooltip from "@/components/InfoTooltip";
 import type { ConversionTimeseriesRow } from "@/api/client";
 import { barColorAt, dashboardChartColor } from "@/lib/dashboardColors";
+import { shouldShowPeriodComparison } from "@/lib/pageDashboardDecisions";
 import { META_ATTRIBUTION_CHANGE_ISO } from "@/lib/periodCompare";
 
 interface RetentionModuleProps {
   data: ConversionTimeseriesRow[] | undefined;
   isLoading: boolean;
+  objectiveLabel?: string;
   /** Serie del periodo anterior; se alinea posición a posición con el periodo actual (anclado al largo de la serie actual). */
   comparisonSeries?: ConversionTimeseriesRow[] | undefined;
   comparisonLoading?: boolean;
@@ -40,9 +42,9 @@ function alignComparisonToCurrentPeriod(
 ): Array<{
   dayIndex: number;
   spend: number;
-  cpa: number;
+  cpa: number | null;
   spendPrev: number;
-  cpaPrev: number;
+  cpaPrev: number | null;
 }> {
   const a = [...curr].sort((x, y) => x.date.localeCompare(y.date));
   const b = [...prev].sort((x, y) => x.date.localeCompare(y.date));
@@ -55,7 +57,7 @@ function alignComparisonToCurrentPeriod(
       spend: row.spend,
       cpa: row.cpa,
       spendPrev: p?.spend ?? 0,
-      cpaPrev: p?.cpa ?? 0,
+      cpaPrev: p?.cpa ?? null,
     };
   });
 }
@@ -83,7 +85,7 @@ function densifySeries(
     return {
       date,
       spend: 0,
-      cpa: 0,
+      cpa: null,
       conversions: 0,
       conversations_started: 0,
       revenue: 0,
@@ -109,6 +111,7 @@ function KpiTile({ label, value, sub, tooltip }: { label: string; value: string;
 export default function RetentionModule({
   data,
   isLoading,
+  objectiveLabel = "resultados objetivo",
   comparisonSeries,
   comparisonLoading,
   showAttributionDiscontinuity,
@@ -163,14 +166,16 @@ export default function RetentionModule({
   // Totales para KPI cards
   const totalSpend = rows.reduce((s, r) => s + r.spend, 0);
   const totalConversions = rows.reduce((s, r) => s + r.conversions, 0);
-  const totalConversationsStarted = rows.reduce((s, r) => s + (r.conversations_started ?? 0), 0);
-  const totalReplied = rows.reduce((s, r) => s + (r.replied ?? 0), 0);
   const avgCpa = totalConversions > 0 ? totalSpend / totalConversions : 0;
-  const replyRate = totalConversationsStarted > 0 ? (totalReplied / totalConversationsStarted) * 100 : 0;
 
   const fmt = (n: number) => `$${n.toFixed(2)}`;
 
-  const useComparisonChart = mergedCompare.length >= 2;
+  const canCompareByCoverage = shouldShowPeriodComparison({
+    loadedCurrentDays,
+    loadedPreviousDays,
+    totalCurrentDays,
+  });
+  const useComparisonChart = mergedCompare.length >= 2 && canCompareByCoverage;
 
   return (
     <section className="space-y-4">
@@ -186,35 +191,23 @@ export default function RetentionModule({
         </Alert>
       ) : null}
       {isLoading ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {[0,1,2,3].map((i) => <Skeleton key={i} className="h-20 w-full rounded-xl" />)}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {[0,1].map((i) => <Skeleton key={i} className="h-20 w-full rounded-xl" />)}
         </div>
       ) : (
         <TooltipProvider delayDuration={300}>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <KpiTile
-              label="CPA Promedio"
+              label="Costo medio por resultado"
               value={fmt(avgCpa)}
-              sub="Costo por resultado"
-              tooltip="Costo promedio por conversión (lead, mensaje iniciado o compra). Se calcula: Gasto total ÷ Total de conversiones del período."
+              sub={objectiveLabel}
+              tooltip={`Costo medio del resultado objetivo en esta vista. Se calcula: gasto total ÷ total de ${objectiveLabel.toLowerCase()} de la serie.`}
             />
             <KpiTile
-              label="Tasa de Respuesta (Insights)"
-              value={replyRate > 0 ? `${replyRate.toFixed(1)}%` : "—"}
-              sub="Serie diaria agregada"
-              tooltip="Definición distinta a la tarjeta «Tasa de primera respuesta» del embudo. Aquí: suma de acciones messaging_conversation_replied_7d ÷ suma de conversaciones iniciadas de la misma serie diaria. Agregado de Insights de pauta, no el embudo de página."
-            />
-            <KpiTile
-              label="Conversiones"
+              label="Resultados objetivo"
               value={totalConversions.toFixed(0)}
-              sub="Leads / Mensajes iniciados"
-              tooltip="Total de conversiones del período: leads generados, mensajes de WhatsApp o Messenger iniciados, o compras. Fuente: campo actions de la API, filtrado por tipos de conversión configurados."
-            />
-            <KpiTile
-              label="Primeras Respuestas (Insights)"
-              value={totalReplied > 0 ? totalReplied.toFixed(0) : "—"}
-              sub="Suma replied en la serie"
-              tooltip="Suma de la métrica replied de la serie de conversiones (misma ventana y filtro que el gráfico). No es «first_replies» del embudo Meta; úsalo junto al KPI de tasa Insights arriba."
+              sub={objectiveLabel}
+              tooltip={`Total del resultado objetivo en la serie diaria de Meta para esta vista. Aquí no mezclamos compras, leads y mensajes a la vez; depende del objetivo configurado por backend para este módulo.`}
             />
           </div>
         </TooltipProvider>
@@ -223,14 +216,21 @@ export default function RetentionModule({
       <Card>
         <CardHeader>
           <CardTitle className="text-base">
-            {useComparisonChart ? "Gasto y CPA — actual vs periodo anterior" : "Gasto diario vs CPA"}
+            {useComparisonChart
+              ? "Gasto y costo por resultado — actual vs periodo anterior"
+              : "Gasto diario vs costo por resultado"}
           </CardTitle>
           <div className="text-muted-foreground space-y-1 text-sm">
             <p>
               {useComparisonChart
-                ? "Eje X = D1…DM (calendario completo del periodo actual). Barras = gasto actual · línea CPA actual · discontinuas = anterior en su día calendario equivalente del periodo previo."
-                : "Barras = Gasto ($) · Línea = CPA ($)"}
+                ? "Eje X = D1…DM (calendario completo del periodo actual). Barras = gasto actual · línea de costo por resultado actual · discontinuas = anterior en su día calendario equivalente del periodo previo."
+                : "Barras = Gasto ($) · Línea = costo por resultado ($)"}
             </p>
+            {!canCompareByCoverage && compareRows.length > 0 && totalCurrentDays > 0 ? (
+              <p className="text-xs">
+                Cobertura insuficiente para comparar periodos con confianza: actual {loadedCurrentDays}/{totalCurrentDays} días cargados · anterior {loadedPreviousDays}/{totalCurrentDays}. Se muestra solo el periodo actual.
+              </p>
+            ) : null}
             {useComparisonChart && compareLengthMismatch ? (
               <p className="text-xs">
                 Cobertura de datos Meta: actual {loadedCurrentDays}/{totalCurrentDays} días cargados · anterior {loadedPreviousDays}/{totalCurrentDays}. Días sin fila en Meta se completan en 0 para mantener comparabilidad de calendario.
@@ -266,13 +266,14 @@ export default function RetentionModule({
                   orientation="right"
                   tick={{ fontSize: 11 }}
                   tickFormatter={(v: number) => `$${v.toFixed(0)}`}
-                  label={{ value: "CPA ($)", angle: 90, position: "insideRight", offset: 4, style: { fontSize: 11 } }}
+                  label={{ value: "Costo / resultado ($)", angle: 90, position: "insideRight", offset: 4, style: { fontSize: 11 } }}
                 />
                 <Tooltip
                   formatter={(value, name) => {
+                    if (value == null) return ["—", name as string];
                     const v = Number(value);
                     if (String(name).includes("Gasto")) return [`$${v.toFixed(2)}`, name as string];
-                    if (String(name).includes("CPA")) return [`$${v.toFixed(2)}`, name as string];
+                    if (String(name).includes("Costo")) return [`$${v.toFixed(2)}`, name as string];
                     return [v, name as string];
                   }}
                   labelFormatter={(label) => `Día relativo (desde inicio periodo actual): ${label}`}
@@ -287,7 +288,7 @@ export default function RetentionModule({
                   yAxisId="cpa"
                   type="monotone"
                   dataKey="cpaPrev"
-                  name="Banda CPA anterior"
+                  name="Banda costo anterior"
                   fill={dashboardChartColor(0)}
                   fillOpacity={0.12}
                   stroke="none"
@@ -297,7 +298,7 @@ export default function RetentionModule({
                   yAxisId="cpa"
                   type="monotone"
                   dataKey="cpa"
-                  name="CPA (actual)"
+                  name="Costo (actual)"
                   stroke={dashboardChartColor(1)}
                   strokeWidth={2.5}
                   dot={false}
@@ -316,7 +317,7 @@ export default function RetentionModule({
                   yAxisId="cpa"
                   type="monotone"
                   dataKey="cpaPrev"
-                  name="CPA (anterior)"
+                  name="Costo (anterior)"
                   stroke={dashboardChartColor(0)}
                   strokeWidth={2}
                   strokeDasharray="6 4"
@@ -345,13 +346,14 @@ export default function RetentionModule({
                   orientation="right"
                   tick={{ fontSize: 11 }}
                   tickFormatter={(v: number) => `$${v.toFixed(0)}`}
-                  label={{ value: "CPA ($)", angle: 90, position: "insideRight", offset: 4, style: { fontSize: 11 } }}
+                  label={{ value: "Costo / resultado ($)", angle: 90, position: "insideRight", offset: 4, style: { fontSize: 11 } }}
                 />
                 <Tooltip
                   formatter={(value, name) => {
+                    if (value == null) return ["—", name as string];
                     const v = Number(value);
                     if (name === "Gasto") return [`$${v.toFixed(2)}`, name as string];
-                    if (name === "CPA") return [`$${v.toFixed(2)}`, name as string];
+                    if (name === "Costo por resultado") return [`$${v.toFixed(2)}`, name as string];
                     return [v, name as string];
                   }}
                   labelFormatter={(label) => `Fecha: ${String(label)}`}
@@ -366,7 +368,7 @@ export default function RetentionModule({
                   yAxisId="cpa"
                   type="monotone"
                   dataKey="cpa"
-                  name="CPA"
+                  name="Costo por resultado"
                   stroke={dashboardChartColor(1)}
                   strokeWidth={2.5}
                   dot={false}

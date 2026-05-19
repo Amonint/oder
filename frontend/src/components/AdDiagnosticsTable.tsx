@@ -7,42 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import InfoTooltip from "@/components/InfoTooltip";
 import { AdReferenceLink } from "@/components/AdReferenceLink";
 import type { AdDiagnosticsRow } from "@/api/client";
-import { barPaletteByRowIndex } from "@/lib/dashboardColors";
-import { Line, LineChart } from "recharts";
-
-function MiniDailySpendSparkline({ values }: { values: number[] | undefined }) {
-  const arr = Array.isArray(values) ? values.filter((n) => Number.isFinite(n)) : [];
-  if (arr.length === 0) {
-    return <span className="text-muted-foreground block text-center text-xs">—</span>;
-  }
-  const data =
-    arr.length === 1
-      ? [
-          { i: 0, v: arr[0] },
-          { i: 1, v: arr[0] },
-        ]
-      : arr.map((v, i) => ({ i, v }));
-  const W = 72;
-  const H = 36;
-  return (
-    <div
-      className="mx-auto w-[72px] shrink-0"
-      style={{ minWidth: W, minHeight: H }}
-      title="Gasto diario en el período (Meta insights por día)."
-    >
-      <LineChart width={W} height={H} data={data} margin={{ top: 2, right: 2, left: 0, bottom: 2 }}>
-        <Line
-          type="monotone"
-          dataKey="v"
-          stroke="hsl(var(--primary))"
-          strokeWidth={1.5}
-          dot={false}
-          isAnimationActive={false}
-        />
-      </LineChart>
-    </div>
-  );
-}
+import { shouldShowCreativeDiagnostics } from "@/lib/pageDashboardDecisions";
 
 interface AdDiagnosticsTableProps {
   data: AdDiagnosticsRow[] | undefined;
@@ -55,16 +20,37 @@ export default function AdDiagnosticsTable({
   isLoading,
   adReferenceUrlById,
 }: AdDiagnosticsTableProps) {
+  const rows = data ?? [];
+  const rankingBasis = rows[0]?.ranking_basis ?? "click_efficiency";
+  const comparableEnough = shouldShowCreativeDiagnostics(rows);
+  const hasVideo = rows.some((r) => (r.video_plays ?? 0) > 0);
+  const clickLabel =
+    rows[0]?.primary_click_metric === "outbound_click"
+      ? "CTR salida"
+      : rows[0]?.primary_click_metric === "all_click"
+      ? "CTR clics"
+      : "CTR enlace";
+  const clickCostLabel =
+    rows[0]?.primary_click_metric === "outbound_click"
+      ? "Costo clic salida"
+      : rows[0]?.primary_click_metric === "all_click"
+      ? "Costo clic"
+      : "Costo clic enlace";
+
   return (
     <section className="space-y-3">
       <div>
         <h2 className="text-foreground text-lg font-semibold">Diagnóstico de Creatividades</h2>
-        <p className="text-muted-foreground text-sm">Top 5 anuncios por gasto — Rendimiento real</p>
+        <p className="text-muted-foreground text-sm">
+          {rankingBasis === "objective_result"
+            ? "Mejores anuncios del período según costo por resultado y volumen."
+            : "Mejores anuncios del período según eficiencia de clic cuando aún no hay suficiente señal de resultados."}
+        </p>
       </div>
       <Card>
         <CardHeader>
           <CardTitle className="text-sm text-muted-foreground font-normal">
-            CTR, CPM y tasa de engagement calculados sobre impresiones reales del período.
+            Comparativa entre anuncios con foco en frecuencia, eficiencia de clic y costo por resultado del objetivo activo.
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -72,7 +58,7 @@ export default function AdDiagnosticsTable({
             <div className="space-y-2 p-4">
               {[0,1,2,3,4].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
             </div>
-          ) : !data || data.length === 0 ? (
+          ) : rows.length === 0 ? (
             <p className="text-muted-foreground p-4 text-sm">
               Sin datos de diagnóstico en el periodo seleccionado.
             </p>
@@ -81,66 +67,72 @@ export default function AdDiagnosticsTable({
             <div className="overflow-x-auto">
             <Table>
               <TableHeader>
-                <TableRow>
+              <TableRow>
                   <TableHead className="w-[240px]">Anuncio</TableHead>
-                  <TableHead className="w-[88px]">
-                    <span className="flex items-center gap-0.5">
-                      % gasto
-                      <InfoTooltip text="Participación del gasto de este anuncio respecto al mayor gasto del top 5 (barra relativa)." />
-                    </span>
-                  </TableHead>
                   <TableHead className="text-right">Gasto</TableHead>
                   <TableHead className="text-right">Impresiones</TableHead>
                   <TableHead className="text-right">
                     <span className="flex items-center justify-end gap-0.5">
-                      CTR
-                      <InfoTooltip text="Click-Through Rate de este anuncio específico. Porcentaje de impresiones que generaron algún clic. Mayor CTR indica que el creativo es más atractivo para la audiencia." />
+                      Frecuencia
+                      <InfoTooltip text="Promedio de veces que una misma persona vio este anuncio durante el período. Ayuda a detectar fatiga." />
                     </span>
                   </TableHead>
                   <TableHead className="text-right">
                     <span className="flex items-center justify-end gap-0.5">
-                      CPM
-                      <InfoTooltip text="Costo por cada 1.000 impresiones de este anuncio. Permite comparar eficiencia de alcance entre anuncios. Un CPM bajo con buen CTR es la combinación ideal." />
+                      {clickLabel}
+                      <InfoTooltip text="CTR del tipo de clic prioritario para esta comparación. Se usa salida desde Meta cuando existe; si no, clic enlace inline." />
                     </span>
                   </TableHead>
                   <TableHead className="text-right">
                     <span className="flex items-center justify-end gap-0.5">
-                      CPA
-                      <InfoTooltip text="Costo por acción principal (primer cost_per_action_type numérico de Meta) o gasto ÷ primer resultado no trivial en acciones." />
+                      {clickCostLabel}
+                      <InfoTooltip text="Costo medio del clic prioritario del anuncio. Ayuda a comparar eficiencia de atracción entre creatividades." />
                     </span>
                   </TableHead>
                   <TableHead className="text-right">
                     <span className="flex items-center justify-end gap-0.5">
-                      Engagement
-                      <InfoTooltip text="Tasa de engagement: porcentaje de impresiones que generaron alguna interacción (reacción, comentario, guardado, clic). Se calcula: post_engagement ÷ Impresiones × 100." />
+                      Resultados
+                      <InfoTooltip text="Resultados del objetivo activo usados para comparar anuncios. Cuando Meta no entrega suficiente señal, el ranking cae al modo de eficiencia de clic." />
                     </span>
                   </TableHead>
-                  <TableHead className="w-[80px] text-center text-xs font-normal text-muted-foreground">
-                    <span className="flex flex-col items-center gap-0.5">
-                      Gasto/día
-                      <InfoTooltip text="Serie temporal diaria de gasto para este anuncio en el período (segunda consulta agregada solo al top 5)." />
+                  <TableHead className="text-right">
+                    <span className="flex items-center justify-end gap-0.5">
+                      Costo resultado
+                      <InfoTooltip text="Costo por resultado objetivo cuando Meta lo puede alinear con claridad. Si el ranking está en modo clic, esta columna funciona como referencia secundaria." />
                     </span>
                   </TableHead>
-                  <TableHead className="w-[56px] text-center text-xs font-normal text-muted-foreground">
-                    Señal
-                  </TableHead>
+                  {hasVideo && (
+                    <>
+                      <TableHead className="text-right">
+                        <span className="flex items-center justify-end gap-0.5">
+                          Plays
+                          <InfoTooltip text="Total de reproducciones iniciadas (cualquier duración) para este anuncio." />
+                        </span>
+                      </TableHead>
+                      <TableHead className="text-right">
+                        <span className="flex items-center justify-end gap-0.5">
+                          Completan
+                          <InfoTooltip text="Porcentaje de plays que vieron el video completo (p100 / plays). Indica cuán bien retiene la atención este creativo." />
+                        </span>
+                      </TableHead>
+                      <TableHead className="text-right">
+                        <span className="flex items-center justify-end gap-0.5">
+                          ThruPlay
+                          <InfoTooltip text="Reproducciones de 15+ segundos (o completo si el video dura menos de 15s). Métrica oficial de calidad de video de Meta." />
+                        </span>
+                      </TableHead>
+                      <TableHead className="text-right">
+                        <span className="flex items-center justify-end gap-0.5">
+                          Prom.
+                          <InfoTooltip text="Tiempo promedio de reproducción en segundos para este anuncio." />
+                        </span>
+                      </TableHead>
+                    </>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(() => {
-                  const maxSpend = Math.max(...data.map((r) => r.spend), 1e-9);
-                  const maxCtr = Math.max(...data.map((r) => r.ctr ?? 0), 1e-6);
-                  const maxEng = Math.max(...data.map((r) => r.engagement_rate ?? 0), 1e-6);
-                  const cpaNums = data.map((r) => Number(r.cpa)).filter((n) => Number.isFinite(n) && n > 0);
-                  const maxCpa = cpaNums.length ? Math.max(...cpaNums) : 1;
-                  return data.map((row, idx) => {
-                    const pct = Math.min(100, (row.spend / maxSpend) * 100);
-                    const cpa = row.cpa;
-                    const ctrN = ((row.ctr ?? 0) / maxCtr) * 100;
-                    const engN = ((row.engagement_rate ?? 0) / maxEng) * 100;
-                    const cpaN =
-                      cpa != null && Number(cpa) > 0 ? Math.max(8, (1 - Number(cpa) / maxCpa) * 100) : 8;
-                    return (
+                {rows.map((row) => (
                   <TableRow key={row.ad_id}>
                     <TableCell className="max-w-[240px]">
                       <div className="min-w-0 space-y-0.5">
@@ -156,54 +148,36 @@ export default function AdDiagnosticsTable({
                       <p className="text-muted-foreground font-mono text-xs break-all leading-tight">{row.ad_id}</p>
                       </div>
                     </TableCell>
-                    <TableCell className="align-middle">
-                      <div
-                        className="h-2 w-full max-w-[72px] rounded-full bg-muted"
-                        title={`${pct.toFixed(0)}% del máximo del top 5`}
-                      >
-                        <div
-                          className="h-2 rounded-full"
-                          style={{
-                            width: `${pct}%`,
-                            backgroundColor: barPaletteByRowIndex(idx),
-                          }}
-                        />
-                      </div>
-                    </TableCell>
                     <TableCell className="text-right text-sm">${row.spend.toFixed(2)}</TableCell>
                     <TableCell className="text-right text-sm">{row.impressions.toLocaleString("es")}</TableCell>
-                    <TableCell className="text-right text-sm">{(row.ctr ?? 0).toFixed(2)}%</TableCell>
-                    <TableCell className="text-right text-sm">${(row.cpm ?? 0).toFixed(2)}</TableCell>
+                    <TableCell className="text-right text-sm">{row.frequency.toFixed(2)}</TableCell>
+                    <TableCell className="text-right text-sm">{row.primary_ctr.toFixed(2)}%</TableCell>
                     <TableCell className="text-right text-sm">
-                      {cpa != null && Number.isFinite(Number(cpa)) ? `$${Number(cpa).toFixed(2)}` : "—"}
+                      {row.primary_click_cost != null ? `$${row.primary_click_cost.toFixed(2)}` : "—"}
                     </TableCell>
-                    <TableCell className="text-right text-sm">{(row.engagement_rate ?? 0).toFixed(2)}%</TableCell>
-                    <TableCell className="align-middle px-1">
-                      <MiniDailySpendSparkline values={row.daily_spend} />
+                    <TableCell className="text-right text-sm">{row.results.toFixed(0)}</TableCell>
+                    <TableCell className="text-right text-sm">
+                      {row.cost_per_result != null ? `$${row.cost_per_result.toFixed(2)}` : "—"}
                     </TableCell>
-                    <TableCell className="align-middle px-1">
-                      <div
-                        className="mx-auto flex h-8 w-8 items-end justify-center gap-0.5"
-                        title="Mini barras (periodo actual): CTR · engagement · eficiencia CPA inversa vs el top 5."
-                      >
-                        <span
-                          className="w-1 rounded-sm bg-primary/80"
-                          style={{ height: `${Math.round(ctrN)}%`, minHeight: "2px" }}
-                        />
-                        <span
-                          className="w-1 rounded-sm bg-amber-500/80"
-                          style={{ height: `${Math.round(engN)}%`, minHeight: "2px" }}
-                        />
-                        <span
-                          className="w-1 rounded-sm bg-emerald-600/80"
-                          style={{ height: `${Math.round(cpaN)}%`, minHeight: "2px" }}
-                        />
-                      </div>
-                    </TableCell>
+                    {hasVideo && (() => {
+                      const plays = row.video_plays ?? 0;
+                      const p100 = row.video_p100 ?? 0;
+                      const completionPct = plays > 0 ? ((p100 / plays) * 100).toFixed(1) + "%" : "—";
+                      const avgSec = row.video_avg_watch_sec ?? 0;
+                      const avgLabel = avgSec > 0
+                        ? avgSec >= 60 ? `${Math.floor(avgSec / 60)}m ${avgSec % 60}s` : `${avgSec}s`
+                        : "—";
+                      return (
+                        <>
+                          <TableCell className="text-right text-sm">{plays > 0 ? plays.toLocaleString("es") : "—"}</TableCell>
+                          <TableCell className="text-right text-sm">{completionPct}</TableCell>
+                          <TableCell className="text-right text-sm">{(row.video_thruplay ?? 0) > 0 ? (row.video_thruplay ?? 0).toLocaleString("es") : "—"}</TableCell>
+                          <TableCell className="text-right text-sm">{avgLabel}</TableCell>
+                        </>
+                      );
+                    })()}
                   </TableRow>
-                    );
-                  });
-                })()}
+                ))}
               </TableBody>
             </Table>
             </div>

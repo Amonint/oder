@@ -19,7 +19,6 @@ export default function CompetitorPanel({ pageId, pageName, onClose }: Props) {
   const { data, isLoading, error } = useQuery({
     queryKey: ["competitor-ads", pageId],
     queryFn: () => fetchCompetitorAds(pageId),
-    staleTime: 5 * 60 * 1000,
   });
 
   const ads = data?.data ?? [];
