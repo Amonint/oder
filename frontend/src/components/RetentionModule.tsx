@@ -91,6 +91,8 @@ function densifySeries(
       revenue: 0,
       replied: 0,
       depth2: 0,
+      depth3: 0,
+      depth5: 0,
     };
   });
 }

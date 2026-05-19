@@ -89,10 +89,10 @@ export default function ConversationQualityCard({
               width={44}
             />
             <Tooltip
-              formatter={(value: number, name: string) =>
-                name === "Tasa %" ? [`${value}%`, name] : [value, name]
+              formatter={(value, name) =>
+                name === "Tasa %" ? [`${Number(value ?? 0)}%`, name] : [Number(value ?? 0), name]
               }
-              labelFormatter={(label: string) => `Fecha: ${label}`}
+              labelFormatter={(label) => `Fecha: ${label}`}
             />
             <Legend />
             <Bar

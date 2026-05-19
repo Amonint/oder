@@ -7,8 +7,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import InfoTooltip from "@/components/InfoTooltip";
 import { AdReferenceLink } from "@/components/AdReferenceLink";
 import type { AdDiagnosticsRow } from "@/api/client";
-import { shouldShowCreativeDiagnostics } from "@/lib/pageDashboardDecisions";
-
 interface AdDiagnosticsTableProps {
   data: AdDiagnosticsRow[] | undefined;
   isLoading: boolean;
@@ -22,7 +20,6 @@ export default function AdDiagnosticsTable({
 }: AdDiagnosticsTableProps) {
   const rows = data ?? [];
   const rankingBasis = rows[0]?.ranking_basis ?? "click_efficiency";
-  const comparableEnough = shouldShowCreativeDiagnostics(rows);
   const hasVideo = rows.some((r) => (r.video_plays ?? 0) > 0);
   const clickLabel =
     rows[0]?.primary_click_metric === "outbound_click"

@@ -75,6 +75,9 @@ assert.deepEqual(
     outbound_clicks: 25,
     conversations_started: 8,
     first_replies: 3,
+    depth2: 0,
+    depth3: 0,
+    depth5: 0,
   }),
   [
     { label: "Impresiones", value: 1000, sub: "Veces mostrado" },
@@ -91,6 +94,9 @@ assert.deepEqual(
     outbound_clicks: 0,
     conversations_started: 8,
     first_replies: 3,
+    depth2: 0,
+    depth3: 0,
+    depth5: 0,
   }),
   [
     { label: "Impresiones", value: 1000, sub: "Veces mostrado" },

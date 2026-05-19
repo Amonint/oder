@@ -74,8 +74,8 @@ export default function MediaCostTimeseriesCard({
               width={52}
             />
             <Tooltip
-              formatter={(value: number, name: string) => [fmtDollar(value), name.toUpperCase()]}
-              labelFormatter={(label: string) => `Fecha: ${label}`}
+              formatter={(value, name) => [fmtDollar(Number(value ?? 0)), String(name ?? "").toUpperCase()]}
+              labelFormatter={(label) => `Fecha: ${label}`}
             />
             <Legend />
             <Line

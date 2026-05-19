@@ -104,7 +104,7 @@ export default function ConversionCpaControlChartCard({
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(d) => String(d).slice(5)} />
                 <YAxis yAxisId="cpa" tick={{ fontSize: 10 }} tickFormatter={(v) => `$${Number(v).toFixed(0)}`} width={40} />
                 <YAxis yAxisId="spend" orientation="right" tick={{ fontSize: 10 }} tickFormatter={(v) => `$${Number(v).toFixed(0)}`} width={40} />
-                <Tooltip formatter={(v: unknown, name: string) => [`$${Number(v).toFixed(2)}`, name]} labelFormatter={(l: string) => `Fecha: ${l}`} />
+                <Tooltip formatter={(v, name) => [`$${Number(v ?? 0).toFixed(2)}`, name]} labelFormatter={(l) => `Fecha: ${l}`} />
                 <Bar yAxisId="spend" dataKey="spend" name="Gasto" fill="#6366f1" opacity={0.4} radius={[3,3,0,0]} />
                 <Line yAxisId="cpa" type="monotone" dataKey="cpa" stroke="#56048C" strokeWidth={2} dot={{ r: 3 }} name={metricLabel} />
               </ComposedChart>

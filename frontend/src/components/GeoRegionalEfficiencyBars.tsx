@@ -20,7 +20,7 @@ interface GeoRegionalEfficiencyBarsProps {
 
 export default function GeoRegionalEfficiencyBars({
   rows,
-  mapMetric,
+  mapMetric: _mapMetric,
   minSpendUsd = 25,
 }: GeoRegionalEfficiencyBarsProps) {
   const scored = rows
