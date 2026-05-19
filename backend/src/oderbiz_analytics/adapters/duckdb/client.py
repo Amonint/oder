@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import duckdb
 
@@ -106,14 +106,24 @@ def query_latest_raw(db_path: str, ad_account_id: str) -> str | None:
     return result[0] if result else None
 
 
-def get_cache(db_path: str, cache_key: str) -> dict | None:
-    """Retorna el payload cacheado o None si no existe la clave."""
+def get_cache(db_path: str, cache_key: str, max_age_hours: int | None = 24) -> dict | None:
+    """Retorna el payload cacheado o None si no existe o si expiró el TTL.
+
+    max_age_hours=None desactiva el TTL (para rangos de fechas fijos históricos).
+    """
     con = duckdb.connect(db_path, read_only=True)
     try:
-        row = con.execute(
-            "SELECT payload_json FROM api_cache WHERE cache_key = ?",
-            [cache_key],
-        ).fetchone()
+        if max_age_hours is not None:
+            cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
+            row = con.execute(
+                "SELECT payload_json FROM api_cache WHERE cache_key = ? AND cached_at > ?",
+                [cache_key, cutoff],
+            ).fetchone()
+        else:
+            row = con.execute(
+                "SELECT payload_json FROM api_cache WHERE cache_key = ?",
+                [cache_key],
+            ).fetchone()
     finally:
         con.close()
     if row is None:
@@ -121,8 +131,22 @@ def get_cache(db_path: str, cache_key: str) -> dict | None:
     return json.loads(row[0])
 
 
+def purge_old_cache_entries(db_path: str, max_age_hours: int = 24) -> int:
+    """Elimina entradas del cache más viejas que max_age_hours. Retorna número de filas eliminadas."""
+    cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
+    con = duckdb.connect(db_path)
+    try:
+        count = con.execute(
+            "SELECT COUNT(*) FROM api_cache WHERE cached_at <= ?", [cutoff]
+        ).fetchone()[0]
+        con.execute("DELETE FROM api_cache WHERE cached_at <= ?", [cutoff])
+        return count
+    finally:
+        con.close()
+
+
 def set_cache(db_path: str, cache_key: str, payload: dict) -> None:
-    """Guarda (o sobreescribe) un payload en caché. Sin TTL — permanente."""
+    """Guarda (o sobreescribe) un payload en caché."""
     con = duckdb.connect(db_path)
     try:
         con.execute(
